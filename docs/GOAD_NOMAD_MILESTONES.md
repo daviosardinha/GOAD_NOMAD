@@ -32,6 +32,14 @@ The student attack host attaches directly to NORTH. There is no project-owned Ka
 
 `WS01` will be added later to NORTH after the segmented original five-host GOAD topology is fully validated.
 
+### Provisioning mode vs exercise mode
+
+GOAD_NOMAD deliberately separates deployment connectivity from the student attack surface.
+
+During **provisioning mode**, Vagrant NAT remains temporarily available to the guests and the host may install explicit temporary routes to SEVENKINGDOMS and ESSOS through `GOAD-ROUTER`. This allows local Ansible to configure protected-zone systems without adding a permanent flat management NIC to every Windows VM.
+
+During **exercise mode**, those temporary host routes must be removed and the shared Vagrant/NAT provisioning paths must be disconnected or hardened so they cannot bypass segmentation. Student reachability must then be governed by the exercise networks and the router firewall only.
+
 ## Major milestone status
 
 ### Milestone 1 — Network Segmentation
@@ -47,13 +55,16 @@ Current progress:
 - IPv4 forwarding and persistent `nftables` are working.
 - NORTH and MANAGEMENT host-side access are working.
 - SEVENKINGDOMS and ESSOS correctly have no host-side VMware adapters.
+- Per-host VMware zone/address definitions for the five original GOAD Windows machines are implemented and awaiting full deployment validation.
+- VMware/Ansible inventories now use the segmented target addresses.
+- Temporary host routing for local Ansible provisioning is implemented explicitly rather than exposing permanent host adapters in protected zones.
 - Router forwarding is temporarily permissive while the original GOAD hosts are migrated and validated.
 
 Remaining before this milestone can be marked COMPLETE:
 
-- Move all five original GOAD Windows hosts into their target zones and addresses.
+- Deploy all five original GOAD Windows hosts in their target zones and validate their addresses/routes.
 - Preserve Vagrant and Ansible provisioning in the segmented topology.
-- Configure correct default gateways and DNS behavior.
+- Validate internal routing and DNS behavior.
 - Validate NORTH child-domain health.
 - Validate NORTH ↔ SEVENKINGDOMS parent/child Active Directory relationship.
 - Validate SEVENKINGDOMS ↔ ESSOS forest trust.
