@@ -53,7 +53,16 @@ if ($LASTEXITCODE -ne 0) {
 if (-not [String]::IsNullOrWhiteSpace($gateway)) {
     # Keep Vagrant NAT as the provisioning default route, but force every
     # GOAD_NOMAD internal subnet (10.4.0.0/16) through the exercise router.
-    route.exe DELETE 10.4.0.0 MASK 255.255.0.0 2>$null | Out-Null
+    #
+    # Route cleanup must be idempotent. On a fresh box there is nothing to
+    # delete; native route.exe writes that normal condition to stderr and,
+    # with $ErrorActionPreference=Stop, PowerShell treats it as a terminating
+    # provisioning error. Use NetTCPIP cmdlets and simply remove any matching
+    # route that actually exists.
+    $existingRoutes = @(Get-NetRoute -DestinationPrefix "10.4.0.0/16" -ErrorAction SilentlyContinue)
+    if ($existingRoutes.Count -gt 0) {
+        $existingRoutes | Remove-NetRoute -Confirm:$false -ErrorAction Stop
+    }
 
     if ($null -ne $interfaceIndex) {
         route.exe -p ADD 10.4.0.0 MASK 255.255.0.0 $gateway METRIC 5 IF $interfaceIndex | Out-Host
