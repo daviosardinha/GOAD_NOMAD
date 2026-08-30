@@ -263,7 +263,10 @@ if ($p.ExitCode -ne 0 -and $p.ExitCode -ne 3010) { exit $p.ExitCode }
             return False
 
         Log.info('GOAD_NOMAD: enabling temporary host routes for local Ansible provisioning')
-        route_result = subprocess.run(['sudo', route_script, 'enable'], check=False)
+        # Repository script files are not guaranteed to carry an executable bit
+        # after clone/archive operations. Invoke the helper through bash instead
+        # of executing it directly so the install path is mode-independent.
+        route_result = subprocess.run(['sudo', 'bash', route_script, 'enable'], check=False)
         if route_result.returncode != 0:
             Log.error('GOAD_NOMAD: failed to enable temporary provisioning routes')
             return False
