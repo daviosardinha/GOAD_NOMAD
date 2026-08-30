@@ -8,5 +8,26 @@ boxes = [
   # windows server 2019
   { :name => "GOAD-SRV02", :ip => "{{ip_range}}.22", :box => "StefanScherer/windows_2019", :box_version => "2021.05.15", :os => "windows", :cpus => 2, :mem => 6000},
   # windows server 2016
-  { :name => "GOAD-SRV03", :ip => "{{ip_range}}.23", :box => "StefanScherer/windows_2016", :box_version => "2019.02.14", :os => "windows", :cpus => 2, :mem => 5000}
+  { :name => "GOAD-SRV03", :ip => "{{ip_range}}.23", :box => "StefanScherer/windows_2016", :box_version => "2019.02.14", :os => "windows", :cpus => 2, :mem => 5000},
+
+  # GOAD_NOMAD routing plane. Slot 0 is Vagrant NAT for provisioning only.
+  # Runtime lab networks are attached explicitly to VMware vmnets.
+  {
+    :name => "GOAD-ROUTER",
+    :hostname => "goad-router",
+    :box => "bento/debian-11",
+    :os => "linux",
+    :cpus => 1,
+    :mem => 768,
+    :skip_private_network => true,
+    :vmware_network_adapters => [
+      { :slot => 1, :vnet => "vmnet10", :mac => "00:50:56:10:10:01" },
+      { :slot => 2, :vnet => "vmnet20", :mac => "00:50:56:10:20:01" },
+      { :slot => 3, :vnet => "vmnet30", :mac => "00:50:56:10:30:01" },
+      { :slot => 4, :vnet => "vmnet99", :mac => "00:50:56:10:99:01" }
+    ],
+    :provision_scripts => [
+      "../../../ad/GOAD/providers/vmware/router/provision.sh"
+    ]
+  }
 ]
