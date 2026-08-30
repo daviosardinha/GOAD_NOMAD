@@ -41,3 +41,16 @@ The permissive forwarding policy is intentional for the first test. We will chan
 - NORTH SRV02/Castleblack <-> ESSOS SRV03/Braavos (MSSQL trusted link).
 
 The Vagrant NAT interface is also temporary. It exists only so we do not break provisioning while the segmented management plane is being introduced.
+
+## Validation
+
+After provisioning, validate the router with:
+
+```bash
+vagrant status
+vagrant ssh -c 'ip -br addr; echo; ip route; echo; cat /proc/sys/net/ipv4/ip_forward; echo; systemctl is-enabled nftables; systemctl is-active nftables; echo; sudo nft list ruleset'
+```
+
+`/proc/sys/net/ipv4/ip_forward` must return `1`. We read the kernel value directly instead of calling `sysctl` because Debian's non-login `vagrant` user shell may not include `/usr/sbin` in `PATH`.
+
+A normal `vagrant reload` must preserve all four `10.4.x.1/24` addresses and keep `nftables` active without reprovisioning.
