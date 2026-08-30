@@ -22,6 +22,8 @@ readonly VMWARE_NETWORKS="/usr/bin/vmware-networks"
 readonly HOSTADDR_HELPER="/usr/local/sbin/goad-nomad-vmnet-hostaddrs"
 readonly HOSTADDR_SERVICE="/etc/systemd/system/goad-nomad-vmnet-hostaddrs.service"
 readonly HOSTADDR_TIMER="/etc/systemd/system/goad-nomad-vmnet-hostaddrs.timer"
+readonly HOSTADDR_SERVICE_NAME="goad-nomad-vmnet-hostaddrs.service"
+readonly HOSTADDR_TIMER_NAME="goad-nomad-vmnet-hostaddrs.timer"
 
 fail() {
   echo "[!] $*" >&2
@@ -145,6 +147,14 @@ configure_addr vmnet99 10.4.99.254/24
 EOF
 chmod 0755 "${HOSTADDR_HELPER}"
 
+# Explicitly stop the old service/timer before replacing their definitions.
+# Older GOAD_NOMAD revisions used RemainAfterExit=yes, which can leave systemd
+# believing the oneshot is still active and prevent a later `start` from
+# actually executing the updated helper.
+systemctl stop "${HOSTADDR_TIMER_NAME}" >/dev/null 2>&1 || true
+systemctl stop "${HOSTADDR_SERVICE_NAME}" >/dev/null 2>&1 || true
+systemctl disable "${HOSTADDR_SERVICE_NAME}" >/dev/null 2>&1 || true
+
 cat > "${HOSTADDR_SERVICE}" <<'EOF'
 [Unit]
 Description=GOAD_NOMAD VMware host-only interface addresses
@@ -172,11 +182,17 @@ WantedBy=timers.target
 EOF
 
 systemctl daemon-reload
-# Remove the older RemainAfterExit service enablement if it exists.
-systemctl disable goad-nomad-vmnet-hostaddrs.service >/dev/null 2>&1 || true
-systemctl enable --now goad-nomad-vmnet-hostaddrs.timer >/dev/null
-# Apply desired addresses immediately rather than waiting for the first timer tick.
-systemctl start goad-nomad-vmnet-hostaddrs.service
+systemctl reset-failed "${HOSTADDR_SERVICE_NAME}" >/dev/null 2>&1 || true
+
+# Apply desired state synchronously. Do not rely on service runtime state or the
+# first timer tick for initial setup correctness.
+"${HOSTADDR_HELPER}"
+
+# Refuse to report success unless the live addresses are actually present.
+ip -4 -o addr show dev vmnet10 | awk '{print $4}' | grep -Fxq '10.4.10.254/24' || fail "vmnet10 host address was not applied"
+ip -4 -o addr show dev vmnet99 | awk '{print $4}' | grep -Fxq '10.4.99.254/24' || fail "vmnet99 host address was not applied"
+
+systemctl enable --now "${HOSTADDR_TIMER_NAME}" >/dev/null
 
 echo
 echo "[+] GOAD_NOMAD VMware networks configured"
