@@ -50,10 +50,19 @@ do
   echo
 done
 
+check_value 10 HOSTONLY_HOSTADDR 10.4.10.254
+check_value 99 HOSTONLY_HOSTADDR 10.4.99.254
+
 # Only NORTH and MANAGEMENT intentionally expose host-side interfaces.
-for net in 10 99; do
+for spec in '10 10.4.10.254/24' '99 10.4.99.254/24'; do
+  read -r net expected_cidr <<<"${spec}"
   if ip link show "vmnet${net}" >/dev/null 2>&1; then
     ok "host interface vmnet${net} exists"
+    if ip -4 -o addr show dev "vmnet${net}" | awk '{print $4}' | grep -Fxq "${expected_cidr}"; then
+      ok "vmnet${net} host address=${expected_cidr}"
+    else
+      fail "vmnet${net} does not have expected host address ${expected_cidr}"
+    fi
   else
     fail "host interface vmnet${net} is missing"
   fi
