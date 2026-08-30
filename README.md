@@ -11,9 +11,9 @@
 
 This fork is being extended into GOAD_NOMAD: a segmented Red Team training range that preserves the GOAD Active Directory environment while adding realistic network boundaries, pivoting, Windows local privilege escalation, domain persistence, and richer cross-domain / cross-forest progression.
 
-Current implementation state and validation gates are tracked in [`docs/GOAD_NOMAD_MILESTONES.md`](./docs/GOAD_NOMAD_MILESTONES.md). This document is updated as part of each development milestone.
+Major project milestones and their completion gates are tracked in [`docs/GOAD_NOMAD_MILESTONES.md`](./docs/GOAD_NOMAD_MILESTONES.md). Individual implementation steps and bug fixes are not treated as separate milestones.
 
-Current status: **Milestone 1 — VMware segmented routing plane: COMPLETE. Milestone 2 — Move original GOAD Windows hosts into segmented zones: ACTIVE.**
+Current status: **Milestone 1 — Network Segmentation: ACTIVE.** The VMware networks and Debian routing plane are working; the milestone remains open until the five original GOAD Windows hosts are fully migrated, trust/service relationships are validated, and deny-by-default segmentation is enforced.
 
 ## Description
 GOAD is a pentest active directory LAB project.
