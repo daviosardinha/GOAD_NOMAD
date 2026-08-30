@@ -85,9 +85,8 @@ boxes.append(
       # issues/49
       target.vm.synced_folder '.', '/vagrant', disabled: true
 
-      # Existing GOAD boxes keep the original private-network behaviour.
-      # Special infrastructure boxes (for example GOAD-ROUTER) can opt out
-      # and configure their interfaces themselves.
+      # Stock GOAD boxes use a Vagrant private network. Segmented GOAD_NOMAD
+      # machines opt out and attach to an explicit existing VMware vmnet above.
       unless box[:skip_private_network]
         target.vm.network :private_network, ip: box[:ip]
       end
@@ -99,9 +98,17 @@ boxes.append(
         target.vm.provision :shell, :path => "../../../vagrant/Install-WMF3Hotfix.ps1", privileged: false
         target.vm.provision :shell, :path => "../../../vagrant/ConfigureRemotingForAnsible.ps1", privileged: false
 
-        # fix ip for vmware
+        # Configure the exercise NIC. The legacy one-argument form is kept for
+        # other labs; segmented boxes additionally provide their gateway + MAC.
         if ENV['VAGRANT_DEFAULT_PROVIDER'] == "vmware_desktop"
-          target.vm.provision :shell, :path => "../../../vagrant/fix_ip.ps1", privileged: false, args: box[:ip]
+          if box.has_key?(:lab_gateway) && box.has_key?(:lab_mac)
+            target.vm.provision :shell,
+              :path => "../../../vagrant/fix_ip.ps1",
+              privileged: false,
+              args: [box[:ip], box[:lab_gateway], box[:lab_mac]]
+          else
+            target.vm.provision :shell, :path => "../../../vagrant/fix_ip.ps1", privileged: false, args: box[:ip]
+          end
         end
       else
         target.vm.communicator = "ssh"
