@@ -3,6 +3,7 @@ set -euo pipefail
 
 readonly NETWORKING_FILE="/etc/vmware/networking"
 readonly VMWARE_NETWORKS="/usr/bin/vmware-networks"
+readonly HOSTADDR_SERVICE="goad-nomad-vmnet-hostaddrs.service"
 
 failures=0
 
@@ -77,8 +78,21 @@ for net in 20 30; do
 done
 
 echo
+if systemctl is-enabled "${HOSTADDR_SERVICE}" >/dev/null 2>&1; then
+  ok "${HOSTADDR_SERVICE} enabled"
+else
+  fail "${HOSTADDR_SERVICE} is not enabled"
+fi
+
+if systemctl is-active "${HOSTADDR_SERVICE}" >/dev/null 2>&1; then
+  ok "${HOSTADDR_SERVICE} active"
+else
+  fail "${HOSTADDR_SERVICE} is not active"
+fi
+
+echo
 if [[ -x "${VMWARE_NETWORKS}" ]]; then
-  "${VMWARE_NETWORKS}" --status || warn "vmware-networks status returned non-zero"
+  "${VMWARE_NETWORKS}" --status || warn "vmware-networks status returned non-zero (non-fatal on some Workstation 26 Linux builds)"
 else
   warn "${VMWARE_NETWORKS} not found"
 fi
