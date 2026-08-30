@@ -19,6 +19,8 @@ set -euo pipefail
 readonly NETWORKING_FILE="/etc/vmware/networking"
 readonly BACKUP_ROOT="/etc/vmware/goad-nomad-backups"
 readonly VMWARE_NETWORKS="/usr/bin/vmware-networks"
+readonly HOSTADDR_HELPER="/usr/local/sbin/goad-nomad-vmnet-hostaddrs"
+readonly HOSTADDR_SERVICE="/etc/systemd/system/goad-nomad-vmnet-hostaddrs.service"
 
 fail() {
   echo "[!] $*" >&2
@@ -29,6 +31,7 @@ fail() {
 [[ -x "${VMWARE_NETWORKS}" ]] || fail "${VMWARE_NETWORKS} was not found. Is VMware Workstation installed?"
 [[ -f "${NETWORKING_FILE}" ]] || fail "${NETWORKING_FILE} was not found. Start VMware Workstation once so networking is initialized."
 command -v python3 >/dev/null 2>&1 || fail "python3 is required to edit VMware networking safely."
+command -v ip >/dev/null 2>&1 || fail "iproute2 is required."
 
 # Do not change the host networking underneath running VMware guests.
 if pgrep -x vmware-vmx >/dev/null 2>&1; then
@@ -105,6 +108,56 @@ if ! "${VMWARE_NETWORKS}" --start; then
   fail "Configuration was rolled back."
 fi
 
+# Workstation 26 on some Linux hosts creates the requested virtual adapters
+# but does not apply VNET_*_HOSTONLY_HOSTADDR from /etc/vmware/networking.
+# Enforce the two intentionally host-visible addresses explicitly and install
+# a small oneshot unit so they are restored after reboot / VMware networking
+# recreation. No host address is ever assigned to vmnet20 or vmnet30.
+cat > "${HOSTADDR_HELPER}" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+configure_addr() {
+  local iface="$1" cidr="$2"
+  local i
+
+  for i in $(seq 1 20); do
+    if ip link show "${iface}" >/dev/null 2>&1; then
+      ip link set dev "${iface}" up
+      ip -4 addr flush dev "${iface}"
+      ip -4 addr add "${cidr}" dev "${iface}"
+      return 0
+    fi
+    sleep 1
+  done
+
+  echo "[!] ${iface} did not appear within 20 seconds" >&2
+  return 1
+}
+
+configure_addr vmnet10 10.4.10.254/24
+configure_addr vmnet99 10.4.99.254/24
+EOF
+chmod 0755 "${HOSTADDR_HELPER}"
+
+cat > "${HOSTADDR_SERVICE}" <<'EOF'
+[Unit]
+Description=GOAD_NOMAD VMware host-only interface addresses
+After=network.target vmware.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/goad-nomad-vmnet-hostaddrs
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable goad-nomad-vmnet-hostaddrs.service >/dev/null
+systemctl restart goad-nomad-vmnet-hostaddrs.service
+
 echo
 echo "[+] GOAD_NOMAD VMware networks configured"
 echo "    vmnet10  NORTH           10.4.10.0/24   host=10.4.10.254 DHCP=off NAT=off"
@@ -114,3 +167,4 @@ echo "    vmnet99  MANAGEMENT      10.4.99.0/24   host=10.4.99.254 DHCP=off NAT=
 echo
 echo "[*] Existing VMware networks were preserved."
 echo "[*] Backup: ${backup_dir}"
+echo "[*] Host-address persistence: goad-nomad-vmnet-hostaddrs.service"
