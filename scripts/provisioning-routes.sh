@@ -12,6 +12,7 @@ readonly NORTH_IF="vmnet10"
 readonly ROUTER_NORTH="10.4.10.1"
 readonly SEVENKINGDOMS_NET="10.4.20.0/24"
 readonly ESSOS_NET="10.4.30.0/24"
+readonly HOSTADDR_HELPER="/usr/local/sbin/goad-nomad-vmnet-hostaddrs"
 
 fail() {
   echo "[!] $*" >&2
@@ -22,6 +23,11 @@ require_root() {
   [[ ${EUID} -eq 0 ]] || fail "Run this mode with sudo."
 }
 
+ensure_host_addresses() {
+  [[ -x "${HOSTADDR_HELPER}" ]] || fail "${HOSTADDR_HELPER} is missing. Run scripts/setup-vmware-networks.sh first."
+  "${HOSTADDR_HELPER}"
+}
+
 check_base() {
   ip link show "${NORTH_IF}" >/dev/null 2>&1 || fail "${NORTH_IF} is missing. Run scripts/setup-vmware-networks.sh first."
   ip -4 addr show dev "${NORTH_IF}" | grep -q '10\.4\.10\.254/24' || fail "${NORTH_IF} does not have 10.4.10.254/24."
@@ -30,6 +36,10 @@ check_base() {
 
 enable_routes() {
   require_root
+  # VMware Workstation 26 can recreate vmnet10 and drop its host IPv4 address
+  # during Vagrant operations. Repair the host-visible addresses immediately
+  # before validating the router and installing temporary provisioning routes.
+  ensure_host_addresses
   check_base
 
   ip route replace "${SEVENKINGDOMS_NET}" via "${ROUTER_NORTH}" dev "${NORTH_IF}"
