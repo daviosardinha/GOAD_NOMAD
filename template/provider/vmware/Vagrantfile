@@ -45,6 +45,15 @@ boxes.append(
         v.vmx["memsize"] = box[:mem]
         v.vmx["numvcpus"] = box[:cpus]
 
+        # Optional box-specific VMX values. Used by GOAD-ROUTER to preserve
+        # the Bento PCI slot layout explicitly instead of relying on provider
+        # behaviour that vagrant-vmware-desktop warns may change later.
+        if box.has_key?(:vmware_vmx)
+          box[:vmware_vmx].each do |key, value|
+            v.vmx[key] = value
+          end
+        end
+
         # GOAD_NOMAD segmented labs may request explicit existing VMware vmnets.
         # vagrant-vmware-desktop accepts :nat/:hostonly/:bridged as adapter input
         # types. Passing :nat with :device causes the provider to emit a VMware
