@@ -120,16 +120,29 @@ if ($svc -and $file) {
     def _install_vmware_tools(self, machine, vmx, port):
         Log.warning(f'GOAD_NOMAD: {machine} has no healthy VMware Tools; bootstrapping them')
 
-        mount = subprocess.run(
-            ['vmrun', '-T', 'ws', 'installTools', vmx],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            check=False,
-        )
-        if mount.returncode != 0:
-            Log.error(f'GOAD_NOMAD: vmrun installTools failed for {machine}: {mount.stderr.strip()}')
-            return False
+        # Workstation can mount the Tools ISO successfully but leave
+        # `vmrun installTools` waiting indefinitely. Bound the host command and
+        # continue to the in-guest setup discovery: the mounted media is the
+        # actual prerequisite, not a clean vmrun exit status.
+        try:
+            mount = subprocess.run(
+                ['vmrun', '-T', 'ws', 'installTools', vmx],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+                timeout=30,
+            )
+            if mount.returncode != 0:
+                Log.warning(
+                    f'GOAD_NOMAD: vmrun installTools returned {mount.returncode} for {machine}; '
+                    'checking for mounted Tools media through WinRM'
+                )
+        except subprocess.TimeoutExpired:
+            Log.warning(
+                f'GOAD_NOMAD: vmrun installTools timed out for {machine}; '
+                'continuing because Workstation may already have mounted the Tools ISO'
+            )
 
         if not self._wait_tcp(port, 120):
             Log.error(f'GOAD_NOMAD: WinRM port {port} did not become reachable for {machine}')
