@@ -33,8 +33,13 @@ boxes.append(
     config.vbguest.auto_update = false
   end
 
-  config.vm.boot_timeout = 600
+  # Orange-Cyberdefense/GOAD issue #338 documents intermittent VMware
+  # "guest not ready for guest communication" failures. Community-validated
+  # mitigation is to give Windows/WinRM more time. Keep communicator selection
+  # per guest below because GOAD_NOMAD also includes a Linux router.
+  config.vm.boot_timeout = 1200
   config.vm.graceful_halt_timeout = 600
+  config.winrm.timeout = 1200
   config.winrm.retry_limit = 30
   config.winrm.retry_delay = 10
 
