@@ -1,0 +1,24 @@
+Vagrant.configure("2") do |config|
+  ENV['VAGRANT_DEFAULT_PROVIDER'] = 'vmware_desktop'
+
+  config.vm.define "GOAD-ROUTER" do |router|
+    router.vm.box = "bento/debian-11"
+    router.vm.hostname = "goad-router"
+    router.vm.synced_folder '.', '/vagrant', disabled: true
+    router.vm.communicator = "ssh"
+
+    router.vm.provider "vmware_desktop" do |v|
+      v.force_vmware_license = "workstation"
+      v.vmx["memsize"] = "768"
+      v.vmx["numvcpus"] = "1"
+
+      # Adapter 0 is Vagrant NAT for provisioning/SSH.
+      v.network_adapter(1, :custom, { :vnet => "vmnet10", :mac_address => "00:50:56:10:10:01" })
+      v.network_adapter(2, :custom, { :vnet => "vmnet20", :mac_address => "00:50:56:10:20:01" })
+      v.network_adapter(3, :custom, { :vnet => "vmnet30", :mac_address => "00:50:56:10:30:01" })
+      v.network_adapter(4, :custom, { :vnet => "vmnet99", :mac_address => "00:50:56:10:99:01" })
+    end
+
+    router.vm.provision :shell, :path => "provision.sh", privileged: true
+  end
+end
