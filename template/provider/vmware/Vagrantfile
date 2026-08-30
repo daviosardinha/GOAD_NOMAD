@@ -44,6 +44,21 @@ boxes.append(
       target.vm.provider "vmware_desktop" do |v|
         v.vmx["memsize"] = box[:mem]
         v.vmx["numvcpus"] = box[:cpus]
+
+        # GOAD_NOMAD segmented labs may request explicit VMware vmnet adapters.
+        # Slot 0 remains Vagrant's NAT adapter so provisioning/SSH keeps working.
+        if box.has_key?(:vmware_network_adapters)
+          box[:vmware_network_adapters].each do |adapter|
+            v.network_adapter(
+              adapter[:slot],
+              :custom,
+              {
+                :vnet => adapter[:vnet],
+                :mac_address => adapter[:mac]
+              }
+            )
+          end
+        end
       end
 
       target.vm.box_download_insecure = box[:box]
@@ -52,11 +67,17 @@ boxes.append(
         target.vm.box_version = box[:box_version]
       end
 
+      target.vm.hostname = box[:hostname] if box.has_key?(:hostname)
+
       # issues/49
       target.vm.synced_folder '.', '/vagrant', disabled: true
 
-      # IP
-      target.vm.network :private_network, ip: box[:ip]
+      # Existing GOAD boxes keep the original private-network behaviour.
+      # Special infrastructure boxes (for example GOAD-ROUTER) can opt out
+      # and configure their interfaces themselves.
+      unless box[:skip_private_network]
+        target.vm.network :private_network, ip: box[:ip]
+      end
 
       # OS specific
       if box[:os] == "windows"
@@ -71,6 +92,12 @@ boxes.append(
         end
       else
         target.vm.communicator = "ssh"
+      end
+
+      if box.has_key?(:provision_scripts)
+        box[:provision_scripts].each do |script|
+          target.vm.provision :shell, :path => script, privileged: true
+        end
       end
 
       if box.has_key?(:forwarded_port)
