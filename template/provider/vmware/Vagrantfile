@@ -45,16 +45,20 @@ boxes.append(
         v.vmx["memsize"] = box[:mem]
         v.vmx["numvcpus"] = box[:cpus]
 
-        # GOAD_NOMAD segmented labs may request explicit VMware vmnet adapters.
-        # Slot 0 remains Vagrant's NAT adapter so provisioning/SSH keeps working.
+        # GOAD_NOMAD segmented labs may request explicit existing VMware vmnets.
+        # vagrant-vmware-desktop accepts :nat/:hostonly/:bridged as adapter input
+        # types. Passing :nat with :device causes the provider to emit a VMware
+        # custom adapter bound to that exact vmnet. Guest addressing remains
+        # under GOAD_NOMAD control via auto_config=false.
         if box.has_key?(:vmware_network_adapters)
           box[:vmware_network_adapters].each do |adapter|
             v.network_adapter(
               adapter[:slot],
-              :custom,
+              :nat,
               {
-                :vnet => adapter[:vnet],
-                :mac_address => adapter[:mac]
+                :device => adapter[:vnet],
+                :mac_address => adapter[:mac],
+                :auto_config => false
               }
             )
           end
