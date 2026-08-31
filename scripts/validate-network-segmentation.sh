@@ -4,8 +4,11 @@ set -Eeuo pipefail
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly RUNTIME="${ROOT}/scripts/validate-network-segmentation-runtime.sh"
 readonly GOAD_VENV="${HOME}/.goad/.venv"
+readonly EXCLUDE_FILE="${ROOT}/.git/info/exclude"
+readonly EXCLUDE_PATTERN="scripts/.goad-nomad-runtime.*.sh"
 
 TMP_RUNTIME=""
+ADDED_EXCLUDE=0
 
 fail() {
     echo "[FAIL] $*" >&2
@@ -16,11 +19,24 @@ cleanup() {
     if [[ -n "${TMP_RUNTIME}" && -f "${TMP_RUNTIME}" ]]; then
         rm -f "${TMP_RUNTIME}"
     fi
+
+    if [[ "${ADDED_EXCLUDE}" -eq 1 && -f "${EXCLUDE_FILE}" ]]; then
+        python3 - "${EXCLUDE_FILE}" "${EXCLUDE_PATTERN}" <<'PY'
+from pathlib import Path
+import sys
+
+p = Path(sys.argv[1])
+pattern = sys.argv[2]
+lines = p.read_text().splitlines()
+p.write_text("\n".join(line for line in lines if line != pattern) + "\n")
+PY
+    fi
 }
 
 trap cleanup EXIT
 
 [[ -f "${RUNTIME}" ]] || fail "runtime validator is missing: ${RUNTIME}"
+[[ -d "${ROOT}/.git" ]] || fail "run this validator from a Git clone"
 
 # GOAD's own goad.sh creates and uses ~/.goad/.venv. A clean source clone does
 # not contain that environment, so expose the canonical GOAD runtime before the
@@ -34,10 +50,17 @@ if ! command -v ansible-playbook >/dev/null 2>&1; then
     fi
 fi
 
-# Windows Server exposes conditional-forwarder state through Get-DnsServerZone.
-# Build a temporary corrected runtime validator so validation still executes
-# exclusively from the clean Git checkout without modifying its working tree.
-TMP_RUNTIME="$(mktemp /tmp/goad-nomad-runtime.XXXXXX.sh)"
+# The patched copy must live under scripts/ so BASH_SOURCE resolves ROOT to the
+# clean clone rather than /tmp. Hide only this ephemeral helper through
+# .git/info/exclude so the runtime validator still sees a clean working tree.
+mkdir -p "$(dirname "${EXCLUDE_FILE}")"
+touch "${EXCLUDE_FILE}"
+if ! grep -Fxq "${EXCLUDE_PATTERN}" "${EXCLUDE_FILE}"; then
+    printf '%s\n' "${EXCLUDE_PATTERN}" >> "${EXCLUDE_FILE}"
+    ADDED_EXCLUDE=1
+fi
+
+TMP_RUNTIME="$(mktemp "${ROOT}/scripts/.goad-nomad-runtime.XXXXXX.sh")"
 
 python3 - "${RUNTIME}" "${TMP_RUNTIME}" <<'PY'
 from pathlib import Path
@@ -47,6 +70,7 @@ src = Path(sys.argv[1])
 dst = Path(sys.argv[2])
 s = src.read_text()
 
+# Windows Server exposes conditional-forwarder state through Get-DnsServerZone.
 s = s.replace(
     "Get-DnsServerConditionalForwarderZone",
     "Get-DnsServerZone",
@@ -64,4 +88,4 @@ s = s.replace(
 dst.write_text(s)
 PY
 
-exec bash "${TMP_RUNTIME}" "$@"
+bash "${TMP_RUNTIME}" "$@"
