@@ -30,7 +30,7 @@ The student attack host attaches directly to NORTH. There is no project-owned Ka
 | GOAD-SRV03 / Braavos | ESSOS member server / MSSQL / ADCS | ESSOS | `10.4.30.23` |
 | GOAD-ROUTER | Debian 11 routing plane | all zones | `.1` on each zone |
 
-`WS01` is planned for Milestone 2 and will be added to NORTH as the dedicated Windows foothold and local-privilege-escalation workstation. Milestone 2 does not begin until Milestone 1's clean-checkout gate is closed.
+`WS01` is planned for Milestone 2 and will be added to NORTH as the dedicated Windows foothold and local-privilege-escalation workstation. Milestone 2 remains planned and is not automatically started by completion of Milestone 1.
 
 ### Provisioning mode vs exercise mode
 
@@ -54,9 +54,12 @@ Run the controller as the normal desktop user. It invokes `sudo` only for host r
 
 ### Milestone 1 — Network Segmentation
 
-**Status: VALIDATION PENDING**
+**Status: COMPLETE**
 
-Live implementation validated: **2026-08-31**
+Live implementation validated: **2026-08-31**  
+Clean-checkout reproducibility validated: **2026-08-31**  
+Validated source commit: `3997cc44539b009577807cea9361842963af2000`  
+Final clean-checkout result: **27 PASS / 0 WARN / 0 FAIL**
 
 Goal: fully integrate realistic network segmentation into GOAD while preserving the original GOAD functionality required by the training path and proving that the committed source reproduces the validated behavior without manual repair.
 
@@ -72,9 +75,12 @@ Goal: fully integrate realistic network segmentation into GOAD while preserving 
 - Added persistent Windows provisioning-NIC isolation using `ethernet0.startConnected = "FALSE"` plus immediate hypervisor-level disconnects with `vmrun`.
 - Added `ad/GOAD/providers/vmware/router/nftables/provisioning.nft` for permissive deployment/maintenance forwarding.
 - Added `ad/GOAD/providers/vmware/router/nftables/exercise.nft` for deny-by-default training enforcement.
-- Added `scripts/validate-network-segmentation-source.sh` for clean-checkout source preflight.
-- Hardened the child-domain provisioning role to install DNS Server plus management tools before promotion, explicitly request DNS during `Install-ADDSDomain`, disable IPv6 on the provisioning NIC, start the DNS service, and validate that the child DNS zone is AD-integrated.
+- Added `scripts/validate-network-segmentation-source.sh` for clean-checkout static/source preflight.
+- Added `scripts/validate-network-segmentation.sh` and the runtime validator for the complete clean-checkout reproducibility gate against an existing deployed provider.
+- Hardened the child-domain provisioning role to install DNS Server plus management tools before promotion, explicitly request DNS during `Install-ADDSDomain`, disable IPv6 on the provisioning NIC, start the DNS service, validate that the child DNS zone is AD-integrated, and keep Active Directory Web Services enabled and running.
 - Preserved the parent-domain conditional forwarder and forest-replicated remote-DC conditional-forwarder design used by GOAD trusts.
+- Hardened runtime validation around normal Windows service startup races after exercise-mode power cycling rather than confusing service readiness with a segmentation failure.
+- Correctly treats repeating GOAD scheduled tasks in Task Scheduler `Running` state (`0x00041301` / decimal `267009`) as healthy when appropriate instead of misclassifying an actively executing bot as failed.
 
 #### Validated exercise-policy exceptions
 
@@ -85,7 +91,7 @@ Goal: fully integrate realistic network segmentation into GOAD while preserving 
 - Established and related return traffic.
 - All other forwarded traffic is denied by the exercise chain policy.
 
-#### Live end-to-end validation gates passed
+#### End-to-end validation gates passed
 
 - All five original GOAD Windows hosts operate on their intended segmented addresses and routes.
 - NORTH child-domain health is operational.
@@ -94,7 +100,7 @@ Goal: fully integrate realistic network segmentation into GOAD while preserving 
 - Cross-forest conditional DNS works through the explicitly permitted DC-to-DC DNS path.
 - Castelblack → Braavos linked-server execution succeeds with remote login `sa`.
 - Braavos → Castelblack linked-server execution succeeds with remote login `sa`.
-- GOAD `connect_bot`, `ntlm_bot`, and `responder_bot` tasks remain healthy with `LastResult = 0`.
+- GOAD `connect_bot`, `ntlm_bot`, and `responder_bot` scheduled tasks remain healthy; validation accepts the repeating responder task while legitimately in Task Scheduler `Running` state.
 - The student/host side retains direct NORTH access.
 - Direct student/host access to SevenKingdoms and ESSOS is blocked.
 - Temporary protected-zone host routes are absent in exercise mode.
@@ -102,21 +108,41 @@ Goal: fully integrate realistic network segmentation into GOAD while preserving 
 - NAT isolation survives repeated Windows VM power cycles.
 - Provisioning → exercise → provisioning → exercise transitions are reversible and validated.
 - The router exercise policy persists through `nftables`.
+- Firewall counters confirm traffic traverses the intended parent/child AD, forest-trust, cross-forest DNS, and linked-MSSQL exceptions rather than an unintended flat path.
 
-#### Clean-checkout reproducibility gate — pending
+#### Clean-checkout reproducibility gate — PASSED
 
-Milestone 1 is not COMPLETE until all of the following pass from a separate clone of `feat/network-segmentation`:
+The final gate was executed from a separate clone of `feat/network-segmentation`, using committed source rather than the development checkout. All required checks passed:
 
-1. `scripts/validate-network-segmentation-source.sh` passes from the clean checkout.
-2. The clean checkout operates the existing deployed provider through `GOAD_PROVIDER_DIR` without relying on files from the development checkout.
-3. `status`, `provisioning`, and `exercise` mode transitions work from the clean checkout.
-4. Exercise mode again proves persistent NAT isolation, removal of protected-zone host routes, NORTH reachability, and blocked direct access to SevenKingdoms/ESSOS.
-5. The relevant child-domain DNS/trust Ansible configuration is rerun from committed source in provisioning mode and is idempotent.
-6. Winterfell retains an AD-integrated `north.sevenkingdoms.local` DNS zone, the parent forwarder points to Kingslanding, and the forest-replicated `essos.local` forwarder points to Meereen without manual PowerShell repair.
-7. Parent/child trust, forest trust, GOAD bots, and both linked-SQL execution paths remain healthy after the source-driven rerun.
-8. The lab is returned to exercise mode and all five provisioning NAT adapters remain persistently isolated.
+1. Source preflight completed successfully from the clean clone with a clean Git working tree and valid Bash, Python, Ruby/Vagrant, and `nftables` syntax.
+2. The clean checkout operated the existing deployed provider through `GOAD_PROVIDER_DIR` without relying on source files from the development checkout.
+3. `provisioning` and `exercise` transitions worked from the clean checkout, including persistent VMware `startConnected` changes.
+4. All five Vagrant/WinRM management paths worked in provisioning mode and all five NAT management paths were isolated again in exercise mode.
+5. The committed `ad-child_domain.yml` configuration was replayed twice; the second child-domain promotion task was idempotent (`ok`) rather than re-promoting the domain.
+6. The committed `ad-trusts.yml` configuration replayed successfully with no unreachable or failed hosts.
+7. Winterfell retained the AD-integrated child DNS zone, parent forwarder to Kingslanding `10.4.20.10`, and ESSOS forwarder to Meereen `10.4.30.12`; the forest-replicated ESSOS forwarder on Kingslanding was also correct.
+8. Parent/child trust, forest trust, GOAD bots, and both linked-SQL directions passed in provisioning mode.
+9. After returning to exercise mode, NORTH remained directly reachable while direct SevenKingdoms and ESSOS access remained blocked and protected-zone host routes were absent.
+10. Exercise-path validation from NORTH succeeded for parent DC discovery, cross-forest ESSOS DNS, and Castelblack → Braavos linked SQL after the power-cycle transition.
+11. Final firewall counters recorded traffic on the explicitly intended inter-zone rules, with the router still using a `policy drop` forward chain.
+12. The lab finished in recorded `exercise` mode with all five Windows `ethernet0.startConnected = "FALSE"` and provisioning NAT paths isolated.
 
-Only after these gates pass will this document be changed back to **Status: COMPLETE**.
+The complete clean-checkout validator reported **27 PASS / 0 WARN / 0 FAIL** and ended with `CLEAN-CHECKOUT NETWORK SEGMENTATION RUNTIME VALIDATION PASSED`.
+
+#### Validation commands
+
+Source-only preflight:
+
+```bash
+bash scripts/validate-network-segmentation-source.sh
+```
+
+Complete runtime/reproducibility gate against a deployed provider:
+
+```bash
+export GOAD_PROVIDER_DIR="$HOME/Documents/GOAD_NOMAD/workspace/<instance>/provider"
+bash scripts/validate-network-segmentation.sh
+```
 
 #### Operational notes
 
@@ -127,7 +153,7 @@ Only after these gates pass will this document be changed back to **Status: COMP
 
 ### Milestone 2 — Windows Foothold & Local Privilege Escalation
 
-**Status: PLANNED / BLOCKED BY MILESTONE 1**
+**Status: PLANNED / NOT STARTED**
 
 Goal: add one Windows workstation (`WS01`) in NORTH and implement the PNPT-derived Windows Local Privilege Escalation curriculum using resettable vulnerability profiles instead of many extra VMs.
 
