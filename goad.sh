@@ -54,7 +54,9 @@ then
   fi
 fi
 
-# launch the app
+# GOAD_NOMAD keeps ./goad.sh as the canonical operator entry point.  The
+# console subclass preserves stock GOAD commands while adding the segmented
+# VMware lifecycle (network/mode/validate) used by this fork.
 source $venv/bin/activate
-$py goad.py $@
+$py goad_nomad.py $@
 deactivate
