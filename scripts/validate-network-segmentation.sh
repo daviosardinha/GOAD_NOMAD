@@ -175,47 +175,115 @@ sql_end = 'pass "exercise-mode Castelblack -> Braavos linked SQL"'
 start = s.index(sql_start)
 end = s.index(sql_end, start) + len(sql_end)
 
+# Castelblack and Winterfell share NORTH/vmnet10, so the router is not in their
+# domain-authentication path. A real exercise-mode test showed that WinRM can
+# return more than two minutes after the power cycle and that SQL may become
+# reachable before Netlogon/DC locator/SID translation have fully converged.
+# Prove the NORTH domain path first, then test the deliberate cross-zone SQL
+# relationship. No secure-channel repair is performed here.
 new_sql = r'''if ! ansible_ps_north srv02 exercise-linked-sql <<'PS'
 $ErrorActionPreference = 'Stop'
-$cs = 'Server=127.0.0.1,1433;User ID=sa;Password=Sup1_sa_P@ssw0rd!;Encrypt=False;TrustServerCertificate=True'
-$conn = New-Object System.Data.SqlClient.SqlConnection $cs
-$deadline = (Get-Date).AddMinutes(4)
-$opened = $false
-$lastError = ''
 
-while ((Get-Date) -lt $deadline -and -not $opened) {
+$domainDeadline = (Get-Date).AddMinutes(5)
+$domainReady = $false
+$lastDomainError = ''
+
+while ((Get-Date) -lt $domainDeadline -and -not $domainReady) {
     try {
-        $conn.Open()
-        $opened = $true
+        Clear-DnsClientCache
+
+        $dns = Resolve-DnsName 'winterfell.north.sevenkingdoms.local' -Type A -Server 10.4.10.11 -ErrorAction Stop
+        if (-not ($dns.IPAddress -contains '10.4.10.11')) {
+            throw 'Winterfell authoritative DNS did not return 10.4.10.11'
+        }
+
+        $dc = nltest /dsgetdc:north.sevenkingdoms.local /force 2>&1 | Out-String
+        if ($LASTEXITCODE -ne 0 -or $dc -notmatch '10\.4\.10\.11') {
+            throw "NORTH DC discovery failed: $($dc.Trim())"
+        }
+
+        $secure = nltest /sc_query:north.sevenkingdoms.local 2>&1 | Out-String
+        if ($LASTEXITCODE -ne 0) {
+            throw "NORTH secure-channel query failed: $($secure.Trim())"
+        }
+
+        $account = New-Object System.Security.Principal.NTAccount('NORTH','jon.snow')
+        $sid = $account.Translate([System.Security.Principal.SecurityIdentifier]).Value
+        if (-not $sid -or $sid -notmatch '^S-1-5-21-') {
+            throw "NORTH\\jon.snow SID translation returned '$sid'"
+        }
+
+        $domainReady = $true
+        Write-Output "EXERCISE_CASTELBLACK_DOMAIN_PATH=PASS SID=$sid"
     } catch {
-        $lastError = $_.Exception.Message
+        $lastDomainError = $_.Exception.Message
         Start-Sleep -Seconds 5
     }
 }
 
-if (-not $opened) { throw "local SQL did not become ready: $lastError" }
+if (-not $domainReady) {
+    throw "Castelblack NORTH domain path did not become ready: $lastDomainError"
+}
 
+$tcp = New-Object System.Net.Sockets.TcpClient
 try {
-    $cmd = $conn.CreateCommand()
-    $cmd.CommandText = @"
+    $async = $tcp.BeginConnect('10.4.30.23', 1433, $null, $null)
+    if (-not $async.AsyncWaitHandle.WaitOne(3000, $false)) {
+        throw 'Braavos TCP/1433 connection timed out'
+    }
+    $tcp.EndConnect($async)
+} finally {
+    $tcp.Close()
+}
+Write-Output 'EXERCISE_BRAAVOS_TCP_1433=PASS'
+
+$sqlDeadline = (Get-Date).AddMinutes(2)
+$sqlReady = $false
+$lastSqlError = ''
+
+while ((Get-Date) -lt $sqlDeadline -and -not $sqlReady) {
+    $conn = $null
+    try {
+        $cs = 'Server=127.0.0.1,1433;User ID=sa;Password=Sup1_sa_P@ssw0rd!;Encrypt=False;TrustServerCertificate=True'
+        $conn = New-Object System.Data.SqlClient.SqlConnection $cs
+        $conn.Open()
+
+        $cmd = $conn.CreateCommand()
+        $cmd.CommandText = @"
 EXECUTE AS LOGIN = N'NORTH\jon.snow';
 EXEC ('SELECT @@SERVERNAME AS RemoteServer, SUSER_SNAME() AS RemoteLogin') AT [BRAAVOS];
 REVERT;
 "@
-    $ds = New-Object System.Data.DataSet
-    $da = New-Object System.Data.SqlClient.SqlDataAdapter $cmd
-    [void]$da.Fill($ds)
-    $row = $ds.Tables[0].Rows[0]
-    if ($row.RemoteServer -ne 'BRAAVOS\SQLEXPRESS' -or $row.RemoteLogin -ne 'sa') { throw 'exercise linked SQL result incorrect' }
-    Write-Output 'EXERCISE_CASTELBLACK_TO_BRAAVOS=PASS'
-} finally {
-    $conn.Close()
+        $ds = New-Object System.Data.DataSet
+        $da = New-Object System.Data.SqlClient.SqlDataAdapter $cmd
+        [void]$da.Fill($ds)
+        $row = $ds.Tables[0].Rows[0]
+
+        if ($row.RemoteServer -ne 'BRAAVOS\SQLEXPRESS' -or $row.RemoteLogin -ne 'sa') {
+            throw "exercise linked SQL result incorrect: server=$($row.RemoteServer) login=$($row.RemoteLogin)"
+        }
+
+        $sqlReady = $true
+        Write-Output 'EXERCISE_CASTELBLACK_TO_BRAAVOS=PASS'
+    } catch {
+        $lastSqlError = $_.Exception.Message
+        Start-Sleep -Seconds 5
+    } finally {
+        if ($conn) {
+            $conn.Close()
+            $conn.Dispose()
+        }
+    }
+}
+
+if (-not $sqlReady) {
+    throw "exercise linked SQL did not become ready after the NORTH domain path was healthy: $lastSqlError"
 }
 PS
 then
-    fatal "exercise-mode Castelblack -> Braavos linked SQL failed"
+    fatal "exercise-mode Castelblack domain readiness / Braavos linked SQL validation failed"
 fi
-pass "exercise-mode Castelblack -> Braavos linked SQL"'''
+pass "exercise-mode Castelblack domain path + Braavos linked SQL"'''
 
 s = s[:start] + new_sql + s[end:]
 
