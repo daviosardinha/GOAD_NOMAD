@@ -200,4 +200,5 @@ s = s[:start] + new_sql + s[end:]
 dst.write_text(s)
 PY
 
+bash -n "${TMP_RUNTIME}" || fail "generated runtime validator failed shell syntax check"
 bash "${TMP_RUNTIME}" "$@"
