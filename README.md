@@ -15,7 +15,7 @@ Major project milestones and their completion gates are tracked in [`docs/GOAD_N
 
 Current status: **Milestone 1 — Network Segmentation: VALIDATION PENDING.** The segmented runtime design has passed end-to-end validation on the development deployment, including Active Directory trusts, DNS, GOAD bots, MSSQL linked-server execution, persistent NAT isolation, and deny-by-default routing. The final gate is clean-checkout reproducibility: the committed source must pass static preflight, operate the existing deployment from a separate clone, and rerun the relevant DNS/trust configuration idempotently without manual repair.
 
-Use `./scripts/lab-mode.sh provisioning` for Vagrant/Ansible maintenance and `./scripts/lab-mode.sh exercise` before starting the training environment. Run `./scripts/validate-network-segmentation-source.sh` after a fresh clone before operating a lab.
+Use `./scripts/lab-mode.sh provisioning` for Vagrant/Ansible maintenance and `./scripts/lab-mode.sh exercise` before starting the training environment. After a fresh clone, run `bash scripts/validate-network-segmentation-source.sh` before operating a lab.
 
 ## Description
 GOAD is a pentest active directory LAB project.
