@@ -170,6 +170,11 @@
     name: ActiveDirectoryDSC
     state: present
 
-# issue 156
-- name: enable the Active directory web services if not enabled
-  ansible.windows.win_shell: Set-Service -Name adws -StartupType Automatic
+# Orange-Cyberdefense/GOAD issue #156 documents intermittent child-DC ADWS
+# startup failures. Setting only StartupType is not enough for a running lab,
+# so GOAD_NOMAD makes the service state explicit and idempotent.
+- name: Ensure Active Directory Web Services is enabled and running
+  ansible.windows.win_service:
+    name: ADWS
+    start_mode: auto
+    state: started
