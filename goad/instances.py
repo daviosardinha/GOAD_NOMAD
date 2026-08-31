@@ -8,6 +8,8 @@ from goad.instance import LabInstance
 
 class LabInstances:
 
+    GOAD_NOMAD_NETWORK_SCOPE = '10.4.0.0/16 (segmented)'
+
     def __init__(self, config):
         self.instances = None
         self._init_instances(config)
@@ -71,14 +73,39 @@ class LabInstances:
             provider = f'[dark_orange3]{provider}[/dark_orange3]'
         return provider
 
+    @staticmethod
+    def _is_goad_nomad_segmented(instance):
+        return instance.lab_name == 'GOAD' and instance.provider_name == VMWARE
+
+    def _network_scope(self, instance):
+        if self._is_goad_nomad_segmented(instance):
+            return self.GOAD_NOMAD_NETWORK_SCOPE
+        return instance.ip_range + '.0/24'
+
+    def _runtime_mode(self, instance_id, instance):
+        if not self._is_goad_nomad_segmented(instance):
+            return '-'
+
+        state_file = os.path.join(
+            GoadPath.get_instance_provider_path(instance_id),
+            '.goad-nomad-mode',
+        )
+        if not os.path.isfile(state_file):
+            return 'unknown'
+
+        with open(state_file, 'r', encoding='utf-8') as handle:
+            mode = handle.read().strip()
+        return mode if mode else 'unknown'
+
     def show_instances(self, lab_name='', provider_name='', current_instance_id='', filter_instance_id=''):
         instance_found = False
         table = Table()
         table.add_column('Instance ID')
         table.add_column('Lab')
         table.add_column('Provider')
-        table.add_column('IP Range')
+        table.add_column('Network Scope')
         table.add_column('Status')
+        table.add_column('Mode')
         table.add_column('Is Default')
         table.add_column('Extensions')
         for instance_id, instance in self.instances.items():
@@ -95,8 +122,9 @@ class LabInstances:
             table.add_row(f'[red]> [/red][green]{instance_id}[/green]' if instance_id == current_instance_id else instance_id,
                           instance.lab_name,
                           self.color_provider(instance.provider_name),
-                          instance.ip_range + '.0/24',
+                          self._network_scope(instance),
                           self.color_status(instance.status),
+                          self._runtime_mode(instance_id, instance),
                           'Yes' if instance.is_default else 'No',
                           ", ".join(instance.extensions)
                           )
