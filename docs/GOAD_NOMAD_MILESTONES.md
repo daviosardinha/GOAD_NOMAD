@@ -2,7 +2,7 @@
 
 This document tracks only the major GOAD_NOMAD project milestones. Individual implementation steps, fixes, and smoke tests belong in normal development history and do not become milestones by themselves.
 
-A milestone is marked COMPLETE only when its full scope is integrated into the project and its end-to-end validation gates pass.
+A milestone is marked COMPLETE only when its full scope is integrated into the project and its end-to-end validation gates pass, including clean-checkout reproducibility for source changes that control deployment or isolation.
 
 ## Current architecture
 
@@ -30,7 +30,7 @@ The student attack host attaches directly to NORTH. There is no project-owned Ka
 | GOAD-SRV03 / Braavos | ESSOS member server / MSSQL / ADCS | ESSOS | `10.4.30.23` |
 | GOAD-ROUTER | Debian 11 routing plane | all zones | `.1` on each zone |
 
-`WS01` is planned for Milestone 2 and will be added to NORTH as the dedicated Windows foothold and local-privilege-escalation workstation.
+`WS01` is planned for Milestone 2 and will be added to NORTH as the dedicated Windows foothold and local-privilege-escalation workstation. Milestone 2 does not begin until Milestone 1's clean-checkout gate is closed.
 
 ### Provisioning mode vs exercise mode
 
@@ -54,11 +54,11 @@ Run the controller as the normal desktop user. It invokes `sudo` only for host r
 
 ### Milestone 1 — Network Segmentation
 
-**Status: COMPLETE**
+**Status: VALIDATION PENDING**
 
-Completed: **2026-08-31**
+Live implementation validated: **2026-08-31**
 
-Goal: fully integrate realistic network segmentation into GOAD while preserving the original GOAD functionality required by the training path.
+Goal: fully integrate realistic network segmentation into GOAD while preserving the original GOAD functionality required by the training path and proving that the committed source reproduces the validated behavior without manual repair.
 
 #### Implemented changes
 
@@ -72,7 +72,9 @@ Goal: fully integrate realistic network segmentation into GOAD while preserving 
 - Added persistent Windows provisioning-NIC isolation using `ethernet0.startConnected = "FALSE"` plus immediate hypervisor-level disconnects with `vmrun`.
 - Added `ad/GOAD/providers/vmware/router/nftables/provisioning.nft` for permissive deployment/maintenance forwarding.
 - Added `ad/GOAD/providers/vmware/router/nftables/exercise.nft` for deny-by-default training enforcement.
-- Hardened the child-domain DNS path so GOAD's cross-forest conditional forwarders continue to work on the segmented topology.
+- Added `scripts/validate-network-segmentation-source.sh` for clean-checkout source preflight.
+- Hardened the child-domain provisioning role to install DNS Server plus management tools before promotion, explicitly request DNS during `Install-ADDSDomain`, disable IPv6 on the provisioning NIC, start the DNS service, and validate that the child DNS zone is AD-integrated.
+- Preserved the parent-domain conditional forwarder and forest-replicated remote-DC conditional-forwarder design used by GOAD trusts.
 
 #### Validated exercise-policy exceptions
 
@@ -83,7 +85,7 @@ Goal: fully integrate realistic network segmentation into GOAD while preserving 
 - Established and related return traffic.
 - All other forwarded traffic is denied by the exercise chain policy.
 
-#### End-to-end validation gates passed
+#### Live end-to-end validation gates passed
 
 - All five original GOAD Windows hosts operate on their intended segmented addresses and routes.
 - NORTH child-domain health is operational.
@@ -101,6 +103,21 @@ Goal: fully integrate realistic network segmentation into GOAD while preserving 
 - Provisioning → exercise → provisioning → exercise transitions are reversible and validated.
 - The router exercise policy persists through `nftables`.
 
+#### Clean-checkout reproducibility gate — pending
+
+Milestone 1 is not COMPLETE until all of the following pass from a separate clone of `feat/network-segmentation`:
+
+1. `scripts/validate-network-segmentation-source.sh` passes from the clean checkout.
+2. The clean checkout operates the existing deployed provider through `GOAD_PROVIDER_DIR` without relying on files from the development checkout.
+3. `status`, `provisioning`, and `exercise` mode transitions work from the clean checkout.
+4. Exercise mode again proves persistent NAT isolation, removal of protected-zone host routes, NORTH reachability, and blocked direct access to SevenKingdoms/ESSOS.
+5. The relevant child-domain DNS/trust Ansible configuration is rerun from committed source in provisioning mode and is idempotent.
+6. Winterfell retains an AD-integrated `north.sevenkingdoms.local` DNS zone, the parent forwarder points to Kingslanding, and the forest-replicated `essos.local` forwarder points to Meereen without manual PowerShell repair.
+7. Parent/child trust, forest trust, GOAD bots, and both linked-SQL execution paths remain healthy after the source-driven rerun.
+8. The lab is returned to exercise mode and all five provisioning NAT adapters remain persistently isolated.
+
+Only after these gates pass will this document be changed back to **Status: COMPLETE**.
+
 #### Operational notes
 
 - Windows Vagrant NAT addresses are DHCP-assigned and may change between boots; the mode controller does not depend on those addresses.
@@ -108,11 +125,9 @@ Goal: fully integrate realistic network segmentation into GOAD while preserving 
 - `GOAD-ROUTER` keeps its own Vagrant NAT adapter for operator SSH/control. The exercise firewall's deny-by-default forward policy prevents that management path from becoming a student inter-zone bypass.
 - `vmnet99` remains a host-visible router management network; Windows guests are not attached to it and the exercise forward policy does not grant it arbitrary access to protected zones.
 
-**Milestone 1 — Network Segmentation is COMPLETE.**
-
 ### Milestone 2 — Windows Foothold & Local Privilege Escalation
 
-**Status: PLANNED**
+**Status: PLANNED / BLOCKED BY MILESTONE 1**
 
 Goal: add one Windows workstation (`WS01`) in NORTH and implement the PNPT-derived Windows Local Privilege Escalation curriculum using resettable vulnerability profiles instead of many extra VMs.
 
