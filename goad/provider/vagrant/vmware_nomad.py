@@ -40,6 +40,60 @@ class GoadNomadVmwareProvider(VmwareProvider):
         env['GOAD_PROVIDER_DIR'] = str(self.path)
         return env
 
+    def _run_vagrant_bounded(self, args, timeout):
+        command = [self.command.vagrant_bin] + args
+        Log.info(f'GOAD_NOMAD: running bounded command: {" ".join(command)}')
+        try:
+            result = subprocess.run(
+                command,
+                cwd=self.path,
+                check=False,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired:
+            Log.warning(
+                f'GOAD_NOMAD: {" ".join(command)} exceeded {timeout}s; '
+                'continuing with automatic shutdown fallback'
+            )
+            return False
+        return result.returncode == 0
+
+    def _running_instance_vms(self):
+        """Return this instance's running Vagrant machine names via vmrun."""
+        try:
+            result = subprocess.run(
+                ['vmrun', '-T', 'ws', 'list'],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+                timeout=15,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            Log.error(f'GOAD_NOMAD: cannot query VMware running state: {exc}')
+            return None
+
+        if result.returncode != 0:
+            Log.error(
+                'GOAD_NOMAD: vmrun list failed: '
+                + (result.stderr.strip() or result.stdout.strip())
+            )
+            return None
+
+        running_paths = {
+            os.path.realpath(line.strip())
+            for line in result.stdout.splitlines()[1:]
+            if line.strip()
+        }
+
+        names = self.goad_nomad_windows + ['GOAD-ROUTER']
+        running = []
+        for machine in names:
+            vmx = self._vmx_path(machine)
+            if vmx and os.path.realpath(vmx) in running_paths:
+                running.append(machine)
+        return running
+
     def prepare_install(self):
         """Ensure the four GOAD_NOMAD VMware networks exist before Vagrant."""
         if not self.is_goad_nomad_segmented():
@@ -151,6 +205,53 @@ class GoadNomadVmwareProvider(VmwareProvider):
             Log.info(f'GOAD_NOMAD Network : {self.network_scope}')
             Log.info(f'GOAD_NOMAD Mode    : {self.get_runtime_mode()}')
         return result
+
+    def stop(self):
+        """Stop the segmented lab without leaving the operator stuck in Vagrant.
+
+        Upstream GOAD gives graceful halt a 600-second window. Windows/WinRM can
+        stall in Vagrant's GracefulHalt path, so GOAD_NOMAD adds an outer bound:
+        try the normal graceful Vagrant halt first, then automatically force only
+        the guests that remain running and verify the final VMware power state.
+        """
+        if not self.is_goad_nomad_segmented():
+            return super().stop()
+
+        running = self._running_instance_vms()
+        if running is None:
+            return False
+        if not running:
+            Log.success('GOAD_NOMAD: all instance VMs are already stopped')
+            return True
+
+        Log.info(
+            'GOAD_NOMAD: stopping lab gracefully with a bounded controller timeout '
+            f'({", ".join(running)})'
+        )
+        self._run_vagrant_bounded(['halt'], timeout=180)
+
+        remaining = self._running_instance_vms()
+        if remaining is None:
+            return False
+
+        if remaining:
+            Log.warning(
+                'GOAD_NOMAD: graceful shutdown did not finish for: '
+                + ', '.join(remaining)
+                + '; automatically forcing only those remaining guests'
+            )
+            for machine in remaining:
+                self._run_vagrant_bounded(['halt', machine, '-f'], timeout=45)
+
+        remaining = self._running_instance_vms()
+        if remaining is None:
+            return False
+        if remaining:
+            Log.error('GOAD_NOMAD: shutdown incomplete; still running: ' + ', '.join(remaining))
+            return False
+
+        Log.success('GOAD_NOMAD: all instance VMs stopped and VMware state verified')
+        return True
 
     def install(self):
         if not self.is_goad_nomad_segmented():
