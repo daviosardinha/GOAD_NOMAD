@@ -24,7 +24,7 @@ then
       fi
   else
       echo "Python version is < 3.8 please update python before install"
-      exit
+      exit 1
   fi
 
   if [ "$($py -m venv -h 2>/dev/null | grep -i 'usage:')" ]; then
@@ -33,30 +33,32 @@ then
     echo "venv module is not installed."
     echo "please install $py-venv according to your system"
     echo "exit"
-    exit 0
+    exit 1
   fi
 
   echo '[+] venv not found, start python venv creation'
   mkdir -p ~/.goad
-  $py -m venv $venv
-  source $venv/bin/activate
+  $py -m venv "$venv"
+  source "$venv/bin/activate"
   if [ $? -eq 0 ]; then
     $py -m pip install --upgrade pip
     export SETUPTOOLS_USE_DISTUTILS=stdlib
-    $py -m pip install -r $requirement_file
+    $py -m pip install -r "$requirement_file"
     cd ansible
-    ansible-galaxy install -r $requirement_file
-    cd -
+    ansible-galaxy install -r "$requirement_file"
+    cd - >/dev/null
   else
     echo "Error in venv creation"
-    rm -rf $venv
-    exit 0
+    rm -rf "$venv"
+    exit 1
   fi
 fi
 
-# GOAD_NOMAD keeps ./goad.sh as the canonical operator entry point.  The
+# GOAD_NOMAD keeps ./goad.sh as the canonical operator entry point. The
 # console subclass preserves stock GOAD commands while adding the segmented
 # VMware lifecycle (network/mode/validate) used by this fork.
-source $venv/bin/activate
-$py goad_nomad.py $@
+source "$venv/bin/activate"
+$py goad_nomad.py "$@"
+result=$?
 deactivate
+exit "$result"
