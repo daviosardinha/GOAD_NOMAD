@@ -92,6 +92,8 @@ The broad DC-to-DC rules are deliberate because Active Directory uses dynamic RP
 
 ## Milestone 1 validation record
 
+Milestone 1 — Network Segmentation is **COMPLETE**. The final clean-checkout reproducibility gate was executed on 2026-08-31 from committed source `3997cc44539b009577807cea9361842963af2000` and reported **27 PASS / 0 WARN / 0 FAIL**.
+
 The completed segmented topology was validated end-to-end with:
 
 - NORTH → SevenKingdoms DC discovery;
@@ -101,19 +103,45 @@ The completed segmented topology was validated end-to-end with:
 - cross-forest conditional DNS;
 - Castelblack → Braavos linked SQL execution with remote `sa`;
 - Braavos → Castelblack linked SQL execution with remote `sa`;
-- healthy `connect_bot`, `ntlm_bot`, and `responder_bot` scheduled tasks;
+- healthy `connect_bot`, `ntlm_bot`, and `responder_bot` scheduled tasks, including the legitimate Task Scheduler `Running` status used by the repeating responder task;
 - direct NORTH access from the student side;
 - direct SevenKingdoms and ESSOS access denied from the student/host side;
 - isolation of all five Windows provisioning NAT adapters;
 - NAT isolation surviving repeated Windows VM power cycles;
 - reversible provisioning → exercise → provisioning → exercise transitions;
-- persistent deny-by-default `nftables` enforcement.
+- persistent deny-by-default `nftables` enforcement;
+- source-driven replay of the child-domain/DNS and trust configuration from a separate Git checkout;
+- exercise-path parent DC discovery, cross-forest DNS, and linked-SQL behavior after the mode-change power cycle;
+- firewall counters proving that the intended AD, DNS, and MSSQL exceptions carried the required cross-zone traffic.
 
 Windows NAT addresses are DHCP-assigned and may change. `scripts/lab-mode.sh` deliberately uses Vagrant VMX metadata and VMware device controls rather than hard-coding those provisioning addresses.
 
 In exercise mode, Vagrant/VMware may report a guest's segmented `10.4.x.x` interface as its primary IP. This is expected. Normal Vagrant/Ansible maintenance should be performed in provisioning mode.
 
 ## Validation commands
+
+Source-only validation from the repository root:
+
+```bash
+bash scripts/validate-network-segmentation-source.sh
+```
+
+Complete clean-checkout/runtime validation against a deployed provider:
+
+```bash
+export GOAD_PROVIDER_DIR="$HOME/Documents/GOAD_NOMAD/workspace/<instance>/provider"
+sudo -v
+bash scripts/validate-network-segmentation.sh
+```
+
+The complete validator performs provisioning/exercise transitions and returns the lab to exercise mode on failure where possible. A successful run must end with:
+
+```text
+PASS: 27
+WARN: 0
+FAIL: 0
+[READY] CLEAN-CHECKOUT NETWORK SEGMENTATION RUNTIME VALIDATION PASSED
+```
 
 Check the current lab mode from the repository root:
 
