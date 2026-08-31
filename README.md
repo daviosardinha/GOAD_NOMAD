@@ -13,9 +13,11 @@ This fork is being extended into GOAD_NOMAD: a segmented Red Team training range
 
 Major project milestones and their completion gates are tracked in [`docs/GOAD_NOMAD_MILESTONES.md`](./docs/GOAD_NOMAD_MILESTONES.md). Individual implementation steps and bug fixes are not treated as separate milestones.
 
-Current status: **Milestone 1 — Network Segmentation: VALIDATION PENDING.** The segmented runtime design has passed end-to-end validation on the development deployment, including Active Directory trusts, DNS, GOAD bots, MSSQL linked-server execution, persistent NAT isolation, and deny-by-default routing. The final gate is clean-checkout reproducibility: the committed source must pass static preflight, operate the existing deployment from a separate clone, and rerun the relevant DNS/trust configuration idempotently without manual repair.
+Current status: **Milestone 1 — Network Segmentation: COMPLETE.** The five original GOAD Windows systems now operate in segmented NORTH, SEVENKINGDOMS, and ESSOS zones behind a deny-by-default routing plane while preserving the required Active Directory trusts, DNS behavior, GOAD bots, and MSSQL linked-server relationships. The committed implementation passed the final clean-checkout reproducibility gate on 2026-08-31 from source commit `3997cc44539b009577807cea9361842963af2000` with **27 PASS / 0 WARN / 0 FAIL**.
 
-Use `./scripts/lab-mode.sh provisioning` for Vagrant/Ansible maintenance and `./scripts/lab-mode.sh exercise` before starting the training environment. After a fresh clone, run `bash scripts/validate-network-segmentation-source.sh` before operating a lab.
+Use `./scripts/lab-mode.sh provisioning` for Vagrant/Ansible maintenance and `./scripts/lab-mode.sh exercise` before starting the training environment. For source-only checks run `bash scripts/validate-network-segmentation-source.sh`; for the complete clean-checkout/runtime gate run `bash scripts/validate-network-segmentation.sh` with `GOAD_PROVIDER_DIR` pointing to the deployed provider directory.
+
+Milestone 2 remains **PLANNED / NOT STARTED**. Completing Milestone 1 does not automatically begin the next implementation phase.
 
 ## Description
 GOAD is a pentest active directory LAB project.
