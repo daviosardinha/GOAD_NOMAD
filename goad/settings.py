@@ -8,6 +8,8 @@ class Settings:
     This class keep the current settings
     """
 
+    GOAD_NOMAD_NETWORK_SCOPE = '10.4.0.0/16 (segmented)'
+
     def __init__(self, lab_manager):
         self.lab_manager = lab_manager
         self.lab_name = None
@@ -15,6 +17,9 @@ class Settings:
         self.provisioner_name = None
         self.extensions_name = []
         self.ip_range = None
+
+    def is_goad_nomad_segmented(self):
+        return self.lab_name == 'GOAD' and self.provider_name == VMWARE
 
     def update(self, instance):
         """
@@ -31,13 +36,17 @@ class Settings:
         Log.info(f'Current Lab         : {self.lab_name}')
         Log.info(f'Current Provider    : {self.provider_name}')
         Log.info(f'Current Provisioner : {self.provisioner_name}')
-        if self.provider_name != LUDUS:
+        if self.is_goad_nomad_segmented():
+            Log.info(f'Current Network     : {self.GOAD_NOMAD_NETWORK_SCOPE}')
+        elif self.provider_name != LUDUS:
             Log.info(f'Current IP range    : {self.ip_range}.X')
         Log.info(f'Extension(s)        :')
         for extension in self.extensions_name:
             Log.info(f' - {extension}')
 
     def inline(self):
+        if self.is_goad_nomad_segmented():
+            return f'{self.lab_name}/{self.provider_name}/{self.provisioner_name}/10.4.0.0-16-segmented'
         if self.provider_name == LUDUS:
             return f'{self.lab_name}/{self.provider_name}/{self.provisioner_name}'
         else:
