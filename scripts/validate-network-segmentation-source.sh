@@ -26,6 +26,8 @@ for file in \
     scripts/provisioning-routes.sh \
     scripts/setup-vmware-networks.sh \
     scripts/check-vmware-networks.sh \
+    scripts/validate-network-segmentation.sh \
+    scripts/validate-network-segmentation-runtime.sh \
     scripts/validate-network-segmentation-source.sh \
     ad/GOAD/providers/vmware/router/provision.sh \
     ad/GOAD/providers/vmware/router/nftables/provisioning.nft \
@@ -48,6 +50,8 @@ for file in \
     scripts/provisioning-routes.sh \
     scripts/setup-vmware-networks.sh \
     scripts/check-vmware-networks.sh \
+    scripts/validate-network-segmentation.sh \
+    scripts/validate-network-segmentation-runtime.sh \
     scripts/validate-network-segmentation-source.sh \
     ad/GOAD/providers/vmware/router/provision.sh
  do
@@ -90,7 +94,11 @@ grep -Fq 'ms_tcpip6' ansible/roles/child_domain/tasks/main.yml ||
     fail "child-domain role does not harden IPv6 on the provisioning NIC"
 grep -Fq 'Get-DnsServerZone' ansible/roles/child_domain/tasks/main.yml ||
     fail "child-domain role does not validate the AD-integrated child DNS zone"
-pass "Winterfell DNS hardening is present"
+grep -Fq 'name: ADWS' ansible/roles/child_domain/tasks/main.yml ||
+    fail "child-domain role does not manage Active Directory Web Services"
+grep -Fq 'state: started' ansible/roles/child_domain/tasks/main.yml ||
+    fail "child-domain role does not ensure required Windows services are started"
+pass "Winterfell DNS / ADWS hardening is present"
 
 grep -Fq 'policy drop;' ad/GOAD/providers/vmware/router/nftables/exercise.nft ||
     fail "exercise policy is not deny-by-default"
