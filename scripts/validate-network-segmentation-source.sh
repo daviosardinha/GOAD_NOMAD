@@ -21,15 +21,12 @@ require_file() {
     [[ -f "$1" ]] || fail "missing required file: $1"
 }
 
-require_exec() {
-    [[ -x "$1" ]] || fail "expected executable file: $1"
-}
-
 for file in \
     scripts/lab-mode.sh \
     scripts/provisioning-routes.sh \
     scripts/setup-vmware-networks.sh \
     scripts/check-vmware-networks.sh \
+    scripts/validate-network-segmentation-source.sh \
     ad/GOAD/providers/vmware/router/provision.sh \
     ad/GOAD/providers/vmware/router/nftables/provisioning.nft \
     ad/GOAD/providers/vmware/router/nftables/exercise.nft \
@@ -37,23 +34,21 @@ for file in \
  do
     require_file "${file}"
  done
+pass "required network-segmentation source files are present"
+
+# lab-mode.sh is the user-facing mode controller and must retain its executable
+# bit in Git. Supporting helpers are deliberately invoked through bash by the
+# project so archive/copy operations cannot break them solely by stripping mode
+# bits.
+[[ -x scripts/lab-mode.sh ]] || fail "scripts/lab-mode.sh is not executable"
+pass "lab-mode.sh executable bit"
 
 for file in \
     scripts/lab-mode.sh \
     scripts/provisioning-routes.sh \
     scripts/setup-vmware-networks.sh \
     scripts/check-vmware-networks.sh \
-    scripts/validate-network-segmentation-source.sh
- do
-    require_exec "${file}"
- done
-pass "user-facing network scripts are executable"
-
-for file in \
-    scripts/lab-mode.sh \
-    scripts/provisioning-routes.sh \
-    scripts/setup-vmware-networks.sh \
-    scripts/check-vmware-networks.sh \
+    scripts/validate-network-segmentation-source.sh \
     ad/GOAD/providers/vmware/router/provision.sh
  do
     bash -n "${file}"
@@ -68,7 +63,7 @@ pass "Python syntax"
 if command -v ruby >/dev/null 2>&1; then
     ruby -c ad/GOAD/providers/vmware/Vagrantfile >/dev/null
     ruby -c ad/GOAD/providers/vmware/router/Vagrantfile >/dev/null
-    pass "generated VMware Vagrantfile syntax"
+    pass "VMware Vagrantfile syntax"
 else
     warn "ruby not found; skipped Vagrantfile syntax check"
 fi
@@ -79,7 +74,7 @@ if command -v nft >/dev/null 2>&1; then
         sudo nft -c -f ad/GOAD/providers/vmware/router/nftables/exercise.nft
         pass "nftables syntax"
     else
-        warn "passwordless sudo unavailable; run manually: sudo nft -c -f ad/GOAD/providers/vmware/router/nftables/{provisioning,exercise}.nft"
+        warn "passwordless sudo unavailable; run manually: sudo nft -c -f ad/GOAD/providers/vmware/router/nftables/provisioning.nft && sudo nft -c -f ad/GOAD/providers/vmware/router/nftables/exercise.nft"
     fi
 else
     warn "nft not found; skipped nftables parser check"
