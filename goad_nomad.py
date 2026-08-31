@@ -1,11 +1,12 @@
 """GOAD_NOMAD console entry point.
 
 This module deliberately subclasses the upstream-style ``goad.py`` console
-rather than duplicating the project controller.  ``./goad.sh`` remains the
+rather than duplicating the project controller. ``./goad.sh`` remains the
 canonical entry point while GOAD_NOMAD can add segmented-network operations
 without making future upstream merges unnecessarily invasive.
 """
 
+import argparse
 from pathlib import Path
 import runpy
 import sys
@@ -21,7 +22,6 @@ _upstream = runpy.run_path(
 )
 
 BaseGoad = _upstream['Goad']
-parse_args = _upstream['parse_args']
 print_logo = _upstream['print_logo']
 
 
@@ -122,6 +122,39 @@ class GoadNomad(BaseGoad):
         if provider is not None:
             Log.info(f'Network Scope : {provider.get_network_scope()}')
             Log.info(f'Network Mode  : {provider.get_runtime_mode()}')
+
+    def do_set_ip_range(self, arg):
+        if self._nomad_provider() is not None:
+            Log.warning('GOAD/VMware uses the fixed GOAD_NOMAD segmented profile')
+            Log.info('Network scope: 10.4.0.0/16; use "network" to show its four zones')
+            return
+        super().do_set_ip_range(arg)
+
+
+def parse_args():
+    task_help = 'tasks available: install/check/start/stop/restart/destroy/status/snapshot/reset/validate'
+    parser = argparse.ArgumentParser(
+        prog='goad_nomad.py',
+        description='GOAD_NOMAD lab management console.',
+        epilog='''
+Examples:
+ - Launch GOAD_NOMAD interactive console: ./goad.sh
+ - Install default segmented GOAD on VMware: ./goad.sh -t install -l GOAD -p vmware
+ - Validate an installed instance: ./goad.sh -t validate -i <instance_id>
+''',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument('-t', '--task', help=task_help, required=False)
+    parser.add_argument('-l', '--lab', help='lab to use (default: GOAD)', default='GOAD', required=False)
+    parser.add_argument('-p', '--provider', help='provider to use (default: vmware)', default='vmware', required=False)
+    parser.add_argument('-ip', '--ip_range', help='legacy flat-network prefix; ignored by segmented GOAD/VMware', default='', required=False)
+    parser.add_argument('-m', '--method', help='deploy method to use (default: local)', default='local', required=False)
+    parser.add_argument('-i', '--instance', help='use a specific instance (use default if not selected)', required=False)
+    parser.add_argument('-e', '--extensions', help='extensions to use', action='append', required=False)
+    parser.add_argument('-a', '--ansible_only', help='run only provisioning (ansible) on instance (-i) (for task install only)', required=False)
+    parser.add_argument('-r', '--run_playbook', help='run only one ansible playbook on instance (-i) (for task install only)', required=False)
+    parser.add_argument('-d', '--disable_dependencies', help='disable_dependencies', action='append', required=False)
+    return parser.parse_args()
 
 
 def _dispatch_task(goad, args):
