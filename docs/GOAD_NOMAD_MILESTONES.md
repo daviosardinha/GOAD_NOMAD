@@ -4,7 +4,7 @@ This document tracks only the major GOAD_NOMAD project milestones. Individual im
 
 A milestone is marked COMPLETE only when its full scope is integrated into the project and its end-to-end validation gates pass.
 
-## Current architecture target
+## Current architecture
 
 ### VMware networks
 
@@ -19,7 +19,7 @@ VMware DHCP and VMware NAT are disabled on the four GOAD_NOMAD networks. Existin
 
 The student attack host attaches directly to NORTH. There is no project-owned Kali VLAN. SEVENKINGDOMS and ESSOS deliberately have no host-side VMware adapters so the host cannot bypass the lab router and pivoting model.
 
-### GOAD host placement target
+### GOAD host placement
 
 | Host | Role | Zone | Target address |
 | --- | --- | --- | --- |
@@ -30,51 +30,85 @@ The student attack host attaches directly to NORTH. There is no project-owned Ka
 | GOAD-SRV03 / Braavos | ESSOS member server / MSSQL / ADCS | ESSOS | `10.4.30.23` |
 | GOAD-ROUTER | Debian 11 routing plane | all zones | `.1` on each zone |
 
-`WS01` will be added later to NORTH after the segmented original five-host GOAD topology is fully validated.
+`WS01` is planned for Milestone 2 and will be added to NORTH as the dedicated Windows foothold and local-privilege-escalation workstation.
 
 ### Provisioning mode vs exercise mode
 
 GOAD_NOMAD deliberately separates deployment connectivity from the student attack surface.
 
-During **provisioning mode**, Vagrant NAT remains temporarily available to the guests and the host may install explicit temporary routes to SEVENKINGDOMS and ESSOS through `GOAD-ROUTER`. This allows local Ansible to configure protected-zone systems without adding a permanent flat management NIC to every Windows VM.
+During **provisioning mode**, the five Windows VMware NAT adapters are persistently enabled and connected, the host receives temporary routes to SEVENKINGDOMS and ESSOS through `GOAD-ROUTER`, and the router uses the permissive provisioning firewall policy. This preserves Vagrant/Ansible and maintenance access without exposing permanent host adapters inside the protected zones.
 
-During **exercise mode**, those temporary host routes must be removed and the shared Vagrant/NAT provisioning paths must be disconnected or hardened so they cannot bypass segmentation. Student reachability must then be governed by the exercise networks and the router firewall only.
+During **exercise mode**, `scripts/lab-mode.sh` installs the deny-by-default router policy, removes the temporary protected-zone host routes, sets every Windows provisioning adapter to `ethernet0.startConnected = "FALSE"`, and disconnects those adapters at the VMware hypervisor layer. The persistent VMware flag ensures the provisioning bypass does not return after a Windows VM power cycle.
+
+The supported controller is:
+
+```bash
+./scripts/lab-mode.sh status
+./scripts/lab-mode.sh provisioning
+./scripts/lab-mode.sh exercise
+```
+
+Run the controller as the normal desktop user. It invokes `sudo` only for host routing operations.
 
 ## Major milestone status
 
 ### Milestone 1 — Network Segmentation
 
-**Status: ACTIVE**
+**Status: COMPLETE**
 
-Goal: fully integrate realistic network segmentation into GOAD while preserving all original GOAD functionality required by the training path.
+Completed: **2026-08-31**
 
-Current progress:
+Goal: fully integrate realistic network segmentation into GOAD while preserving the original GOAD functionality required by the training path.
 
-- VMware host networks `vmnet10`, `vmnet20`, `vmnet30`, and `vmnet99` are automated and validated.
-- Debian 11 `GOAD-ROUTER` is implemented and survives reboot with all four lab interfaces.
-- IPv4 forwarding and persistent `nftables` are working.
-- NORTH and MANAGEMENT host-side access are working.
-- SEVENKINGDOMS and ESSOS correctly have no host-side VMware adapters.
-- Per-host VMware zone/address definitions for the five original GOAD Windows machines are implemented and awaiting full deployment validation.
-- VMware/Ansible inventories now use the segmented target addresses.
-- Temporary host routing for local Ansible provisioning is implemented explicitly rather than exposing permanent host adapters in protected zones.
-- Router forwarding is temporarily permissive while the original GOAD hosts are migrated and validated.
+#### Implemented changes
 
-Remaining before this milestone can be marked COMPLETE:
+- Automated VMware networks `vmnet10` (NORTH), `vmnet20` (SEVENKINGDOMS), `vmnet30` (ESSOS), and `vmnet99` (MANAGEMENT).
+- Preserved existing VMware networks such as `vmnet1` and `vmnet8`; GOAD_NOMAD owns only its four dedicated vmnets.
+- Added persistent host addresses `10.4.10.254/24` on NORTH and `10.4.99.254/24` on MANAGEMENT without host adapters on SEVENKINGDOMS or ESSOS.
+- Added Debian 11 `GOAD-ROUTER` with deterministic interfaces, `.1/24` gateway addresses, IPv4 forwarding, and persistent `nftables`.
+- Moved the five original GOAD Windows systems to deterministic segmented `10.4.x.x` addresses while retaining Vagrant NAT only as a provisioning plane.
+- Added explicit provisioning-only host routes to `10.4.20.0/24` and `10.4.30.0/24` through `10.4.10.1`.
+- Added `scripts/lab-mode.sh` with reversible `status`, `provisioning`, and `exercise` operations.
+- Added persistent Windows provisioning-NIC isolation using `ethernet0.startConnected = "FALSE"` plus immediate hypervisor-level disconnects with `vmrun`.
+- Added `ad/GOAD/providers/vmware/router/nftables/provisioning.nft` for permissive deployment/maintenance forwarding.
+- Added `ad/GOAD/providers/vmware/router/nftables/exercise.nft` for deny-by-default training enforcement.
+- Hardened the child-domain DNS path so GOAD's cross-forest conditional forwarders continue to work on the segmented topology.
 
-- Deploy all five original GOAD Windows hosts in their target zones and validate their addresses/routes.
-- Preserve Vagrant and Ansible provisioning in the segmented topology.
-- Validate internal routing and DNS behavior.
-- Validate NORTH child-domain health.
-- Validate NORTH ↔ SEVENKINGDOMS parent/child Active Directory relationship.
-- Validate SEVENKINGDOMS ↔ ESSOS forest trust.
-- Validate Castelblack ↔ Braavos MSSQL linked-server relationship.
-- Replace temporary allow-forward policy with deny-by-default segmentation rules.
-- Confirm the student host in NORTH cannot directly route to SEVENKINGDOMS or ESSOS.
-- Confirm legitimate DC-to-DC and server-to-server cross-zone relationships still function.
-- Remove or harden temporary provisioning paths so they cannot become exercise-time segmentation bypasses.
+#### Validated exercise-policy exceptions
 
-Only after all of the above passes is **Network Segmentation** complete.
+- Winterfell `10.4.10.11` ↔ Kingslanding `10.4.20.10` for the NORTH child-domain / SevenKingdoms parent-domain relationship and Active Directory dynamic RPC.
+- Kingslanding `10.4.20.10` ↔ Meereen `10.4.30.12` for the SevenKingdoms / ESSOS forest trust.
+- Winterfell `10.4.10.11` ↔ Meereen `10.4.30.12` on TCP/UDP 53 for GOAD's cross-forest conditional DNS behavior.
+- Castelblack `10.4.10.22` ↔ Braavos `10.4.30.23` on TCP 1433 for the deliberate MSSQL linked-server relationship.
+- Established and related return traffic.
+- All other forwarded traffic is denied by the exercise chain policy.
+
+#### End-to-end validation gates passed
+
+- All five original GOAD Windows hosts operate on their intended segmented addresses and routes.
+- NORTH child-domain health is operational.
+- NORTH ↔ SevenKingdoms DC discovery and bidirectional parent/child trust are operational.
+- SevenKingdoms ↔ ESSOS DC discovery and bidirectional forest trust are operational.
+- Cross-forest conditional DNS works through the explicitly permitted DC-to-DC DNS path.
+- Castelblack → Braavos linked-server execution succeeds with remote login `sa`.
+- Braavos → Castelblack linked-server execution succeeds with remote login `sa`.
+- GOAD `connect_bot`, `ntlm_bot`, and `responder_bot` tasks remain healthy with `LastResult = 0`.
+- The student/host side retains direct NORTH access.
+- Direct student/host access to SevenKingdoms and ESSOS is blocked.
+- Temporary protected-zone host routes are absent in exercise mode.
+- All five Windows provisioning NAT paths are disconnected in exercise mode.
+- NAT isolation survives repeated Windows VM power cycles.
+- Provisioning → exercise → provisioning → exercise transitions are reversible and validated.
+- The router exercise policy persists through `nftables`.
+
+#### Operational notes
+
+- Windows Vagrant NAT addresses are DHCP-assigned and may change between boots; the mode controller does not depend on those addresses.
+- In exercise mode, Vagrant may discover an exercise-side `10.4.x.x` address as a guest's primary IP. This is expected; normal Vagrant/Ansible maintenance belongs in provisioning mode.
+- `GOAD-ROUTER` keeps its own Vagrant NAT adapter for operator SSH/control. The exercise firewall's deny-by-default forward policy prevents that management path from becoming a student inter-zone bypass.
+- `vmnet99` remains a host-visible router management network; Windows guests are not attached to it and the exercise forward policy does not grant it arbitrary access to protected zones.
+
+**Milestone 1 — Network Segmentation is COMPLETE.**
 
 ### Milestone 2 — Windows Foothold & Local Privilege Escalation
 

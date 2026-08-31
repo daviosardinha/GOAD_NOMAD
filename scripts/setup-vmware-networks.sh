@@ -77,8 +77,9 @@ for line in lines:
 # - NORTH is intentionally reachable from the student's host.
 # - SEVENKINGDOMS and ESSOS must not gain host-side adapters because that
 #   would bypass the router/pivoting model.
-# - MANAGEMENT is host-visible only as a provisioning/control plane and will
-#   be disabled/restricted for exercise mode in a later milestone.
+# - MANAGEMENT remains host-visible for router control. Windows guests are not
+#   attached to it, and the exercise router policy does not grant arbitrary
+#   MANAGEMENT-to-zone forwarding.
 #
 # Host-visible adapters use .254 so they never collide with GOAD-ROUTER (.1).
 networks = {

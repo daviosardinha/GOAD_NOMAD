@@ -61,7 +61,9 @@ apt-get install -y --no-install-recommends nftables
 install -d -m 0755 /etc/network/interfaces.d
 cat > /etc/network/interfaces.d/goad-router <<'EOF'
 # Managed by GOAD_NOMAD. Do not add a default gateway on lab interfaces.
-# Vagrant's NAT adapter remains the provisioning path during this milestone.
+# Vagrant's NAT adapter remains the operator SSH/provisioning path for GOAD-ROUTER.
+# Exercise isolation is enforced by the router forward policy and by disconnecting
+# the Windows guests' provisioning NAT adapters.
 EOF
 
 configure_lab_interface "NORTH" "${NORTH_MAC}" "10.4.10.1"
@@ -77,9 +79,10 @@ EOF
 
 sysctl --system >/dev/null
 
-# Milestone 1 intentionally permits forwarding. The deny-by-default policy
-# is introduced only after the original GOAD hosts are moved to their zones
-# and trust/MSSQL flows have been validated.
+# Router bootstrap starts in provisioning mode.
+# Forwarding is intentionally permissive while Vagrant/Ansible configures the
+# lab. Before training begins, scripts/lab-mode.sh switches the range to the
+# validated deny-by-default exercise policy and isolates Windows NAT adapters.
 cat > /etc/nftables.conf <<'EOF'
 #!/usr/sbin/nft -f
 flush ruleset
@@ -112,7 +115,7 @@ printf '%s\n' "    SEVENKINGDOMS  10.4.20.1/24"
 printf '%s\n' "    ESSOS          10.4.30.1/24"
 printf '%s\n' "    MANAGEMENT     10.4.99.1/24"
 printf '%s\n' "    IPv4 forwarding enabled"
-printf '%s\n' "    nftables active (temporary allow-forward policy)"
+printf '%s\n' "    nftables active (provisioning allow-forward policy)"
 
 ip -br address
 nft list ruleset

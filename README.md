@@ -13,7 +13,9 @@ This fork is being extended into GOAD_NOMAD: a segmented Red Team training range
 
 Major project milestones and their completion gates are tracked in [`docs/GOAD_NOMAD_MILESTONES.md`](./docs/GOAD_NOMAD_MILESTONES.md). Individual implementation steps and bug fixes are not treated as separate milestones.
 
-Current status: **Milestone 1 — Network Segmentation: ACTIVE.** The VMware networks and Debian routing plane are working; the milestone remains open until the five original GOAD Windows hosts are fully migrated, trust/service relationships are validated, and deny-by-default segmentation is enforced.
+Current status: **Milestone 1 — Network Segmentation: COMPLETE.** The five original GOAD Windows systems now operate in segmented NORTH, SEVENKINGDOMS, and ESSOS zones behind a deny-by-default routing plane while preserving the required Active Directory trusts, DNS behavior, GOAD bots, and MSSQL linked-server relationships.
+
+Use `./scripts/lab-mode.sh provisioning` for Vagrant/Ansible maintenance and `./scripts/lab-mode.sh exercise` before starting the training environment.
 
 ## Description
 GOAD is a pentest active directory LAB project.
