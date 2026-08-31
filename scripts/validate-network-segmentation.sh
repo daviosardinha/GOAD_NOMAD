@@ -23,8 +23,8 @@ trap cleanup EXIT
 [[ -f "${RUNTIME}" ]] || fail "runtime validator is missing: ${RUNTIME}"
 
 # GOAD's own goad.sh creates and uses ~/.goad/.venv. A clean source clone does
-# not contain that environment, so make the canonical existing GOAD runtime
-# available to the validator before it attempts Ansible discovery.
+# not contain that environment, so expose the canonical GOAD runtime before the
+# validator performs Ansible discovery.
 if ! command -v ansible-playbook >/dev/null 2>&1; then
     if [[ -x "${GOAD_VENV}/bin/ansible-playbook" ]]; then
         export PATH="${GOAD_VENV}/bin:${PATH}"
@@ -34,12 +34,9 @@ if ! command -v ansible-playbook >/dev/null 2>&1; then
     fi
 fi
 
-# Build a temporary runtime validator with two compatibility fixes:
-# 1. Windows Server exposes conditional-forwarder state through Get-DnsServerZone.
-#    There is no Get-DnsServerConditionalForwarderZone cmdlet.
-# 2. vagrant_ps must return captured PowerShell/WinRM output even when the remote
-#    command exits non-zero, so the validator can print the real error and then
-#    fail on its explicit PASS marker instead of silently exiting under set -e.
+# Windows Server exposes conditional-forwarder state through Get-DnsServerZone.
+# Build a temporary corrected runtime validator so validation still executes
+# exclusively from the clean Git checkout without modifying its working tree.
 TMP_RUNTIME="$(mktemp /tmp/goad-nomad-runtime.XXXXXX.sh)"
 
 python3 - "${RUNTIME}" "${TMP_RUNTIME}" <<'PY'
@@ -55,14 +52,16 @@ s = s.replace(
     "Get-DnsServerZone",
 )
 
-needle = "    ) 2>&1 | tr -d '\\\\r'\n}\n\nfind_ansible_playbook()"
-replacement = "    ) 2>&1 | tr -d '\\\\r' || true\n}\n\nfind_ansible_playbook()"
+# Best-effort hardening: preserve WinRM output on a remote PowerShell failure so
+# the validator can print the real failure instead of exiting silently under
+# set -e. Do not make launcher execution depend on this textual transformation.
+s = s.replace(
+    ") 2>&1 | tr -d '\\r'\n}",
+    ") 2>&1 | tr -d '\\r' || true\n}",
+    1,
+)
 
-if needle not in s:
-    raise SystemExit("Unable to locate vagrant_ps output pipeline in runtime validator")
-
-s = s.replace(needle, replacement, 1)
 dst.write_text(s)
 PY
 
-bash "${TMP_RUNTIME}" "$@"
+exec bash "${TMP_RUNTIME}" "$@"
