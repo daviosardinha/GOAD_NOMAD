@@ -60,6 +60,17 @@ class Ansible(Provisioner):
         return playbook_list
 
     def run(self, playbook=None):
+        full_lab_run = playbook is None
+
+        # GOAD_NOMAD providers may need to rebuild an out-of-band management
+        # plane before a complete Ansible run. For normal providers this hook
+        # does not exist and upstream behaviour is unchanged.
+        if full_lab_run:
+            prepare = getattr(self.provider, 'prepare_provisioning', None)
+            if callable(prepare) and not prepare():
+                Log.error('Provider failed to prepare the provisioning network state')
+                return False
+
         inventory = self.get_inventory(self.lab_name, self.provider_name)
         provision_result = False
         if playbook is None:
@@ -71,6 +82,17 @@ class Ansible(Provisioner):
                     return False
         else:
             provision_result = self.run_playbook(playbook, inventory)
+
+        # A successful full GOAD_NOMAD installation must never leave the
+        # provisioning bypasses enabled. Provider-specific finalization moves
+        # the lab into its normal exercise/training state before READY is set by
+        # the controller.
+        if full_lab_run and provision_result:
+            finalize = getattr(self.provider, 'finalize_install', None)
+            if callable(finalize) and not finalize():
+                Log.error('Provider failed to finalize the installed lab state')
+                return False
+
         return provision_result
 
     def run_extension(self, extension, current_instance_extensions_name, install=True):
