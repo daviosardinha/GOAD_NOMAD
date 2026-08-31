@@ -84,6 +84,28 @@ s = s.replace(
     1,
 )
 
+# GOAD's repeating authentication bots may be caught while they are actively
+# executing. Windows Task Scheduler reports decimal 267009
+# (0x00041301 / SCHED_S_TASK_RUNNING) in that state. It is a success status,
+# not a failed task result. Ready tasks must still have a normal result of 0.
+bot_old = r'''    if ($task.State.ToString() -notin @('Ready','Running')) { throw "$name state=$($task.State)" }
+    if ($info.LastTaskResult -ne 0) { throw "$name LastTaskResult=$($info.LastTaskResult)" }
+    Write-Output "$name=PASS"'''
+
+bot_new = r'''    $state = $task.State.ToString()
+    $last = [uint32]$info.LastTaskResult
+    if ($state -notin @('Ready','Running')) { throw "$name state=$state" }
+    if ($state -eq 'Running') {
+        if ($last -notin @(0, 267009)) { throw "$name LastTaskResult=$last while Running" }
+    } elseif ($last -ne 0) {
+        throw "$name LastTaskResult=$last while Ready"
+    }
+    Write-Output "$name=PASS state=$state last=$last"'''
+
+if bot_old not in s:
+    raise SystemExit("GOAD bot validation block not found")
+s = s.replace(bot_old, bot_new, 1)
+
 # Exercise mode power-cycles the Windows VMs when startConnected changes. SMB
 # can become reachable before ADWS/DNS/MSSQL are fully ready. The provisioning
 # phase already validates trust direction with Get-ADTrust, so the exercise
