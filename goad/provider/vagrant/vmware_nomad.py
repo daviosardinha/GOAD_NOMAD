@@ -1,5 +1,9 @@
 import os
+import socket
 import subprocess
+import time
+
+import winrm
 
 from goad.goadpath import GoadPath
 from goad.log import Log
@@ -20,6 +24,14 @@ class GoadNomadVmwareProvider(VmwareProvider):
         ('ESSOS', 'vmnet30', '10.4.30.0/24'),
         ('MANAGEMENT', 'vmnet99', '10.4.99.0/24'),
     )
+
+    management_hosts = {
+        'GOAD-DC01': '10.4.20.10',
+        'GOAD-DC02': '10.4.10.11',
+        'GOAD-DC03': '10.4.30.12',
+        'GOAD-SRV02': '10.4.10.22',
+        'GOAD-SRV03': '10.4.30.23',
+    }
 
     def is_goad_nomad_segmented(self):
         return self.lab_name == 'GOAD'
@@ -93,6 +105,158 @@ class GoadNomadVmwareProvider(VmwareProvider):
             if vmx and os.path.realpath(vmx) in running_paths:
                 running.append(machine)
         return running
+
+    def _all_windows_materialized(self):
+        """Return True only when all five Windows VMX files already exist."""
+        return all(self._vmx_path(machine) for machine in self.goad_nomad_windows)
+
+    def _router_policy_path(self, mode):
+        return os.path.join(
+            GoadPath.get_lab_provider_path('GOAD', 'vmware'),
+            'router',
+            'nftables',
+            f'{mode}.nft',
+        )
+
+    def _apply_router_policy(self, mode):
+        """Apply one router policy without requiring the Windows VMs to exist.
+
+        ``lab-mode.sh provisioning`` deliberately validates all five Windows VMX
+        files before changing state. That is correct for normal mode switching,
+        but a genuinely fresh installation needs the router forwarding plane
+        before the Windows VMs have even been created. This small bootstrap path
+        therefore applies only the router policy; the full mode controller takes
+        ownership again once all Windows guests exist.
+        """
+        policy = self._router_policy_path(mode)
+        if not os.path.isfile(policy):
+            Log.error(f'GOAD_NOMAD router policy not found: {policy}')
+            return False
+
+        with open(policy, 'r', encoding='utf-8') as handle:
+            policy_text = handle.read()
+
+        remote = (
+            'set -e; '
+            'cat > /tmp/goad-nomad-mode.nft; '
+            'sudo nft -c -f /tmp/goad-nomad-mode.nft; '
+            'sudo install -m 0644 /tmp/goad-nomad-mode.nft /etc/nftables.conf; '
+            'sudo systemctl restart nftables'
+        )
+
+        result = subprocess.run(
+            [self.command.vagrant_bin, 'ssh', 'GOAD-ROUTER', '-c', remote],
+            cwd=self.path,
+            input=policy_text,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            Log.error(f'GOAD_NOMAD: failed to apply router {mode} policy')
+            return False
+
+        Log.success(f'GOAD_NOMAD: router {mode} policy active')
+        return True
+
+    def _enable_provisioning_routes(self):
+        route_script = self._script('provisioning-routes.sh')
+        if route_script is None:
+            return False
+
+        result = subprocess.run(
+            ['sudo', 'bash', route_script, 'enable'],
+            check=False,
+        )
+        if result.returncode != 0:
+            Log.error('GOAD_NOMAD: failed to enable temporary provisioning routes')
+            return False
+
+        Log.success('GOAD_NOMAD: protected-zone provisioning routes enabled')
+        return True
+
+    def _bootstrap_provisioning_plane(self):
+        """Make routing available before Vagrant chooses a protected-zone IP.
+
+        vagrant-vmware-desktop may select the exercise NIC address (for example
+        10.4.30.12) as its WinRM endpoint. The host intentionally has no vmnet20
+        or vmnet30 adapter, so routes and permissive router policy must already
+        exist before any Windows ``vagrant up`` operation begins.
+        """
+        Log.info('GOAD_NOMAD: bootstrapping router before Windows guests')
+        if not self.command.run_vagrant(['up', 'GOAD-ROUTER'], self.path):
+            Log.error('GOAD_NOMAD: failed to bring up GOAD-ROUTER')
+            return False
+
+        # On an existing complete deployment use the authoritative mode
+        # controller. It also reconnects persistent NAT adapters if the lab was
+        # previously in exercise mode.
+        if self._all_windows_materialized():
+            Log.info('GOAD_NOMAD: complete VM set detected; entering provisioning mode before guest bring-up')
+            return self.set_runtime_mode('provisioning')
+
+        # On the first ever install the Windows VMX files do not exist yet, so
+        # only bootstrap the router + host routes. Full mode state is persisted
+        # after VmwareProvider.install() has created all five guests.
+        if not self._apply_router_policy('provisioning'):
+            return False
+        if not self._enable_provisioning_routes():
+            return False
+
+        return True
+
+    @staticmethod
+    def _lab_winrm_session(host):
+        return winrm.Session(
+            f'https://{host}:5986/wsman',
+            auth=('vagrant', 'vagrant'),
+            transport='ntlm',
+            server_cert_validation='ignore',
+            operation_timeout_sec=30,
+            read_timeout_sec=45,
+        )
+
+    def _wait_lab_winrm_ready(self, machine, host, timeout=300):
+        """Prove the exact management endpoint Ansible will use is functional."""
+        deadline = time.time() + timeout
+        last_error = None
+
+        while time.time() < deadline:
+            try:
+                with socket.create_connection((host, 5986), timeout=3):
+                    pass
+
+                result = self._lab_winrm_session(host).run_ps(
+                    "Write-Output 'GOAD_NOMAD_ANSIBLE_READY'"
+                )
+                if (
+                    result.status_code == 0
+                    and b'GOAD_NOMAD_ANSIBLE_READY' in result.std_out
+                ):
+                    Log.success(
+                        f'GOAD_NOMAD: {machine} Ansible WinRM ready at {host}:5986'
+                    )
+                    return True
+            except Exception as exc:
+                last_error = exc
+
+            time.sleep(5)
+
+        detail = f': {last_error}' if last_error is not None else ''
+        Log.error(
+            f'GOAD_NOMAD: {machine} Ansible WinRM never became ready at '
+            f'{host}:5986 within {timeout}s{detail}'
+        )
+        return False
+
+    def _validate_management_plane(self):
+        """Fail closed unless all five inventory endpoints are ready."""
+        Log.info('GOAD_NOMAD: validating all five Ansible management endpoints')
+        for machine, host in self.management_hosts.items():
+            if not self._wait_lab_winrm_ready(machine, host):
+                return False
+
+        Log.success('GOAD_NOMAD: all Windows Ansible management endpoints are healthy')
+        return True
 
     def prepare_install(self):
         """Ensure the four GOAD_NOMAD VMware networks exist before Vagrant."""
@@ -170,8 +334,10 @@ class GoadNomadVmwareProvider(VmwareProvider):
         if not self.is_goad_nomad_segmented():
             return True
         if self.get_runtime_mode() == 'provisioning':
-            return True
-        return self.set_runtime_mode('provisioning')
+            return self._validate_management_plane()
+        if not self.set_runtime_mode('provisioning'):
+            return False
+        return self._validate_management_plane()
 
     def finalize_install(self):
         """A successful full GOAD provisioning run must end in exercise mode."""
@@ -260,11 +426,28 @@ class GoadNomadVmwareProvider(VmwareProvider):
         if not self.prepare_install():
             return False
 
-        # Reuse the already hardened GOAD VMware bring-up: router first,
-        # per-Windows-VM VMware Tools recovery, then temporary provisioning
-        # routes. Once Vagrant is healthy, make provisioning mode explicit and
-        # persistent through the same controller used during training.
+        # The provisioning network plane must exist before any Windows Vagrant
+        # bring-up. vagrant-vmware-desktop may select a 10.4.x exercise address
+        # for WinRM, and protected zones are intentionally unreachable from the
+        # host until these temporary routes + router policy are active.
+        if not self._bootstrap_provisioning_plane():
+            return False
+
+        # Reuse the hardened VMware guest bring-up and Tools recovery. The base
+        # provider will harmlessly re-check the already-running router and
+        # re-enable the same idempotent provisioning routes at the end.
         if not super().install():
             return False
 
-        return self.set_runtime_mode('provisioning')
+        # Do not let the console launch Ansible merely because Vagrant returned.
+        # Prove the exact five HTTPS/WinRM inventory endpoints first.
+        if not self._validate_management_plane():
+            Log.error('GOAD_NOMAD: provider bring-up incomplete; refusing Ansible provisioning')
+            return False
+
+        # Persist the authoritative mode and make sure NAT adapters remain
+        # connected for the provisioning phase.
+        if not self.set_runtime_mode('provisioning'):
+            return False
+
+        return self._validate_management_plane()
