@@ -13,7 +13,7 @@ import sys
 
 from goad.log import Log
 from goad.menu import print_menu_entry, print_menu_title
-from goad.utils import READY
+from goad.utils import PROVIDED, READY
 
 
 _upstream = runpy.run_path(
@@ -51,6 +51,91 @@ class GoadNomad(BaseGoad):
         if callable(check) and check():
             return provider
         return None
+
+    def do_provide(self, arg=''):
+        """Run the provider and return the result from *this* attempt.
+
+        Stock GOAD's interactive install path historically checks the persisted
+        instance status after ``do_provide``.  On a retry, an instance may still
+        carry ``ready for provisioning`` from an earlier successful provider
+        run.  If the current provider attempt then fails, that stale status can
+        incorrectly allow Ansible to start against partially available VMs.
+
+        GOAD_NOMAD treats the current provider return value as authoritative.
+        """
+        provider = self.lab_manager.get_current_instance_provider()
+        if provider is None:
+            Log.error('No provider loaded for the current instance')
+            return False
+
+        result = provider.install()
+        if not result:
+            Log.error('GOAD_NOMAD: provider bring-up failed; Ansible provisioning will not start')
+            return False
+
+        self.lab_manager.get_current_instance().set_status(PROVIDED)
+
+        # Preserve upstream dynamic-IP behaviour for providers that need it.
+        if getattr(provider, 'update_ip_range', False):
+            Log.info('Update IP range')
+            new_range = provider.get_ip_range()
+            if new_range is not None:
+                Log.info(f'new range : {new_range}')
+                self.lab_manager.get_current_instance().update_ip_range(new_range)
+                Log.info('reload instance')
+                instance_id = self.lab_manager.get_current_instance_id()
+                self.do_load(instance_id)
+                self.refresh_prompt()
+
+        return True
+
+    def do_install_instance(self, arg=''):
+        """Install/retry an existing instance without trusting stale status."""
+        Log.info('Launch providing')
+        if not self.do_provide():
+            Log.error('Providing error stop')
+            self.refresh_prompt()
+            return False
+
+        Log.info('Prepare jumpbox if needed')
+        self.do_prepare_jumpbox()
+        Log.info('Launch provisioning')
+        provision_result = self.do_provision_lab()
+        if provision_result:
+            for extension_name in self.lab_manager.current_settings.extensions_name:
+                Log.info(f'Start installation of extension : {extension_name}')
+                self.do_install_extension(extension_name)
+        self.refresh_prompt()
+        return provision_result
+
+    def do_provision_lab(self, arg=''):
+        """Provision only with a healthy management plane and isolate on success."""
+        provider = self.lab_manager.get_current_instance_provider()
+        if provider is None:
+            Log.error('No provider loaded for the current instance')
+            return False
+
+        prepare = getattr(provider, 'prepare_provisioning', None)
+        if callable(prepare) and not prepare():
+            Log.error('GOAD_NOMAD: failed to prepare provisioning mode; aborting Ansible')
+            return False
+
+        provision_result = super().do_provision_lab(arg)
+        if not provision_result:
+            # Keep provisioning mode available for diagnosis/retry.  Do not
+            # claim the instance is installed and do not silently isolate it.
+            return False
+
+        finalize = getattr(provider, 'finalize_install', None)
+        if callable(finalize) and not finalize():
+            # super().do_provision_lab() has already set READY. Roll that back
+            # because a GOAD_NOMAD install is not complete until exercise
+            # isolation has been successfully enforced.
+            self.lab_manager.get_current_instance().set_status(PROVIDED)
+            Log.error('GOAD_NOMAD: provisioning succeeded but final exercise isolation failed')
+            return False
+
+        return True
 
     def do_help(self, arg):
         super().do_help(arg)
