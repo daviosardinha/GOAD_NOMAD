@@ -64,6 +64,7 @@ GOAD_NOMAD currently places the five original GOAD Windows systems behind a dedi
                                 vmnet99 /24
                                 10.4.99.0/24
 ```
+<img width="1448" height="1086" alt="Topology" src="https://github.com/user-attachments/assets/6e2a98d7-54bc-4d3b-9bf2-69e7105ae4ae" />
 
 | Zone | VMware network | Subnet | Systems |
 | --- | --- | --- | --- |
