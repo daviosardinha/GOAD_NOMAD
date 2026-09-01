@@ -10,6 +10,8 @@ import argparse
 from pathlib import Path
 import runpy
 import sys
+import threading
+import time
 
 from goad.log import Log
 from goad.menu import print_menu_entry, print_menu_title
@@ -27,6 +29,52 @@ print_logo = _upstream['print_logo']
 
 class GoadNomad(BaseGoad):
     """GOAD console plus GOAD_NOMAD segmented-network lifecycle commands."""
+
+    @staticmethod
+    def _format_elapsed(seconds):
+        total = max(0, int(seconds))
+        hours, remainder = divmod(total, 3600)
+        minutes, secs = divmod(remainder, 60)
+        return f'{hours:02d}:{minutes:02d}:{secs:02d}'
+
+    def _run_with_install_timer(self, operation):
+        """Run an install operation with a visible one-minute heartbeat.
+
+        Vagrant/WinRM can legitimately spend many minutes booting older Windows
+        guests.  A periodic elapsed-time line keeps that wait observable without
+        changing Vagrant's own output or timeout semantics.
+        """
+        if getattr(self, '_install_timer_active', False):
+            return operation()
+
+        self._install_timer_active = True
+        self._install_phase = 'starting'
+        started = time.monotonic()
+        stop_event = threading.Event()
+
+        def heartbeat():
+            while not stop_event.wait(60):
+                elapsed = self._format_elapsed(time.monotonic() - started)
+                phase = getattr(self, '_install_phase', 'unknown')
+                Log.info(f'GOAD_NOMAD TIMER: {elapsed} elapsed | phase: {phase}')
+
+        timer_thread = threading.Thread(
+            target=heartbeat,
+            name='goad-nomad-install-timer',
+            daemon=True,
+        )
+        timer_thread.start()
+        Log.info('GOAD_NOMAD TIMER: install timer started (heartbeat every 60s)')
+
+        try:
+            return operation()
+        finally:
+            stop_event.set()
+            timer_thread.join(timeout=1)
+            elapsed = self._format_elapsed(time.monotonic() - started)
+            Log.info(f'GOAD_NOMAD TIMER: install command finished after {elapsed}')
+            self._install_phase = 'idle'
+            self._install_timer_active = False
 
     def _configured_provider(self):
         current = self.lab_manager.get_current_instance_provider()
@@ -52,6 +100,10 @@ class GoadNomad(BaseGoad):
             return provider
         return None
 
+    def do_install(self, arg=''):
+        """Run the canonical interactive install with a total elapsed timer."""
+        return self._run_with_install_timer(lambda: self.do_create(arg))
+
     def do_provide(self, arg=''):
         """Run the provider and return the result from *this* attempt.
 
@@ -68,11 +120,19 @@ class GoadNomad(BaseGoad):
             Log.error('No provider loaded for the current instance')
             return False
 
+        self._install_phase = 'provider bring-up / VM readiness'
+        phase_started = time.monotonic()
         result = provider.install()
+        phase_elapsed = self._format_elapsed(time.monotonic() - phase_started)
+
         if not result:
-            Log.error('GOAD_NOMAD: provider bring-up failed; Ansible provisioning will not start')
+            Log.error(
+                f'GOAD_NOMAD: provider bring-up failed after {phase_elapsed}; '
+                'Ansible provisioning will not start'
+            )
             return False
 
+        Log.success(f'GOAD_NOMAD TIMER: provider bring-up completed in {phase_elapsed}')
         self.lab_manager.get_current_instance().set_status(PROVIDED)
 
         # Preserve upstream dynamic-IP behaviour for providers that need it.
@@ -91,6 +151,13 @@ class GoadNomad(BaseGoad):
 
     def do_install_instance(self, arg=''):
         """Install/retry an existing instance without trusting stale status."""
+        if not getattr(self, '_install_timer_active', False):
+            return self._run_with_install_timer(
+                lambda: self._do_install_instance(arg)
+            )
+        return self._do_install_instance(arg)
+
+    def _do_install_instance(self, arg=''):
         Log.info('Launch providing')
         if not self.do_provide():
             Log.error('Providing error stop')
@@ -103,6 +170,7 @@ class GoadNomad(BaseGoad):
         provision_result = self.do_provision_lab()
         if provision_result:
             for extension_name in self.lab_manager.current_settings.extensions_name:
+                self._install_phase = f'extension provisioning: {extension_name}'
                 Log.info(f'Start installation of extension : {extension_name}')
                 self.do_install_extension(extension_name)
         self.refresh_prompt()
@@ -115,26 +183,44 @@ class GoadNomad(BaseGoad):
             Log.error('No provider loaded for the current instance')
             return False
 
+        phase_started = time.monotonic()
+        self._install_phase = 'provisioning management-plane validation'
         prepare = getattr(provider, 'prepare_provisioning', None)
         if callable(prepare) and not prepare():
-            Log.error('GOAD_NOMAD: failed to prepare provisioning mode; aborting Ansible')
+            elapsed = self._format_elapsed(time.monotonic() - phase_started)
+            Log.error(
+                f'GOAD_NOMAD: failed to prepare provisioning mode after {elapsed}; '
+                'aborting Ansible'
+            )
             return False
 
+        self._install_phase = 'Ansible provisioning'
         provision_result = super().do_provision_lab(arg)
         if not provision_result:
+            elapsed = self._format_elapsed(time.monotonic() - phase_started)
+            Log.error(f'GOAD_NOMAD TIMER: provisioning failed after {elapsed}')
             # Keep provisioning mode available for diagnosis/retry.  Do not
             # claim the instance is installed and do not silently isolate it.
             return False
 
+        self._install_phase = 'exercise-mode finalization'
         finalize = getattr(provider, 'finalize_install', None)
         if callable(finalize) and not finalize():
             # super().do_provision_lab() has already set READY. Roll that back
             # because a GOAD_NOMAD install is not complete until exercise
             # isolation has been successfully enforced.
             self.lab_manager.get_current_instance().set_status(PROVIDED)
-            Log.error('GOAD_NOMAD: provisioning succeeded but final exercise isolation failed')
+            elapsed = self._format_elapsed(time.monotonic() - phase_started)
+            Log.error(
+                f'GOAD_NOMAD: provisioning succeeded but final exercise isolation '
+                f'failed after {elapsed}'
+            )
             return False
 
+        elapsed = self._format_elapsed(time.monotonic() - phase_started)
+        Log.success(
+            f'GOAD_NOMAD TIMER: provisioning + final isolation completed in {elapsed}'
+        )
         return True
 
     def do_help(self, arg):
