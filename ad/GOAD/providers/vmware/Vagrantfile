@@ -1,12 +1,114 @@
 boxes = [
-  # windows server 2019
-  { :name => "GOAD-DC01",  :ip => "{{ip_range}}.10", :box => "StefanScherer/windows_2019", :box_version => "2021.05.15", :os => "windows", :cpus => 2, :mem => 3000},
-  # windows server 2019
-  { :name => "GOAD-DC02",  :ip => "{{ip_range}}.11", :box => "StefanScherer/windows_2019", :box_version => "2021.05.15", :os => "windows", :cpus => 2, :mem => 3000},
-  # windows server 2016
-  { :name => "GOAD-DC03",  :ip => "{{ip_range}}.12", :box => "StefanScherer/windows_2016", :box_version => "2017.12.14", :os => "windows", :cpus => 2, :mem => 3000},
-  # windows server 2019
-  { :name => "GOAD-SRV02", :ip => "{{ip_range}}.22", :box => "StefanScherer/windows_2019", :box_version => "2021.05.15", :os => "windows", :cpus => 2, :mem => 6000},
-  # windows server 2016
-  { :name => "GOAD-SRV03", :ip => "{{ip_range}}.23", :box => "StefanScherer/windows_2016", :box_version => "2019.02.14", :os => "windows", :cpus => 2, :mem => 5000}
+  # sevenkingdoms.local / SEVENKINGDOMS
+  {
+    :name => "GOAD-DC01",
+    :ip => "10.4.20.10",
+    :lab_gateway => "10.4.20.1",
+    :lab_mac => "00:50:56:20:20:10",
+    :box => "StefanScherer/windows_2019",
+    :box_version => "2021.05.15",
+    :os => "windows",
+    :cpus => 2,
+    :mem => 3000,
+    :skip_private_network => true,
+    :vmware_network_adapters => [
+      { :slot => 1, :vnet => "vmnet20", :mac => "00:50:56:20:20:10" }
+    ]
+  },
+
+  # north.sevenkingdoms.local / NORTH
+  {
+    :name => "GOAD-DC02",
+    :ip => "10.4.10.11",
+    :lab_gateway => "10.4.10.1",
+    :lab_mac => "00:50:56:20:10:11",
+    :box => "StefanScherer/windows_2019",
+    :box_version => "2021.05.15",
+    :os => "windows",
+    :cpus => 2,
+    :mem => 3000,
+    :skip_private_network => true,
+    :vmware_network_adapters => [
+      { :slot => 1, :vnet => "vmnet10", :mac => "00:50:56:20:10:11" }
+    ]
+  },
+
+  # essos.local / ESSOS
+  {
+    :name => "GOAD-DC03",
+    :ip => "10.4.30.12",
+    :lab_gateway => "10.4.30.1",
+    :lab_mac => "00:50:56:20:30:12",
+    :box => "StefanScherer/windows_2016",
+    :box_version => "2017.12.14",
+    :os => "windows",
+    :cpus => 2,
+    :mem => 3000,
+    :skip_private_network => true,
+    :vmware_network_adapters => [
+      { :slot => 1, :vnet => "vmnet30", :mac => "00:50:56:20:30:12" }
+    ]
+  },
+
+  # north.sevenkingdoms.local / NORTH
+  {
+    :name => "GOAD-SRV02",
+    :ip => "10.4.10.22",
+    :lab_gateway => "10.4.10.1",
+    :lab_mac => "00:50:56:20:10:22",
+    :box => "StefanScherer/windows_2019",
+    :box_version => "2021.05.15",
+    :os => "windows",
+    :cpus => 2,
+    :mem => 6000,
+    :skip_private_network => true,
+    :vmware_network_adapters => [
+      { :slot => 1, :vnet => "vmnet10", :mac => "00:50:56:20:10:22" }
+    ]
+  },
+
+  # essos.local / ESSOS
+  {
+    :name => "GOAD-SRV03",
+    :ip => "10.4.30.23",
+    :lab_gateway => "10.4.30.1",
+    :lab_mac => "00:50:56:20:30:23",
+    :box => "StefanScherer/windows_2016",
+    :box_version => "2019.02.14",
+    :os => "windows",
+    :cpus => 2,
+    :mem => 5000,
+    :skip_private_network => true,
+    :vmware_network_adapters => [
+      { :slot => 1, :vnet => "vmnet30", :mac => "00:50:56:20:30:23" }
+    ]
+  },
+
+  # GOAD_NOMAD routing plane. Slot 0 is Vagrant NAT for provisioning only.
+  # Runtime lab networks are attached explicitly to VMware vmnets.
+  {
+    :name => "GOAD-ROUTER",
+    :hostname => "goad-router",
+    :box => "bento/debian-11",
+    :os => "linux",
+    :cpus => 1,
+    :mem => 768,
+    :skip_private_network => true,
+    :vmware_vmx => {
+      "ethernet0.pcislotnumber" => "160",
+      "ethernet1.pcislotnumber" => "224",
+      "ethernet2.pcislotnumber" => "256",
+      "ethernet3.pcislotnumber" => "1184",
+      "ethernet4.pcislotnumber" => "1216"
+    },
+    :vmware_network_adapters => [
+      { :slot => 1, :vnet => "vmnet10", :mac => "00:50:56:10:10:01" },
+      { :slot => 2, :vnet => "vmnet20", :mac => "00:50:56:10:20:01" },
+      { :slot => 3, :vnet => "vmnet30", :mac => "00:50:56:10:30:01" },
+      { :slot => 4, :vnet => "vmnet99", :mac => "00:50:56:10:99:01" }
+    ],
+    :provision_scripts => [
+      "../../../ad/GOAD/providers/vmware/router/provision.sh"
+    ]
+  }
 ]

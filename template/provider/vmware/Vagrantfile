@@ -33,8 +33,18 @@ boxes.append(
     config.vbguest.auto_update = false
   end
 
-  config.vm.boot_timeout = 600
+  # Orange-Cyberdefense/GOAD issue #338 documents intermittent VMware
+  # "guest not ready for guest communication" failures. Keep boot/WinRM
+  # timeouts generous, but do not reuse upstream's 600-second halt window for
+  # GOAD_NOMAD: shutdown failures must be bounded and allowed to fall back
+  # automatically instead of requiring Ctrl+C from the operator.
+  config.vm.boot_timeout = 1200
+{% if lab_name == 'GOAD' %}
+  config.vm.graceful_halt_timeout = 120
+{% else %}
   config.vm.graceful_halt_timeout = 600
+{% endif %}
+  config.winrm.timeout = 1200
   config.winrm.retry_limit = 30
   config.winrm.retry_delay = 10
 
@@ -44,6 +54,45 @@ boxes.append(
       target.vm.provider "vmware_desktop" do |v|
         v.vmx["memsize"] = box[:mem]
         v.vmx["numvcpus"] = box[:cpus]
+
+{% if lab_name == 'GOAD' %}
+        # Multi-NIC Windows guests must use the provisioning NAT address for
+        # Vagrant management. VMware Tools can otherwise return an exercise NIC
+        # first (for example 10.4.30.12), which is intentionally unreachable
+        # from the host outside GOAD_NOMAD's temporary routed management plane.
+        if box[:os] == "windows"
+          v.enable_vmrun_ip_lookup = false
+          v.vmx["ethernet0.startConnected"] = "TRUE"
+        end
+{% endif %}
+
+        # Optional box-specific VMX values. Used by GOAD-ROUTER to preserve
+        # the Bento PCI slot layout explicitly instead of relying on provider
+        # behaviour that vagrant-vmware-desktop warns may change later.
+        if box.has_key?(:vmware_vmx)
+          box[:vmware_vmx].each do |key, value|
+            v.vmx[key] = value
+          end
+        end
+
+        # GOAD_NOMAD segmented labs may request explicit existing VMware vmnets.
+        # vagrant-vmware-desktop accepts :nat/:hostonly/:bridged as adapter input
+        # types. Passing :nat with :device causes the provider to emit a VMware
+        # custom adapter bound to that exact vmnet. Guest addressing remains
+        # under GOAD_NOMAD control via auto_config=false.
+        if box.has_key?(:vmware_network_adapters)
+          box[:vmware_network_adapters].each do |adapter|
+            v.network_adapter(
+              adapter[:slot],
+              :nat,
+              {
+                :device => adapter[:vnet],
+                :mac_address => adapter[:mac],
+                :auto_config => false
+              }
+            )
+          end
+        end
       end
 
       target.vm.box_download_insecure = box[:box]
@@ -52,11 +101,16 @@ boxes.append(
         target.vm.box_version = box[:box_version]
       end
 
+      target.vm.hostname = box[:hostname] if box.has_key?(:hostname)
+
       # issues/49
       target.vm.synced_folder '.', '/vagrant', disabled: true
 
-      # IP
-      target.vm.network :private_network, ip: box[:ip]
+      # Stock GOAD boxes use a Vagrant private network. Segmented GOAD_NOMAD
+      # machines opt out and attach to an explicit existing VMware vmnet above.
+      unless box[:skip_private_network]
+        target.vm.network :private_network, ip: box[:ip]
+      end
 
       # OS specific
       if box[:os] == "windows"
@@ -65,12 +119,26 @@ boxes.append(
         target.vm.provision :shell, :path => "../../../vagrant/Install-WMF3Hotfix.ps1", privileged: false
         target.vm.provision :shell, :path => "../../../vagrant/ConfigureRemotingForAnsible.ps1", privileged: false
 
-        # fix ip for vmware
+        # Configure the exercise NIC. The legacy one-argument form is kept for
+        # other labs; segmented boxes additionally provide their gateway + MAC.
         if ENV['VAGRANT_DEFAULT_PROVIDER'] == "vmware_desktop"
-          target.vm.provision :shell, :path => "../../../vagrant/fix_ip.ps1", privileged: false, args: box[:ip]
+          if box.has_key?(:lab_gateway) && box.has_key?(:lab_mac)
+            target.vm.provision :shell,
+              :path => "../../../vagrant/fix_ip.ps1",
+              privileged: false,
+              args: [box[:ip], box[:lab_gateway], box[:lab_mac]]
+          else
+            target.vm.provision :shell, :path => "../../../vagrant/fix_ip.ps1", privileged: false, args: box[:ip]
+          end
         end
       else
         target.vm.communicator = "ssh"
+      end
+
+      if box.has_key?(:provision_scripts)
+        box[:provision_scripts].each do |script|
+          target.vm.provision :shell, :path => script, privileged: true
+        end
       end
 
       if box.has_key?(:forwarded_port)

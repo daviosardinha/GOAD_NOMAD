@@ -30,6 +30,20 @@ class Ansible(Provisioner):
             return global_inventory
         return None
 
+    def _prepare_provider_provisioning(self):
+        prepare = getattr(self.provider, 'prepare_provisioning', None)
+        if callable(prepare) and not prepare():
+            Log.error('Provider failed to prepare the provisioning network state')
+            return False
+        return True
+
+    def _finalize_provider_provisioning(self):
+        finalize = getattr(self.provider, 'finalize_install', None)
+        if callable(finalize) and not finalize():
+            Log.error('Provider failed to finalize the installed lab state')
+            return False
+        return True
+
     def get_inventory(self, lab_name, provider_name):
         Log.info('Loading inventory')
         inventory = self._get_lab_inventory(lab_name, provider_name)
@@ -60,6 +74,14 @@ class Ansible(Provisioner):
         return playbook_list
 
     def run(self, playbook=None):
+        full_lab_run = playbook is None
+
+        # GOAD_NOMAD providers may need to rebuild an out-of-band management
+        # plane before a complete Ansible run. For normal providers the hook is
+        # absent and upstream behaviour is unchanged.
+        if full_lab_run and not self._prepare_provider_provisioning():
+            return False
+
         inventory = self.get_inventory(self.lab_name, self.provider_name)
         provision_result = False
         if playbook is None:
@@ -71,9 +93,24 @@ class Ansible(Provisioner):
                     return False
         else:
             provision_result = self.run_playbook(playbook, inventory)
+
+        # A successful full GOAD_NOMAD installation must never leave the
+        # provisioning bypasses enabled. Provider-specific finalization moves
+        # the lab into its normal exercise/training state before READY is set by
+        # the controller.
+        if full_lab_run and provision_result:
+            return self._finalize_provider_provisioning()
+
         return provision_result
 
     def run_extension(self, extension, current_instance_extensions_name, install=True):
+        # Extension installation can call provider.install() first, which opens
+        # the GOAD_NOMAD management plane. Keep the Ansible phase inside the
+        # same reversible lifecycle and always close the provisioning bypasses
+        # after a successful extension deployment.
+        if not self._prepare_provider_provisioning():
+            return False
+
         inventory = self._get_lab_inventory(self.lab_name, self.provider_name)
 
         # add the inventory of other enabled extensions
@@ -99,18 +136,22 @@ class Ansible(Provisioner):
         if not provision_result:
             Log.error(f'Something wrong during the provisioning task : {playbook}')
             return False
-        return provision_result
+        return self._finalize_provider_provisioning()
 
     def run_from(self, task):
-        inventory = self.get_inventory(self.lab_name, self.provider_name)
-        playbooks = self.get_playbook_list(self.lab_name)
-
         if task == '' or task is None:
             Log.error('Missing playbook to start from')
+            playbooks = self.get_playbook_list(self.lab_name)
             Log.info('Playbook list :')
             for playbook in playbooks:
                 Log.info(f' - {playbook}')
             return False
+
+        if not self._prepare_provider_provisioning():
+            return False
+
+        inventory = self.get_inventory(self.lab_name, self.provider_name)
+        playbooks = self.get_playbook_list(self.lab_name)
 
         skip = True
         for playbook in playbooks:
@@ -123,7 +164,7 @@ class Ansible(Provisioner):
                 if not provision_result:
                     Log.error(f'Something wrong during the provisioning task : {playbook}')
                     return False
-        return True
+        return self._finalize_provider_provisioning()
 
     def run_playbook(self, playbook, inventories, tries=3, timeout=30, playbook_path=None):
         # abstract

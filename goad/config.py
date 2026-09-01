@@ -20,20 +20,12 @@ class Config:
         return self.config
 
     def create_config_file(self):
-        cfgfile = open(GoadPath.get_config_file(), "w")
         config = configparser.ConfigParser(allow_no_value=True)
 
         config.add_section('default')
-        config.set('default', '; lab: GOAD / GOAD-Light / MINILAB / NHA / SCCM')
         config.set('default', 'lab', 'GOAD')
-
-        config.set('default', '; provider : virtualbox / vmware / vmware_esxi / aws / azure / proxmox')
         config.set('default', 'provider', 'vmware')
-
-        config.set('default', "; provisioner method : local / remote")
         config.set('default', 'provisioner', 'local')
-
-        config.set('default', '; ip_range (3 first ip digits)')
         config.set('default', 'ip_range', '192.168.56')
 
         config.add_section('aws')
@@ -68,7 +60,6 @@ class Config:
         config.set('proxmox_templates_id', 'Ubuntu_2404_x64', '924040')
 
         config.add_section('ludus')
-        config.set('ludus', '; api key must not have % if you have a % in it, change it by a %%')
         config.set('ludus', 'ludus_api_key', 'change_me')
         config.set('ludus', 'use_impersonation', 'yes')
 
@@ -79,8 +70,19 @@ class Config:
         config.set('vmware_esxi', 'esxi_net_nat', 'VM Network')
         config.set('vmware_esxi', 'esxi_net_domain', 'GOAD-LAN')
         config.set('vmware_esxi', 'esxi_datastore', 'datastore1')
-        config.write(cfgfile)
-        cfgfile.close()
+
+        comments = (
+            '; GOAD configuration\n'
+            '; lab: GOAD / GOAD-Light / MINILAB / NHA / SCCM\n'
+            '; provider: virtualbox / vmware / vmware_esxi / aws / azure / proxmox\n'
+            '; provisioner method: local / runner / docker / vm\n'
+            '; ip_range: first three IPv4 octets used by flat GOAD labs\n'
+            '; ludus_api_key: if the key contains %, escape it as %%\n\n'
+        )
+
+        with open(GoadPath.get_config_file(), 'w') as cfgfile:
+            cfgfile.write(comments)
+            config.write(cfgfile)
 
     def merge_config(self, args):
         """

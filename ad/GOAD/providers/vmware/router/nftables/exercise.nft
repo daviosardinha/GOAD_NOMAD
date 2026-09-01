@@ -1,0 +1,45 @@
+#!/usr/sbin/nft -f
+
+flush ruleset
+
+table inet goad_nomad {
+    chain input {
+        type filter hook input priority 0;
+        policy accept;
+    }
+
+    chain forward {
+        type filter hook forward priority 0;
+        policy drop;
+
+        # Existing / return traffic
+        ct state established,related counter accept
+
+        # NORTH child DC <-> SevenKingdoms parent/root DC
+        # Broad DC-to-DC because Active Directory uses dynamic RPC.
+        ip saddr 10.4.10.11 ip daddr 10.4.20.10 counter accept
+        ip saddr 10.4.20.10 ip daddr 10.4.10.11 counter accept
+
+        # SevenKingdoms root DC <-> ESSOS DC
+        ip saddr 10.4.20.10 ip daddr 10.4.30.12 counter accept
+        ip saddr 10.4.30.12 ip daddr 10.4.20.10 counter accept
+
+        # Cross-forest DNS required by GOAD conditional forwarders
+        ip saddr 10.4.10.11 ip daddr 10.4.30.12 udp dport 53 counter accept
+        ip saddr 10.4.10.11 ip daddr 10.4.30.12 tcp dport 53 counter accept
+        ip saddr 10.4.30.12 ip daddr 10.4.10.11 udp dport 53 counter accept
+        ip saddr 10.4.30.12 ip daddr 10.4.10.11 tcp dport 53 counter accept
+
+        # Deliberate GOAD MSSQL linked-server relationship
+        ip saddr 10.4.10.22 ip daddr 10.4.30.23 tcp dport 1433 counter accept
+        ip saddr 10.4.30.23 ip daddr 10.4.10.22 tcp dport 1433 counter accept
+
+        # Everything else crossing zones is denied by chain policy.
+        counter
+    }
+
+    chain output {
+        type filter hook output priority 0;
+        policy accept;
+    }
+}
