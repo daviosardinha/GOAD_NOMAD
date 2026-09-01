@@ -39,31 +39,6 @@ A compromised credential should not automatically mean every system is directly 
 ## Current segmented architecture
 
 GOAD_NOMAD currently places the five original GOAD Windows systems behind a dedicated Debian routing plane.
-
-```text
-                               GOAD_NOMAD
-                               10.4.0.0/16
-
-       NORTH                    SEVENKINGDOMS                    ESSOS
-   vmnet10 /24                  vmnet20 /24                  vmnet30 /24
-   10.4.10.0/24                 10.4.20.0/24                 10.4.30.0/24
-
-   Winterfell                   Kingslanding                  Meereen
-   10.4.10.11                   10.4.20.10                    10.4.30.12
-
-   Castelblack                                                Braavos
-   10.4.10.22                                                 10.4.30.23
-
-          \                         |                         /
-           \                        |                        /
-            +------------------ GOAD-ROUTER ----------------+
-                               .1 in each zone
-                                      |
-                                      |
-                                MANAGEMENT
-                                vmnet99 /24
-                                10.4.99.0/24
-```
 <img width="1448" height="1086" alt="Topology" src="https://github.com/user-attachments/assets/6e2a98d7-54bc-4d3b-9bf2-69e7105ae4ae" />
 
 | Zone | VMware network | Subnet | Systems |
