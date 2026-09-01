@@ -56,10 +56,10 @@ Run the controller as the normal desktop user. It invokes `sudo` only for host r
 
 **Status: COMPLETE**
 
-Live implementation validated: **2026-08-31**  
-Clean-checkout reproducibility validated: **2026-08-31**  
-Validated source commit: `3997cc44539b009577807cea9361842963af2000`  
-Final clean-checkout result: **27 PASS / 0 WARN / 0 FAIL**
+Fresh interactive installation validated: **2026-09-01**  
+Final clean source/runtime validation: **2026-09-01**  
+Validated source commit: `35f592184e87ba25f427403fde4674b444aad6c8`  
+Final validation result: **27 PASS / 0 WARN / 0 FAIL**
 
 Goal: fully integrate realistic network segmentation into GOAD while preserving the original GOAD functionality required by the training path and proving that the committed source reproduces the validated behavior without manual repair.
 
@@ -75,8 +75,17 @@ Goal: fully integrate realistic network segmentation into GOAD while preserving 
 - Added persistent Windows provisioning-NIC isolation using `ethernet0.startConnected = "FALSE"` plus immediate hypervisor-level disconnects with `vmrun`.
 - Added `ad/GOAD/providers/vmware/router/nftables/provisioning.nft` for permissive deployment/maintenance forwarding.
 - Added `ad/GOAD/providers/vmware/router/nftables/exercise.nft` for deny-by-default training enforcement.
-- Added `scripts/validate-network-segmentation-source.sh` for clean-checkout static/source preflight.
-- Added `scripts/validate-network-segmentation.sh` and the runtime validator for the complete clean-checkout reproducibility gate against an existing deployed provider.
+- Integrated the segmented lifecycle into the canonical `./goad.sh` workflow so normal `install`, `start`, `stop`, `status`, `network`, `mode`, and `validate` operations understand GOAD_NOMAD.
+- Hardened provider bring-up so `GOAD-ROUTER`, provisioning policy, and temporary routes are established before protected-zone Windows guests are started.
+- Added fail-closed management readiness: all five Ansible WinRM endpoints must pass before provisioning is allowed to begin.
+- Hardened segmented `start` and `stop` with bounded controller waits, VMware state verification, targeted recovery, and preservation/restoration of the recorded runtime mode.
+- Stabilized Vagrant on multi-NIC Windows guests by preferring the NAT/provisioning management path rather than allowing VMware guest-IP discovery to select a protected-zone address and consume the boot timeout.
+- Removed redundant Windows restart churn by keeping the Vagrant NAT adapter persistent state synchronized with provisioning mode.
+- Added human-readable lifecycle timers that automatically format elapsed time in seconds, minutes, or hours.
+- Pinned the GOAD-compatible SSMS 18 installer so the current `aka.ms` redirect cannot silently introduce an incompatible newer SSMS release.
+- Ensured a successful full Ansible run has one authoritative final exercise-isolation transition instead of applying exercise mode twice.
+- Added `scripts/validate-network-segmentation-source.sh` for clean-checkout static/source preflight, including lifecycle-ownership regression checks using the Python AST.
+- Added `scripts/validate-network-segmentation.sh` and the runtime validator for the complete clean-source reproducibility gate against an existing deployed provider.
 - Hardened the child-domain provisioning role to install DNS Server plus management tools before promotion, explicitly request DNS during `Install-ADDSDomain`, disable IPv6 on the provisioning NIC, start the DNS service, validate that the child DNS zone is AD-integrated, and keep Active Directory Web Services enabled and running.
 - Preserved the parent-domain conditional forwarder and forest-replicated remote-DC conditional-forwarder design used by GOAD trusts.
 - Hardened runtime validation around normal Windows service startup races after exercise-mode power cycling rather than confusing service readiness with a segmentation failure.
@@ -93,6 +102,7 @@ Goal: fully integrate realistic network segmentation into GOAD while preserving 
 
 #### End-to-end validation gates passed
 
+- A fresh interactive `./goad.sh install` completed against the separate test clone and automatically returned the finished range to exercise isolation.
 - All five original GOAD Windows hosts operate on their intended segmented addresses and routes.
 - NORTH child-domain health is operational.
 - NORTH ↔ SevenKingdoms DC discovery and bidirectional parent/child trust are operational.
@@ -110,13 +120,13 @@ Goal: fully integrate realistic network segmentation into GOAD while preserving 
 - The router exercise policy persists through `nftables`.
 - Firewall counters confirm traffic traverses the intended parent/child AD, forest-trust, cross-forest DNS, and linked-MSSQL exceptions rather than an unintended flat path.
 
-#### Clean-checkout reproducibility gate — PASSED
+#### Final clean-source reproducibility gate — PASSED
 
-The final gate was executed from a separate clone of `feat/network-segmentation`, using committed source rather than the development checkout. All required checks passed:
+The final validation cycle used a separate `GOAD_NOMAD-fresh-test` clone to build the fresh deployed provider. After the interactive installation completed, the final runtime/reproducibility gate was executed from a clean, origin-synced checkout at source commit `35f592184e87ba25f427403fde4674b444aad6c8` against that deployed provider through `GOAD_PROVIDER_DIR`. All required checks passed:
 
-1. Source preflight completed successfully from the clean clone with a clean Git working tree and valid Bash, Python, Ruby/Vagrant, and `nftables` syntax.
-2. The clean checkout operated the existing deployed provider through `GOAD_PROVIDER_DIR` without relying on source files from the development checkout.
-3. `provisioning` and `exercise` transitions worked from the clean checkout, including persistent VMware `startConnected` changes.
+1. Source preflight completed successfully with a clean Git working tree and valid Bash, Python, Ruby/Vagrant, and `nftables` syntax.
+2. The lifecycle regression gate confirmed one authoritative final exercise transition and the GOAD_NOMAD human-readable timer path.
+3. `provisioning` and `exercise` transitions worked from committed source, including persistent VMware `startConnected` changes.
 4. All five Vagrant/WinRM management paths worked in provisioning mode and all five NAT management paths were isolated again in exercise mode.
 5. The committed `ad-child_domain.yml` configuration was replayed twice; the second child-domain promotion task was idempotent (`ok`) rather than re-promoting the domain.
 6. The committed `ad-trusts.yml` configuration replayed successfully with no unreachable or failed hosts.
@@ -127,7 +137,7 @@ The final gate was executed from a separate clone of `feat/network-segmentation`
 11. Final firewall counters recorded traffic on the explicitly intended inter-zone rules, with the router still using a `policy drop` forward chain.
 12. The lab finished in recorded `exercise` mode with all five Windows `ethernet0.startConnected = "FALSE"` and provisioning NAT paths isolated.
 
-The complete clean-checkout validator reported **27 PASS / 0 WARN / 0 FAIL** and ended with `CLEAN-CHECKOUT NETWORK SEGMENTATION RUNTIME VALIDATION PASSED`.
+The final validator reported **27 PASS / 0 WARN / 0 FAIL** and ended with `CLEAN-CHECKOUT NETWORK SEGMENTATION RUNTIME VALIDATION PASSED`.
 
 #### Validation commands
 
