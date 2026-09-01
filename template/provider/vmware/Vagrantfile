@@ -55,6 +55,17 @@ boxes.append(
         v.vmx["memsize"] = box[:mem]
         v.vmx["numvcpus"] = box[:cpus]
 
+{% if lab_name == 'GOAD' %}
+        # Multi-NIC Windows guests must use the provisioning NAT address for
+        # Vagrant management. VMware Tools can otherwise return an exercise NIC
+        # first (for example 10.4.30.12), which is intentionally unreachable
+        # from the host outside GOAD_NOMAD's temporary routed management plane.
+        if box[:os] == "windows"
+          v.enable_vmrun_ip_lookup = false
+          v.vmx["ethernet0.startConnected"] = "TRUE"
+        end
+{% endif %}
+
         # Optional box-specific VMX values. Used by GOAD-ROUTER to preserve
         # the Bento PCI slot layout explicitly instead of relying on provider
         # behaviour that vagrant-vmware-desktop warns may change later.

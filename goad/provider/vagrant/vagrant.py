@@ -10,6 +10,17 @@ class VagrantProvider(Provider):
         super().__init__(lab_name)
         self.jumpbox_setup_script = 'setup_local_jumpbox.sh'
 
+    @staticmethod
+    def _format_elapsed(seconds):
+        total = max(0, int(seconds))
+        hours, remainder = divmod(total, 3600)
+        minutes, secs = divmod(remainder, 60)
+        if hours:
+            return f'{hours}h {minutes:02d}m {secs:02d}s'
+        if minutes:
+            return f'{minutes}m {secs:02d}s'
+        return f'{secs}s'
+
     def check(self):
         checks = [
             self.command.check_vagrant(),
@@ -51,27 +62,27 @@ class VagrantProvider(Provider):
             # brings the router/guests up and validates management readiness; it
             # does not run the GOAD Ansible curriculum provisioning.
             if not self.install():
-                elapsed = int(time.monotonic() - started)
+                elapsed = self._format_elapsed(time.monotonic() - started)
                 Log.error(
-                    f'GOAD_NOMAD: start failed after {elapsed}s; '
+                    f'GOAD_NOMAD: start failed after {elapsed}; '
                     'lab readiness was not proven'
                 )
                 return False
 
             if original_mode == 'exercise':
                 if not callable(set_mode) or not set_mode('exercise'):
-                    elapsed = int(time.monotonic() - started)
+                    elapsed = self._format_elapsed(time.monotonic() - started)
                     Log.error(
                         f'GOAD_NOMAD: guests started but exercise isolation '
-                        f'could not be restored after {elapsed}s'
+                        f'could not be restored after {elapsed}'
                     )
                     return False
 
             current_mode = get_mode() if callable(get_mode) else original_mode
-            elapsed = int(time.monotonic() - started)
+            elapsed = self._format_elapsed(time.monotonic() - started)
             Log.success(
                 f'GOAD_NOMAD: segmented lab started and readiness verified '
-                f'in {elapsed}s (mode: {current_mode})'
+                f'in {elapsed} (mode: {current_mode})'
             )
             return True
 

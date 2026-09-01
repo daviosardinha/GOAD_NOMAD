@@ -271,10 +271,69 @@ if ($p.ExitCode -ne 0 -and $p.ExitCode -ne 3010) { exit $p.ExitCode }
 
         return self._install_vmware_tools(machine, vmx, port)
 
+    def _sync_goad_nomad_vagrantfile_compatibility(self):
+        """Backfill current segmented VMware settings into existing instances.
+
+        Instance Vagrantfiles are rendered when a workspace is first created.
+        Updating the repository template therefore does not repair an already
+        deployed lab by itself. Keep this compatibility patch intentionally
+        small and idempotent so old workspaces gain the same provider settings
+        before the next Windows ``vagrant up``.
+        """
+        vagrantfile = os.path.join(str(self.path), 'Vagrantfile')
+        if not os.path.isfile(vagrantfile):
+            Log.error(f'GOAD_NOMAD: instance Vagrantfile not found: {vagrantfile}')
+            return False
+
+        with open(vagrantfile, 'r', encoding='utf-8') as handle:
+            text = handle.read()
+
+        required = (
+            'v.enable_vmrun_ip_lookup = false',
+            'v.vmx["ethernet0.startConnected"] = "TRUE"',
+        )
+        missing = [setting for setting in required if setting not in text]
+        if not missing:
+            return True
+
+        marker = '        v.vmx["numvcpus"] = box[:cpus]\n'
+        if marker not in text:
+            Log.error(
+                'GOAD_NOMAD: cannot safely update the existing Vagrantfile; '
+                'expected VMware provider marker is missing'
+            )
+            return False
+
+        lines = [
+            '',
+            '        # GOAD_NOMAD compatibility for existing multi-NIC Windows instances.',
+            '        if box[:os] == "windows"',
+        ]
+        if required[0] in missing:
+            lines.append('          v.enable_vmrun_ip_lookup = false')
+        if required[1] in missing:
+            lines.append('          v.vmx["ethernet0.startConnected"] = "TRUE"')
+        lines.append('        end')
+
+        replacement = marker + '\n'.join(lines) + '\n'
+        text = text.replace(marker, replacement, 1)
+
+        with open(vagrantfile, 'w', encoding='utf-8') as handle:
+            handle.write(text)
+
+        Log.success(
+            'GOAD_NOMAD: existing instance Vagrantfile synchronized with '
+            'current multi-NIC provisioning settings'
+        )
+        return True
+
     def install(self):
         """Bring up VMware guests and prepare GOAD_NOMAD local provisioning reachability."""
         if self.lab_name != 'GOAD':
             return super().install()
+
+        if not self._sync_goad_nomad_vagrantfile_compatibility():
+            return False
 
         # Bring up the router independently so a Windows guest failure cannot
         # prevent creation of the routing plane. Linux keeps the normal SSH path.
