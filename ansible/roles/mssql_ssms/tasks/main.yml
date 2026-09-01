@@ -1,25 +1,128 @@
-- name: check SQL Server Manager Studio installer exists
+- name: Ensure MSSQL setup directory exists
+  win_file:
+    path: 'C:\setup\mssql'
+    state: directory
+
+# Current SSMS bootstrapper releases require .NET Framework 4.8 on older
+# Windows Server images.  Detect the installed runtime from the registry rather
+# than from the presence of a downloaded installer so a failed previous attempt
+# cannot produce a false positive.
+- name: Check Microsoft .NET Framework 4.8 runtime
+  win_shell: |
+    $release = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full' -Name Release -ErrorAction SilentlyContinue).Release
+    if ($release -ge 528040) {
+      Write-Output "DOTNET48_RELEASE=$release"
+      exit 0
+    }
+    Write-Output "DOTNET48_RELEASE=$release"
+    exit 1
+  register: dotnet48_state
+  changed_when: false
+  failed_when: false
+
+- name: Check Microsoft .NET Framework 4.8 installer exists
   win_stat:
-    path: c:\setup\mssql\SSMS_installer.exe
+    path: 'C:\setup\mssql\NDP48-x86-x64-AllOS-ENU.exe'
+  register: dotnet48_installer
+  when: dotnet48_state.rc != 0
+
+- name: Download Microsoft .NET Framework 4.8 installer
+  win_get_url:
+    url: 'https://download.microsoft.com/download/f/3/a/f3a6af84-da23-40a5-8d1c-49cc10c8e76f/NDP48-x86-x64-AllOS-ENU.exe'
+    dest: 'C:\setup\mssql\NDP48-x86-x64-AllOS-ENU.exe'
+    checksum: '0a3a390c47e639d0f7fc65b21195fee6b7f65b066f80f70c60fab191d14b7e40'
+    checksum_algorithm: sha256
+  when:
+    - dotnet48_state.rc != 0
+    - not dotnet48_installer.stat.exists
+
+- name: Install Microsoft .NET Framework 4.8
+  win_package:
+    path: 'C:\setup\mssql\NDP48-x86-x64-AllOS-ENU.exe'
+    arguments: '/quiet /norestart'
+    expected_return_code:
+      - 0
+      - 1641
+      - 3010
+  register: dotnet48_install
+  when: dotnet48_state.rc != 0
+
+- name: Reboot after Microsoft .NET Framework 4.8 installation
+  win_reboot:
+    reboot_timeout: 900
+  when:
+    - dotnet48_install is defined
+    - dotnet48_install is changed
+
+- name: Check SQL Server Management Studio installer exists
+  win_stat:
+    path: 'C:\setup\mssql\SSMS_installer.exe'
   register: ssms_installer_file
 
-- name: get the installer
+- name: Download SQL Server Management Studio installer
   win_get_url:
-      url: 'https://aka.ms/ssmsfullsetup'
-      dest: 'c:\setup\mssql\SSMS_installer.exe'
+    url: 'https://aka.ms/ssmsfullsetup'
+    dest: 'C:\setup\mssql\SSMS_installer.exe'
   when: not ssms_installer_file.stat.exists
 
-- name: check SSMS installation already done
-  win_stat:
-    path: "C:\\Program Files (x86)\\Microsoft SQL Server Management Studio 18"
+# Upstream GOAD historically checked only the SSMS 18 x86 directory.  Current
+# SSMS releases install 64-bit under Program Files and use a versioned folder,
+# which made every replay think SSMS was absent and re-run a bootstrapper that
+# may display an invisible dialog over WinRM.  Detect the actual executable
+# across both legacy and current installation roots instead.
+- name: Check SQL Server Management Studio installation
+  win_shell: |
+    $patterns = @(
+      'C:\Program Files\Microsoft SQL Server Management Studio *\Common7\IDE\Ssms.exe',
+      'C:\Program Files (x86)\Microsoft SQL Server Management Studio *\Common7\IDE\Ssms.exe'
+    )
+
+    $ssms = Get-ChildItem -Path $patterns -File -ErrorAction SilentlyContinue |
+      Select-Object -First 1
+
+    if ($ssms) {
+      Write-Output "SSMS_PATH=$($ssms.FullName)"
+      exit 0
+    }
+
+    exit 1
   register: ssms_installation
+  changed_when: false
+  failed_when: false
 
-- name: Install SSMS
-  win_command: c:\setup\mssql\SSMS_installer.exe /install /quiet /norestart
-  register: install_ssmss
-  when: not ssms_installation.stat.exists
+- name: Install SQL Server Management Studio
+  win_package:
+    path: 'C:\setup\mssql\SSMS_installer.exe'
+    arguments: '/install /quiet /norestart'
+    expected_return_code:
+      - 0
+      - 1641
+      - 3010
+  register: install_ssms
+  when: ssms_installation.rc != 0
+  async: 1800
+  poll: 15
 
-- name: Reboot after install
+- name: Reboot after SQL Server Management Studio installation
   win_reboot:
-    reboot_timeout: 600
-  when: not ssms_installation.stat.exists
+    reboot_timeout: 900
+  when:
+    - install_ssms is defined
+    - install_ssms is changed
+
+- name: Verify SQL Server Management Studio installation
+  win_shell: |
+    $patterns = @(
+      'C:\Program Files\Microsoft SQL Server Management Studio *\Common7\IDE\Ssms.exe',
+      'C:\Program Files (x86)\Microsoft SQL Server Management Studio *\Common7\IDE\Ssms.exe'
+    )
+
+    $ssms = Get-ChildItem -Path $patterns -File -ErrorAction SilentlyContinue |
+      Select-Object -First 1
+
+    if (-not $ssms) {
+      throw 'SQL Server Management Studio executable was not found after installation'
+    }
+
+    Write-Output "SSMS_PATH=$($ssms.FullName)"
+  changed_when: false
