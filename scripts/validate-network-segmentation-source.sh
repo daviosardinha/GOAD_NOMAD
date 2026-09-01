@@ -90,29 +90,78 @@ fi
 
 # A full Ansible run owns provider finalization. The console must not call the
 # same finalizer again, otherwise a successful install enters exercise mode
-# twice. The console also owns the GOAD_NOMAD human-readable elapsed timer and
-# must not delegate to the upstream time.ctime-based provisioning wrapper.
+# twice. Inspect executable Python with the AST so comments/docstrings cannot
+# create false positives. The console also owns GOAD_NOMAD's human-readable
+# elapsed timer and must not delegate to the upstream time.ctime wrapper.
 python3 - <<'PY'
+import ast
 from pathlib import Path
 
-console = Path('goad_nomad.py').read_text()
-ansible = Path('goad/provisioner/ansible/ansible.py').read_text()
+console_source = Path('goad_nomad.py').read_text()
+ansible_source = Path('goad/provisioner/ansible/ansible.py').read_text()
+console_tree = ast.parse(console_source)
 
-start = console.index('    def do_provision_lab(')
-end = console.index('\n    def do_help(', start)
-block = console[start:end]
+method = None
+for node in console_tree.body:
+    if isinstance(node, ast.ClassDef) and node.name == 'GoadNomad':
+        method = next(
+            (
+                child
+                for child in node.body
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and child.name == 'do_provision_lab'
+            ),
+            None,
+        )
+        break
 
-if 'super().do_provision_lab' in block:
-    raise SystemExit('GOAD_NOMAD do_provision_lab delegates to legacy upstream timer')
-if 'finalize_install' in block:
+if method is None:
+    raise SystemExit('GOAD_NOMAD do_provision_lab not found')
+
+finalize_calls = [
+    node
+    for node in ast.walk(method)
+    if isinstance(node, ast.Call)
+    and (
+        (isinstance(node.func, ast.Name) and node.func.id == 'finalize_install')
+        or (isinstance(node.func, ast.Attribute) and node.func.attr == 'finalize_install')
+    )
+]
+if finalize_calls:
     raise SystemExit('GOAD_NOMAD do_provision_lab performs duplicate provider finalization')
-if 'get_current_instance_provisioner().run()' not in block:
+
+legacy_super_calls = [
+    node
+    for node in ast.walk(method)
+    if isinstance(node, ast.Call)
+    and isinstance(node.func, ast.Attribute)
+    and node.func.attr == 'do_provision_lab'
+    and isinstance(node.func.value, ast.Call)
+    and isinstance(node.func.value.func, ast.Name)
+    and node.func.value.func.id == 'super'
+]
+if legacy_super_calls:
+    raise SystemExit('GOAD_NOMAD do_provision_lab delegates to legacy upstream timer')
+
+# Remove the function docstring before text checks so explanatory prose cannot
+# satisfy or invalidate executable-code assertions.
+body = list(method.body)
+if (
+    body
+    and isinstance(body[0], ast.Expr)
+    and isinstance(body[0].value, ast.Constant)
+    and isinstance(body[0].value.value, str)
+):
+    body = body[1:]
+executable = '\n'.join(ast.unparse(node) for node in body)
+
+if 'get_current_instance_provisioner().run()' not in executable:
     raise SystemExit('GOAD_NOMAD do_provision_lab does not invoke the provisioner directly')
-if 'set_status(READY)' not in block:
+if 'set_status(READY)' not in executable:
     raise SystemExit('GOAD_NOMAD do_provision_lab does not set READY after successful finalization')
-if '_format_elapsed' not in block:
+if '_format_elapsed' not in executable:
     raise SystemExit('GOAD_NOMAD do_provision_lab does not use the human-readable timer')
-if 'return self._finalize_provider_provisioning()' not in ansible:
+if 'return self._finalize_provider_provisioning()' not in ansible_source:
     raise SystemExit('Ansible full-lab run no longer owns provider finalization')
 PY
 pass "single final-isolation owner and human-readable install timer"
