@@ -145,12 +145,11 @@ validate
 
 ### Milestone 1 — Network Segmentation
 
-**Implementation: COMPLETE**  
-**Latest lifecycle / fresh interactive install revalidation: IN PROGRESS**
+**Status: COMPLETE**
 
-The original Milestone 1 clean-checkout gate was completed on 2026-08-31 from source commit `3997cc44539b009577807cea9361842963af2000` with **27 PASS / 0 WARN / 0 FAIL**.
+Final validation completed on **2026-09-01**. The final clean source/runtime gate was executed from source commit `35f592184e87ba25f427403fde4674b444aad6c8` and finished with **27 PASS / 0 WARN / 0 FAIL**.
 
-Since that gate, GOAD_NOMAD has received additional installer and lifecycle hardening around the default `goad.sh` workflow, segmented `start` / `stop`, VMware multi-NIC management selection, fail-closed provisioning readiness, bounded waits, human-readable lifecycle timers, and SSMS compatibility. Those changes are being revalidated through a fresh interactive installation before the milestone record is updated to its new final validated source commit.
+The final validation cycle also included a fresh interactive `./goad.sh install` from the separate test clone. The installation completed successfully, created the segmented five-host GOAD environment plus `GOAD-ROUTER`, and automatically returned the lab to persistent exercise isolation. Subsequent lifecycle hardening removed duplicate final exercise transitions, unified human-readable timers, stabilized segmented `start` / `stop`, preferred the VMware NAT management path for multi-NIC guests, enforced fail-closed provisioning readiness, and retained the pinned GOAD-compatible SSMS 18 installer.
 
 The detailed milestone record lives in [`docs/GOAD_NOMAD_MILESTONES.md`](./docs/GOAD_NOMAD_MILESTONES.md).
 
@@ -158,7 +157,7 @@ The detailed milestone record lives in [`docs/GOAD_NOMAD_MILESTONES.md`](./docs/
 
 | Milestone | Scope | Status |
 | --- | --- | --- |
-| 1 | Network segmentation and lifecycle | Final revalidation in progress |
+| 1 | Network segmentation and lifecycle | Complete |
 | 2 | Windows foothold + local privilege escalation on WS01 | Planned / not started |
 | 3 | NORTH domain escalation + persistence | Planned |
 | 4 | NORTH → SevenKingdoms cross-domain progression | Planned |
@@ -201,7 +200,7 @@ export GOAD_PROVIDER_DIR="$HOME/Documents/GOAD_NOMAD/workspace/<instance>/provid
 bash scripts/validate-network-segmentation.sh
 ```
 
-The interactive installation path is intentionally being treated as a first-class validation target: a user cloning GOAD_NOMAD should not have to manually reconstruct the segmented architecture after launching `./goad.sh`.
+The interactive installation path is a first-class validation target: a user cloning GOAD_NOMAD should not have to manually reconstruct the segmented architecture after launching `./goad.sh`.
 
 ## Upstream GOAD foundation
 
