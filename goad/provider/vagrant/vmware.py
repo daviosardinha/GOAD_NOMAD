@@ -79,6 +79,24 @@ class VmwareProvider(VagrantProvider):
             read_timeout_sec=90,
         )
 
+    def _wait_winrm_ready(self, port, timeout=180):
+        """Wait for a stable WinRM command channel, not merely an open TCP port."""
+        deadline = time.time() + timeout
+        last_error = None
+        while time.time() < deadline:
+            try:
+                session = self._winrm_session(port)
+                result = session.run_ps("Write-Output 'GOAD_WINRM_READY'")
+                if result.status_code == 0 and b'GOAD_WINRM_READY' in result.std_out:
+                    return True
+            except Exception as exc:
+                last_error = exc
+            time.sleep(5)
+
+        if last_error is not None:
+            Log.warning(f'GOAD_NOMAD: WinRM never became stable on port {port}: {last_error}')
+        return False
+
     def _guest_tools_healthy(self, port):
         try:
             session = self._winrm_session(port)
@@ -148,6 +166,12 @@ if ($svc -and $file) {
             Log.error(f'GOAD_NOMAD: WinRM port {port} did not become reachable for {machine}')
             return False
 
+        # A listening WinRM socket is not enough. Older Windows boxes can reset
+        # the first authenticated request while services are still converging.
+        if not self._wait_winrm_ready(port, 180):
+            Log.error(f'GOAD_NOMAD: WinRM did not become stable for {machine}')
+            return False
+
         try:
             session = self._winrm_session(port)
             install = session.run_ps(r'''
@@ -177,13 +201,36 @@ if ($p.ExitCode -ne 0 -and $p.ExitCode -ne 3010) { exit $p.ExitCode }
             Log.info(f'GOAD_NOMAD: VMware Tools installed on {machine}; rebooting guest')
             session.run_ps("shutdown.exe /r /t 5 /f | Out-Null")
         except Exception as exc:
-            Log.error(f'GOAD_NOMAD: VMware Tools WinRM bootstrap failed for {machine}: {exc}')
+            # VMware Tools installation/reboot can transiently tear down the
+            # WinRM transport itself. Do not immediately call that a failed
+            # installation: wait for WinRM/Tools/IP health and accept the
+            # recovery if the guest proves healthy afterward.
+            Log.warning(
+                f'GOAD_NOMAD: VMware Tools WinRM session interrupted for {machine}: {exc}; '
+                'checking whether the guest recovered successfully'
+            )
+            deadline = time.time() + 240
+            while time.time() < deadline:
+                if self._wait_tcp(port, 15) and self._guest_tools_healthy(port):
+                    if self._wait_guest_ip(vmx, 60):
+                        Log.success(
+                            f'GOAD_NOMAD: VMware Tools recovery completed for {machine} '
+                            'despite transient WinRM reset'
+                        )
+                        return True
+                time.sleep(10)
+
+            Log.error(f'GOAD_NOMAD: VMware Tools recovery did not become healthy for {machine}')
             return False
 
         # The forwarded socket may stay open briefly while Windows restarts.
         time.sleep(15)
         if not self._wait_tcp(port, 240):
             Log.error(f'GOAD_NOMAD: {machine} WinRM did not return after VMware Tools reboot')
+            return False
+
+        if not self._wait_winrm_ready(port, 180):
+            Log.error(f'GOAD_NOMAD: {machine} WinRM did not stabilize after VMware Tools reboot')
             return False
 
         deadline = time.time() + 180
