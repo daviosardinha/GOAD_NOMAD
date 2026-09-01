@@ -4,7 +4,7 @@
     state: directory
 
 # Current SSMS bootstrapper releases require .NET Framework 4.8 on older
-# Windows Server images.  Detect the installed runtime from the registry rather
+# Windows Server images. Detect the installed runtime from the registry rather
 # than from the presence of a downloaded installer so a failed previous attempt
 # cannot produce a false positive.
 - name: Check Microsoft .NET Framework 4.8 runtime
@@ -54,22 +54,25 @@
     - dotnet48_install is defined
     - dotnet48_install is changed
 
-- name: Check SQL Server Management Studio installer exists
+# GOAD was designed around SSMS 18. The floating aka.ms/ssmsfullsetup URL now
+# resolves to newer SSMS bootstrapper releases which can hang indefinitely in a
+# non-interactive WinRM session on the older Windows Server images used by GOAD.
+# Orange-Cyberdefense/GOAD PR #516 pins the Microsoft SSMS 18 release URL for
+# the same reason. Use a version-specific filename so a previously downloaded
+# newer bootstrapper cannot be silently reused on a retry.
+- name: Check SQL Server Management Studio 18 installer exists
   win_stat:
-    path: 'C:\setup\mssql\SSMS_installer.exe'
-  register: ssms_installer_file
+    path: 'C:\setup\mssql\SSMS18_installer.exe'
+  register: ssms18_installer_file
 
-- name: Download SQL Server Management Studio installer
+- name: Download SQL Server Management Studio 18 installer
   win_get_url:
-    url: 'https://aka.ms/ssmsfullsetup'
-    dest: 'C:\setup\mssql\SSMS_installer.exe'
-  when: not ssms_installer_file.stat.exists
+    url: 'https://go.microsoft.com/fwlink/?linkid=2199013&clcid=0x409'
+    dest: 'C:\setup\mssql\SSMS18_installer.exe'
+  when: not ssms18_installer_file.stat.exists
 
-# Upstream GOAD historically checked only the SSMS 18 x86 directory.  Current
-# SSMS releases install 64-bit under Program Files and use a versioned folder,
-# which made every replay think SSMS was absent and re-run a bootstrapper that
-# may display an invisible dialog over WinRM.  Detect the actual executable
-# across both legacy and current installation roots instead.
+# Detect the actual executable rather than relying on one hard-coded install
+# directory. This keeps retries idempotent across supported SSMS 18 layouts.
 - name: Check SQL Server Management Studio installation
   win_shell: |
     $patterns = @(
@@ -90,9 +93,9 @@
   changed_when: false
   failed_when: false
 
-- name: Install SQL Server Management Studio
+- name: Install SQL Server Management Studio 18
   win_package:
-    path: 'C:\setup\mssql\SSMS_installer.exe'
+    path: 'C:\setup\mssql\SSMS18_installer.exe'
     arguments: '/install /quiet /norestart'
     expected_return_code:
       - 0
