@@ -22,6 +22,8 @@ require_file() {
 }
 
 for file in \
+    goad_nomad.py \
+    goad/provisioner/ansible/ansible.py \
     scripts/lab-mode.sh \
     scripts/provisioning-routes.sh \
     scripts/setup-vmware-networks.sh \
@@ -61,7 +63,9 @@ pass "shell syntax"
 
 python3 -m py_compile \
     goad/config.py \
-    goad/provider/vagrant/vmware.py
+    goad_nomad.py \
+    goad/provider/vagrant/vmware.py \
+    goad/provisioner/ansible/ansible.py
 pass "Python syntax"
 
 if command -v ruby >/dev/null 2>&1; then
@@ -83,6 +87,35 @@ if command -v nft >/dev/null 2>&1; then
 else
     warn "nft not found; skipped nftables parser check"
 fi
+
+# A full Ansible run owns provider finalization. The console must not call the
+# same finalizer again, otherwise a successful install enters exercise mode
+# twice. The console also owns the GOAD_NOMAD human-readable elapsed timer and
+# must not delegate to the upstream time.ctime-based provisioning wrapper.
+python3 - <<'PY'
+from pathlib import Path
+
+console = Path('goad_nomad.py').read_text()
+ansible = Path('goad/provisioner/ansible/ansible.py').read_text()
+
+start = console.index('    def do_provision_lab(')
+end = console.index('\n    def do_help(', start)
+block = console[start:end]
+
+if 'super().do_provision_lab' in block:
+    raise SystemExit('GOAD_NOMAD do_provision_lab delegates to legacy upstream timer')
+if 'finalize_install' in block:
+    raise SystemExit('GOAD_NOMAD do_provision_lab performs duplicate provider finalization')
+if 'get_current_instance_provisioner().run()' not in block:
+    raise SystemExit('GOAD_NOMAD do_provision_lab does not invoke the provisioner directly')
+if 'set_status(READY)' not in block:
+    raise SystemExit('GOAD_NOMAD do_provision_lab does not set READY after successful finalization')
+if '_format_elapsed' not in block:
+    raise SystemExit('GOAD_NOMAD do_provision_lab does not use the human-readable timer')
+if 'return self._finalize_provider_provisioning()' not in ansible:
+    raise SystemExit('Ansible full-lab run no longer owns provider finalization')
+PY
+pass "single final-isolation owner and human-readable install timer"
 
 grep -Fq 'name: DNS' ansible/roles/child_domain/tasks/main.yml ||
     fail "child-domain role does not explicitly install DNS"

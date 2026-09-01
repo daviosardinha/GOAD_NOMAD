@@ -45,7 +45,7 @@ class GoadNomad(BaseGoad):
         """Run an install operation with a visible one-minute heartbeat.
 
         Vagrant/WinRM can legitimately spend many minutes booting older Windows
-        guests.  A periodic elapsed-time line keeps that wait observable without
+        guests. A periodic elapsed-time line keeps that wait observable without
         changing Vagrant's own output or timeout semantics.
         """
         if getattr(self, '_install_timer_active', False):
@@ -112,9 +112,9 @@ class GoadNomad(BaseGoad):
         """Run the provider and return the result from *this* attempt.
 
         Stock GOAD's interactive install path historically checks the persisted
-        instance status after ``do_provide``.  On a retry, an instance may still
+        instance status after ``do_provide``. On a retry, an instance may still
         carry ``ready for provisioning`` from an earlier successful provider
-        run.  If the current provider attempt then fails, that stale status can
+        run. If the current provider attempt then fails, that stale status can
         incorrectly allow Ansible to start against partially available VMs.
 
         GOAD_NOMAD treats the current provider return value as authoritative.
@@ -181,46 +181,29 @@ class GoadNomad(BaseGoad):
         return provision_result
 
     def do_provision_lab(self, arg=''):
-        """Provision only with a healthy management plane and isolate on success."""
-        provider = self.lab_manager.get_current_instance_provider()
-        if provider is None:
+        """Provision through the GOAD_NOMAD lifecycle and set READY only on success.
+
+        The Ansible provisioner owns both provisioning-plane preparation and the
+        single provider ``finalize_install`` call for a full lab run. Calling the
+        upstream controller here would add the legacy ``time.ctime`` duration,
+        while calling ``finalize_install`` again would repeat the exercise-mode
+        transition. Keep one lifecycle owner and one human-readable timer.
+        """
+        if self.lab_manager.get_current_instance_provider() is None:
             Log.error('No provider loaded for the current instance')
             return False
 
         phase_started = time.monotonic()
-        self._install_phase = 'provisioning management-plane validation'
-        prepare = getattr(provider, 'prepare_provisioning', None)
-        if callable(prepare) and not prepare():
-            elapsed = self._format_elapsed(time.monotonic() - phase_started)
-            Log.error(
-                f'GOAD_NOMAD: failed to prepare provisioning mode after {elapsed}; '
-                'aborting Ansible'
-            )
-            return False
-
-        self._install_phase = 'Ansible provisioning'
-        provision_result = super().do_provision_lab(arg)
+        self._install_phase = 'Ansible provisioning + final isolation'
+        provision_result = self.lab_manager.get_current_instance_provisioner().run()
         if not provision_result:
             elapsed = self._format_elapsed(time.monotonic() - phase_started)
             Log.error(f'GOAD_NOMAD TIMER: provisioning failed after {elapsed}')
-            # Keep provisioning mode available for diagnosis/retry.  Do not
-            # claim the instance is installed and do not silently isolate it.
+            # The provisioner returns False if management preparation, Ansible,
+            # or final exercise isolation fails. Never mark that state READY.
             return False
 
-        self._install_phase = 'exercise-mode finalization'
-        finalize = getattr(provider, 'finalize_install', None)
-        if callable(finalize) and not finalize():
-            # super().do_provision_lab() has already set READY. Roll that back
-            # because a GOAD_NOMAD install is not complete until exercise
-            # isolation has been successfully enforced.
-            self.lab_manager.get_current_instance().set_status(PROVIDED)
-            elapsed = self._format_elapsed(time.monotonic() - phase_started)
-            Log.error(
-                f'GOAD_NOMAD: provisioning succeeded but final exercise isolation '
-                f'failed after {elapsed}'
-            )
-            return False
-
+        self.lab_manager.get_current_instance().set_status(READY)
         elapsed = self._format_elapsed(time.monotonic() - phase_started)
         Log.success(
             f'GOAD_NOMAD TIMER: provisioning + final isolation completed in {elapsed}'
