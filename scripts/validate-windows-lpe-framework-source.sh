@@ -22,6 +22,7 @@ readonly TECHNIQUE_FILES=(
     ansible/roles/windows_lpe/tasks/techniques/weak_service_binary_permissions.yml
     ansible/roles/windows_lpe/tasks/techniques/weak_service_registry_permissions.yml
     ansible/roles/windows_lpe/tasks/techniques/service_dll_hijacking.yml
+    ansible/roles/windows_lpe/tasks/techniques/path_search_order_hijacking.yml
 )
 
 for file in \
@@ -37,7 +38,7 @@ for file in \
 do
     [[ -f "${file}" ]] || fail "missing Windows LPE framework file: ${file}"
 done
-pass 'required Windows LPE framework and service-batch files'
+pass 'required Windows LPE framework and current candidate files'
 
 bash -n scripts/validate-windows-lpe-framework-source.sh
 bash -n scripts/validate-windows-lpe-unquoted-service-path-runtime.sh
@@ -64,10 +65,6 @@ def yaml_list(text, key):
     return [line.strip()[2:].strip() for line in match.group(1).splitlines()]
 
 
-def yaml_empty_list(text, key):
-    return re.search(rf'(?m)^{re.escape(key)}:\s*\[\]\s*$', text) is not None
-
-
 expected_catalog = [
     'unquoted_service_path',
     'weak_service_dacl',
@@ -91,13 +88,19 @@ expected_catalog = [
     'insecure_service_registry',
 ]
 
-service_batch = [
+implemented_service_batch = [
     'unquoted_service_path',
     'weak_service_dacl',
     'weak_service_binary_permissions',
     'weak_service_registry_permissions',
     'service_dll_hijacking',
 ]
+
+candidate_batch = [
+    'path_search_order_hijacking',
+]
+
+available = implemented_service_batch + candidate_batch
 
 defaults = Path('ansible/roles/windows_lpe/defaults/main.yml').read_text()
 tasks = Path('ansible/roles/windows_lpe/tasks/main.yml').read_text()
@@ -108,10 +111,10 @@ single_runtime = Path('scripts/validate-windows-lpe-unquoted-service-path-runtim
 
 if yaml_list(defaults, 'windows_lpe_catalog') != expected_catalog:
     fail('Windows LPE catalog does not match the 20-technique contract')
-if yaml_list(defaults, 'windows_lpe_candidate_techniques') != service_batch:
-    fail('current service batch candidate set is incorrect')
-if not yaml_empty_list(defaults, 'windows_lpe_implemented_techniques'):
-    fail('current batch-safe source must remain unimplemented until its live batch gate passes')
+if yaml_list(defaults, 'windows_lpe_candidate_techniques') != candidate_batch:
+    fail('current Windows LPE candidate set is incorrect')
+if yaml_list(defaults, 'windows_lpe_implemented_techniques') != implemented_service_batch:
+    fail('the five validated Service Batch 1 techniques are not promoted exactly')
 
 for profile in (
     'none', 'service-abuse', 'credential-hunting',
@@ -124,7 +127,7 @@ for token in ('hosts: ws01', 'role: windows_lpe'):
     if token not in playbook:
         fail(f'Windows LPE playbook missing: {token}')
 
-for technique_id in service_batch:
+for technique_id in available:
     if f'techniques/{technique_id}.yml' not in tasks:
         fail(f'controller does not dispatch {technique_id}')
 
@@ -134,6 +137,7 @@ marker_contracts = {
     'weak_service_binary_permissions': 'WINDOWS_LPE_WEAK_SERVICE_BINARY_PERMISSIONS',
     'weak_service_registry_permissions': 'WINDOWS_LPE_WEAK_SERVICE_REGISTRY_PERMISSIONS',
     'service_dll_hijacking': 'WINDOWS_LPE_SERVICE_DLL_HIJACKING',
+    'path_search_order_hijacking': 'WINDOWS_LPE_PATH_SEARCH_ORDER_HIJACKING',
 }
 
 for technique_id, marker in marker_contracts.items():
@@ -148,6 +152,16 @@ for technique_id, marker in marker_contracts.items():
         if forbidden.lower() in source.lower():
             fail(f'{technique_id} weakens unrelated security controls: {forbidden}')
 
+path_source = Path('ansible/roles/windows_lpe/tasks/techniques/path_search_order_hijacking.yml').read_text()
+for token in (
+    'EnvironmentVariableTarget.Machine',
+    'KingdomPathHelper.exe',
+    "WINDOWS_LPE_PATH_SEARCH_ORDER_HIJACKING=VULNERABLE",
+    "WINDOWS_LPE_PATH_SEARCH_ORDER_HIJACKING=CLEAN",
+):
+    if token not in path_source:
+        fail(f'PATH search-order candidate contract missing: {token}')
+
 for token in (
     'windows_lpe_candidate_techniques',
     'windows_lpe_implemented_techniques',
@@ -157,9 +171,9 @@ for token in (
     if token not in tasks:
         fail(f'fail-closed controller contract missing: {token}')
 
-for technique_id in service_batch:
+for technique_id in implemented_service_batch:
     if technique_id not in batch_runtime:
-        fail(f'service batch runtime gate missing: {technique_id}')
+        fail(f'Service Batch 1 runtime gate missing: {technique_id}')
 
 for token in (
     'run_batch apply',
@@ -171,7 +185,7 @@ for token in (
     '[READY] Windows LPE service batch live promotion gate passed.',
 ):
     if token not in batch_runtime:
-        fail(f'service batch promotion contract missing: {token}')
+        fail(f'Service Batch 1 promotion contract missing: {token}')
 
 for token in (
     'run_lpe apply',
@@ -187,18 +201,22 @@ for technique_id in expected_catalog:
     if f'`{technique_id}`' not in catalog_doc:
         fail(f'catalog documentation missing technique: {technique_id}')
 
-for technique_id in service_batch:
+for technique_id in implemented_service_batch:
+    if not re.search(rf'\| `{re.escape(technique_id)}` \|[^\n]*\| \*\*Implemented\*\* \|', catalog_doc):
+        fail(f'catalog does not mark validated {technique_id} source as Implemented')
+
+for technique_id in candidate_batch:
     if not re.search(rf'\| `{re.escape(technique_id)}` \|[^\n]*\| \*\*Candidate\*\* \|', catalog_doc):
         fail(f'catalog does not mark current {technique_id} source as Candidate')
 
 if 'windows_lpe_allow_candidate=true' not in catalog_doc:
     fail('catalog does not document explicit candidate opt-in')
 if 'service batch live promotion gate' not in catalog_doc.lower():
-    fail('catalog does not document the service batch promotion lifecycle')
-if 'batch-safe' not in catalog_doc.lower():
-    fail('catalog does not explain why unquoted_service_path requires current-source revalidation')
+    fail('catalog does not document the Service Batch 1 promotion lifecycle')
+if 'path search-order' not in catalog_doc.lower():
+    fail('catalog does not document the PATH search-order candidate')
 PY
-pass 'service-batch candidate lifecycle and fail-closed controller contract'
+pass 'implemented Service Batch 1 plus next-candidate lifecycle contract'
 
 git diff --check
 pass 'Git whitespace check'

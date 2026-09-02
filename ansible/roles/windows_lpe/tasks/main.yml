@@ -105,26 +105,32 @@
     - windows_lpe_action != 'status'
     - "'unquoted_service_path' in windows_lpe_requested_techniques"
 
-- name: Manage weak service DACL candidate
+- name: Manage weak service DACL technique
   ansible.builtin.include_tasks: techniques/weak_service_dacl.yml
   when:
     - windows_lpe_action != 'status'
     - "'weak_service_dacl' in windows_lpe_requested_techniques"
 
-- name: Manage weak service binary permissions candidate
+- name: Manage weak service binary permissions technique
   ansible.builtin.include_tasks: techniques/weak_service_binary_permissions.yml
   when:
     - windows_lpe_action != 'status'
     - "'weak_service_binary_permissions' in windows_lpe_requested_techniques"
 
-- name: Manage weak service registry permissions candidate
+- name: Manage weak service registry permissions technique
   ansible.builtin.include_tasks: techniques/weak_service_registry_permissions.yml
   when:
     - windows_lpe_action != 'status'
     - "'weak_service_registry_permissions' in windows_lpe_requested_techniques"
 
-- name: Manage service DLL hijacking candidate
+- name: Manage service DLL hijacking technique
   ansible.builtin.include_tasks: techniques/service_dll_hijacking.yml
   when:
     - windows_lpe_action != 'status'
     - "'service_dll_hijacking' in windows_lpe_requested_techniques"
+
+- name: Manage PATH search-order hijacking candidate
+  ansible.builtin.include_tasks: techniques/path_search_order_hijacking.yml
+  when:
+    - windows_lpe_action != 'status'
+    - "'path_search_order_hijacking' in windows_lpe_requested_techniques"

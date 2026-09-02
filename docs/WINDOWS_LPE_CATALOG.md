@@ -28,12 +28,12 @@ Candidate techniques require an exact `windows_lpe_techniques` selection plus `w
 
 | ID | Family | Status | Notes |
 | --- | --- | --- | --- |
-| `unquoted_service_path` | Services | **Candidate** | Original engine proof passed; current batch-safe reset refactor requires revalidation |
-| `weak_service_dacl` | Services | **Candidate** | Dedicated LocalSystem service with low-privilege CHANGE_CONFIG/START/STOP rights |
-| `weak_service_binary_permissions` | Services | **Candidate** | Dedicated quoted-path LocalSystem service with writable executable only |
-| `weak_service_registry_permissions` | Services / Registry | **Candidate** | Dedicated quoted-path LocalSystem service with Users `SetValue` on its service key |
-| `service_dll_hijacking` | Services / DLL | **Candidate** | Dedicated privileged service loads a missing DLL from a Users-writable parent path |
-| `path_search_order_hijacking` | Services / PATH | Planned | Controlled PATH search-order scenario |
+| `unquoted_service_path` | Services | **Implemented** | Current batch-safe source passed the Service Batch 1 live promotion gate on 2026-09-02 |
+| `weak_service_dacl` | Services | **Implemented** | Dedicated LocalSystem service with low-privilege CHANGE_CONFIG/START/STOP rights; live gate passed |
+| `weak_service_binary_permissions` | Services | **Implemented** | Dedicated quoted-path LocalSystem service with writable executable only; live gate passed |
+| `weak_service_registry_permissions` | Services / Registry | **Implemented** | Dedicated quoted-path LocalSystem service with Users `SetValue` on its service key; live gate passed |
+| `service_dll_hijacking` | Services / DLL | **Implemented** | Dedicated privileged service loads a missing DLL from a Users-writable parent path; live gate passed |
+| `path_search_order_hijacking` | Services / PATH | **Candidate** | Isolated LocalSystem PATH lookup with Users-writable preemption directory and protected fallback helper |
 | `always_install_elevated` | Policy / Registry | Planned | Per-user and machine installer policy pair |
 | `registry_run_keys` | Registry / Autoruns | Planned | Writable privileged autorun configuration |
 | `writable_startup_folder` | Startup | Planned | Writable startup execution path |
@@ -51,35 +51,9 @@ Candidate techniques require an exact `windows_lpe_techniques` selection plus `w
 
 The deterministic core target is approximately **18–22** techniques. Patch/build-dependent kernel CVEs are optional and are not part of the core catalog.
 
-## Engine proof and current-source revalidation
+## Service Batch 1 — implemented
 
-The original `unquoted_service_path` implementation successfully proved the framework engine on 2026-09-02:
-
-```text
-apply -> vulnerable -> reset -> clean -> re-apply -> vulnerable
-```
-
-That proof established that the lifecycle controller, live validation, reset model, WS01 health guard, and Mayfly evaluation handling work.
-
-After that proof, the technique was deliberately refactored to become **batch-safe**. The current unquoted service path is:
-
-```text
-C:\Kingdom LPE\Unquoted Path\Service\KingdomUpdater.exe
-```
-
-with the intended ambiguous candidate:
-
-```text
-C:\Kingdom LPE\Unquoted.exe
-```
-
-`BUILTIN\\Users` receives a create/write ACE on the shared `C:\Kingdom LPE` parent for that folder only. Reset removes only the unquoted service, its `Unquoted Path` subtree, its candidate file, and its exact ACL entry. It does not delete the shared parent or another scenario's files.
-
-Because this is a material source change after the original live proof, `unquoted_service_path` is correctly back in **Candidate** state until the current code passes the service batch live promotion gate.
-
-## Service Batch 1 candidate
-
-The accelerated service batch contains:
+The first accelerated service batch contains:
 
 ```text
 unquoted_service_path
@@ -97,7 +71,7 @@ The scenarios are designed not to collapse into one another:
 - weak service registry permissions uses a quoted ImagePath and non-writable binary;
 - DLL hijacking permits creation of the missing DLL only in a dedicated writable parent location while the legitimate service executable stays non-writable.
 
-The **service batch live promotion gate** executes all five in one lifecycle:
+The **service batch live promotion gate** executed all five in one lifecycle:
 
 ```text
 clean WS01 baseline
@@ -110,12 +84,39 @@ clean WS01 baseline
   -> validate WS01 domain/UAC/Firewall/Defender/evaluation baseline
 ```
 
-Only after this passes do all five current implementations become **Implemented**.
+On 2026-09-02 the exact origin-synced source at commit `dc1b82fee451a921b53ebae16c0edd2923df2ca3` passed that gate with `unreachable=0` and `failed=0`. The final runtime state intentionally kept all five scenarios applied and vulnerable for training. They are therefore promoted to **Implemented**.
 
-Development testing uses an exact list plus:
+## Next candidate — PATH search-order hijacking
+
+`path_search_order_hijacking` completes the planned `service-abuse` family without weakening the five already-live scenarios.
+
+The candidate creates a dedicated manual LocalSystem service, `KingdomPathSvc`, whose protected service binary launches a uniquely named helper by filename rather than by absolute path. The machine PATH is scoped so that:
 
 ```text
+C:\Kingdom LPE\Path Search\UserBin
+```
+
+appears before the protected fallback directory:
+
+```text
+C:\Kingdom LPE\Path Search\SystemBin
+```
+
+`BUILTIN\\Users` can write only to `UserBin`. The privileged service binary and the legitimate fallback `KingdomPathHelper.exe` remain non-writable. Users can START/STOP the dedicated service but are not granted `SERVICE_CHANGE_CONFIG`, keeping this distinct from `weak_service_dacl`.
+
+Reset removes only `KingdomPathSvc`, the `Path Search` subtree, and those two exact lab PATH entries. Every unrelated machine PATH entry and every previously implemented LPE scenario is preserved.
+
+Candidate testing remains exact and explicit:
+
+```text
+windows_lpe_techniques=['path_search_order_hijacking']
 windows_lpe_allow_candidate=true
+```
+
+It remains **Candidate** until the current committed source passes its reversible live gate:
+
+```text
+apply -> vulnerable -> reset -> clean -> re-apply -> vulnerable
 ```
 
 ## Remaining planned profiles and techniques
@@ -134,10 +135,10 @@ Profiles remain:
 Current checkpoint:
 
 - 20-technique catalog committed;
-- five Service Batch 1 techniques are Candidate;
-- all other techniques are Planned;
-- no current implementation is advertised as Implemented until the batch-safe source passes live validation;
+- five Service Batch 1 techniques are **Implemented** and currently live on the validated training WS01;
+- `path_search_order_hijacking` is the next **Candidate**;
+- 14 techniques remain Planned;
 - normal profiles remain fail-closed while they include candidate/planned members;
 - candidate testing requires exact selection and explicit opt-in;
-- the batch runner checks WS01 power and WinRM around every phase;
+- the runtime gates check WS01 power and WinRM around lifecycle phases;
 - Defender, UAC and Windows Firewall are not globally weakened.

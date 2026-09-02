@@ -1,0 +1,304 @@
+---
+- name: Apply PATH search-order hijacking candidate
+  ansible.windows.win_powershell:
+    script: |
+      $ErrorActionPreference = 'Stop'
+
+      $name = '{{ windows_lpe_path_search_order_hijacking.service_name }}'
+      $display = '{{ windows_lpe_path_search_order_hijacking.display_name }}'
+      $root = '{{ windows_lpe_path_search_order_hijacking.root }}'
+      $serviceDir = '{{ windows_lpe_path_search_order_hijacking.service_directory }}'
+      $exe = '{{ windows_lpe_path_search_order_hijacking.executable }}'
+      $writableDir = '{{ windows_lpe_path_search_order_hijacking.writable_directory }}'
+      $protectedDir = '{{ windows_lpe_path_search_order_hijacking.protected_directory }}'
+      $helperName = '{{ windows_lpe_path_search_order_hijacking.helper_name }}'
+      $protectedHelper = '{{ windows_lpe_path_search_order_hijacking.protected_helper }}'
+
+      $existing = Get-Service -Name $name -ErrorAction SilentlyContinue
+      if ($existing) {
+          Stop-Service -Name $name -Force -ErrorAction SilentlyContinue
+          & sc.exe delete $name | Out-Null
+          Start-Sleep -Milliseconds 750
+      }
+      if (Test-Path -LiteralPath $root) {
+          Remove-Item -LiteralPath $root -Recurse -Force
+      }
+
+      New-Item -ItemType Directory -Path $serviceDir -Force | Out-Null
+      New-Item -ItemType Directory -Path $writableDir -Force | Out-Null
+      New-Item -ItemType Directory -Path $protectedDir -Force | Out-Null
+
+      $serviceSource = @"
+      using System;
+      using System.Diagnostics;
+      using System.ServiceProcess;
+
+      public sealed class KingdomPathService : ServiceBase
+      {
+          public KingdomPathService() { ServiceName = "$name"; }
+
+          protected override void OnStart(string[] args)
+          {
+              try
+              {
+                  string machinePath = Environment.GetEnvironmentVariable(
+                      "Path", EnvironmentVariableTarget.Machine);
+                  if (!String.IsNullOrEmpty(machinePath))
+                  {
+                      Environment.SetEnvironmentVariable(
+                          "Path", machinePath, EnvironmentVariableTarget.Process);
+                  }
+
+                  ProcessStartInfo psi = new ProcessStartInfo();
+                  psi.FileName = "$helperName";
+                  psi.UseShellExecute = false;
+                  psi.CreateNoWindow = true;
+                  Process.Start(psi);
+              }
+              catch { }
+          }
+
+          protected override void OnStop() { }
+
+          public static void Main()
+          {
+              ServiceBase.Run(new KingdomPathService());
+          }
+      }
+      "@
+
+      Add-Type `
+          -TypeDefinition $serviceSource `
+          -Language CSharp `
+          -ReferencedAssemblies 'System.ServiceProcess.dll' `
+          -OutputAssembly $exe `
+          -OutputType WindowsApplication
+
+      $helperSource = @"
+      public static class KingdomPathHelper
+      {
+          public static void Main() { }
+      }
+      "@
+
+      Add-Type `
+          -TypeDefinition $helperSource `
+          -Language CSharp `
+          -OutputAssembly $protectedHelper `
+          -OutputType ConsoleApplication
+
+      # Only the candidate lookup directory is writable. The privileged service
+      # binary and the legitimate fallback helper stay non-writable to Users.
+      $acl = Get-Acl -LiteralPath $writableDir
+      $usersSid = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-32-545')
+      $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+          $usersSid,
+          [System.Security.AccessControl.FileSystemRights]::Modify,
+          [System.Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit',
+          [System.Security.AccessControl.PropagationFlags]::None,
+          [System.Security.AccessControl.AccessControlType]::Allow
+      )
+      $acl.AddAccessRule($rule) | Out-Null
+      Set-Acl -LiteralPath $writableDir -AclObject $acl
+
+      # Put the writable lab directory before the protected fallback directory in
+      # the machine PATH while preserving every unrelated PATH entry.
+      $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+      $existingEntries = @()
+      if ($machinePath) {
+          $existingEntries = @($machinePath -split ';' | Where-Object { $_ -and $_.Trim() })
+      }
+      $remaining = @()
+      foreach ($entry in $existingEntries) {
+          $normalized = $entry.Trim().TrimEnd('\')
+          if ($normalized -ieq $writableDir.TrimEnd('\')) { continue }
+          if ($normalized -ieq $protectedDir.TrimEnd('\')) { continue }
+          $remaining += $entry.Trim()
+      }
+      $newPath = (@($writableDir, $protectedDir) + $remaining) -join ';'
+      [Environment]::SetEnvironmentVariable('Path', $newPath, 'Machine')
+
+      New-Service `
+          -Name $name `
+          -BinaryPathName ('"{0}"' -f $exe) `
+          -DisplayName $display `
+          -StartupType Manual | Out-Null
+
+      # Users can trigger this one service, but cannot reconfigure it. START/STOP
+      # is intentionally distinct from the weak-service-DACL scenario.
+      $sddl = 'D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWLOCRRC;;;IU)(A;;CCLCSWLOCRRC;;;SU)(A;;RPWP;;;BU)'
+      $result = & sc.exe sdset $name $sddl 2>&1
+      if ($LASTEXITCODE -ne 0) { throw "sc sdset failed: $result" }
+
+      # Compatibility smoke test: with UserBin empty the service must resolve the
+      # legitimate helper later in PATH and start cleanly.
+      Start-Service -Name $name
+      Start-Sleep -Milliseconds 750
+      Stop-Service -Name $name -Force
+
+      Write-Output 'WINDOWS_LPE_PATH_SEARCH_ORDER_HIJACKING=APPLIED'
+  when: windows_lpe_action == 'apply'
+
+- name: Reset PATH search-order hijacking candidate
+  ansible.windows.win_powershell:
+    script: |
+      $ErrorActionPreference = 'Stop'
+
+      $name = '{{ windows_lpe_path_search_order_hijacking.service_name }}'
+      $root = '{{ windows_lpe_path_search_order_hijacking.root }}'
+      $writableDir = '{{ windows_lpe_path_search_order_hijacking.writable_directory }}'
+      $protectedDir = '{{ windows_lpe_path_search_order_hijacking.protected_directory }}'
+
+      $existing = Get-Service -Name $name -ErrorAction SilentlyContinue
+      if ($existing) {
+          Stop-Service -Name $name -Force -ErrorAction SilentlyContinue
+          & sc.exe delete $name | Out-Null
+          Start-Sleep -Milliseconds 750
+      }
+
+      $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+      if ($machinePath) {
+          $remaining = @()
+          foreach ($entry in ($machinePath -split ';')) {
+              if (-not $entry -or -not $entry.Trim()) { continue }
+              $normalized = $entry.Trim().TrimEnd('\')
+              if ($normalized -ieq $writableDir.TrimEnd('\')) { continue }
+              if ($normalized -ieq $protectedDir.TrimEnd('\')) { continue }
+              $remaining += $entry.Trim()
+          }
+          [Environment]::SetEnvironmentVariable('Path', ($remaining -join ';'), 'Machine')
+      }
+
+      if (Test-Path -LiteralPath $root) {
+          Remove-Item -LiteralPath $root -Recurse -Force
+      }
+
+      Write-Output 'WINDOWS_LPE_PATH_SEARCH_ORDER_HIJACKING=RESET'
+  when: windows_lpe_action == 'reset'
+
+- name: Validate vulnerable PATH search-order hijacking state
+  ansible.windows.win_powershell:
+    script: |
+      $ErrorActionPreference = 'Stop'
+
+      $name = '{{ windows_lpe_path_search_order_hijacking.service_name }}'
+      $exe = '{{ windows_lpe_path_search_order_hijacking.executable }}'
+      $writableDir = '{{ windows_lpe_path_search_order_hijacking.writable_directory }}'
+      $protectedDir = '{{ windows_lpe_path_search_order_hijacking.protected_directory }}'
+      $protectedHelper = '{{ windows_lpe_path_search_order_hijacking.protected_helper }}'
+      $usersSid = 'S-1-5-32-545'
+
+      function Convert-IdentityToSid([System.Security.Principal.IdentityReference] $Identity) {
+          try { return $Identity.Translate([System.Security.Principal.SecurityIdentifier]).Value } catch { return $null }
+      }
+
+      function Test-WriteCapableAcl([string] $Path) {
+          $writeBits = @(
+              [System.Security.AccessControl.FileSystemRights]::WriteData,
+              [System.Security.AccessControl.FileSystemRights]::AppendData,
+              [System.Security.AccessControl.FileSystemRights]::WriteAttributes,
+              [System.Security.AccessControl.FileSystemRights]::WriteExtendedAttributes,
+              [System.Security.AccessControl.FileSystemRights]::Delete,
+              [System.Security.AccessControl.FileSystemRights]::ChangePermissions,
+              [System.Security.AccessControl.FileSystemRights]::TakeOwnership
+          )
+          foreach ($ace in (Get-Acl -LiteralPath $Path).Access) {
+              if ((Convert-IdentityToSid $ace.IdentityReference) -ne $usersSid) { continue }
+              if ($ace.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow) { continue }
+              foreach ($bit in $writeBits) {
+                  if (($ace.FileSystemRights -band $bit) -eq $bit) { return $true }
+              }
+          }
+          return $false
+      }
+
+      $service = Get-CimInstance Win32_Service -Filter "Name='$name'" -ErrorAction Stop
+      if (-not $service) { throw 'KingdomPathSvc is missing' }
+      if ($service.StartName -ne 'LocalSystem') { throw "service account=$($service.StartName)" }
+      if (-not $service.PathName.TrimStart().StartsWith('"')) { throw 'service path is not quoted' }
+      if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw 'privileged service executable missing' }
+      if (-not (Test-Path -LiteralPath $protectedHelper -PathType Leaf)) { throw 'protected fallback helper missing' }
+      if (-not (Test-Path -LiteralPath $writableDir -PathType Container)) { throw 'writable PATH directory missing' }
+      if (-not (Test-Path -LiteralPath $protectedDir -PathType Container)) { throw 'protected PATH directory missing' }
+
+      if (-not (Test-WriteCapableAcl $writableDir)) {
+          throw 'BUILTIN\Users cannot write the intended PATH preemption directory'
+      }
+      if (Test-WriteCapableAcl $exe) {
+          throw 'privileged service executable is also writable by BUILTIN\Users'
+      }
+      if (Test-WriteCapableAcl $protectedHelper) {
+          throw 'protected fallback helper is also writable by BUILTIN\Users'
+      }
+
+      $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+      if (-not $machinePath) { throw 'machine PATH is empty' }
+      $entries = @($machinePath -split ';' | Where-Object { $_ -and $_.Trim() })
+      $writableIndex = -1
+      $protectedIndex = -1
+      for ($i = 0; $i -lt $entries.Count; $i++) {
+          $normalized = $entries[$i].Trim().TrimEnd('\')
+          if ($normalized -ieq $writableDir.TrimEnd('\') -and $writableIndex -lt 0) { $writableIndex = $i }
+          if ($normalized -ieq $protectedDir.TrimEnd('\') -and $protectedIndex -lt 0) { $protectedIndex = $i }
+      }
+      if ($writableIndex -lt 0) { throw 'writable candidate directory is absent from machine PATH' }
+      if ($protectedIndex -lt 0) { throw 'protected helper directory is absent from machine PATH' }
+      if ($writableIndex -ge $protectedIndex) {
+          throw "PATH ordering is not vulnerable: writable=$writableIndex protected=$protectedIndex"
+      }
+
+      $sd = (& sc.exe sdshow $name 2>&1 | Out-String).Trim()
+      $bu = [regex]::Match($sd, '\(A;;([^;]+);;;BU\)')
+      if (-not $bu.Success) { throw "BUILTIN\\Users service ACE missing: $sd" }
+      $rights = $bu.Groups[1].Value
+      if ($rights -notmatch 'RP') { throw "BUILTIN\\Users lacks SERVICE_START: rights=$rights" }
+      if ($rights -match 'DC') { throw "service also grants CHANGE_CONFIG to Users; collision rights=$rights" }
+
+      Write-Output 'WINDOWS_LPE_PATH_SEARCH_ORDER_HIJACKING=VULNERABLE'
+  register: windows_lpe_path_search_order_hijacking_vulnerable
+  when:
+    - windows_lpe_action == 'apply' or (windows_lpe_action == 'validate' and windows_lpe_validate_state == 'vulnerable')
+
+- name: Show vulnerable PATH search-order hijacking validation
+  ansible.builtin.debug:
+    var: windows_lpe_path_search_order_hijacking_vulnerable.output
+  when:
+    - windows_lpe_path_search_order_hijacking_vulnerable is defined
+    - windows_lpe_path_search_order_hijacking_vulnerable.output is defined
+
+- name: Validate clean PATH search-order hijacking state
+  ansible.windows.win_powershell:
+    script: |
+      $name = '{{ windows_lpe_path_search_order_hijacking.service_name }}'
+      $root = '{{ windows_lpe_path_search_order_hijacking.root }}'
+      $writableDir = '{{ windows_lpe_path_search_order_hijacking.writable_directory }}'
+      $protectedDir = '{{ windows_lpe_path_search_order_hijacking.protected_directory }}'
+
+      if (Get-Service -Name $name -ErrorAction SilentlyContinue) {
+          throw 'KingdomPathSvc still exists'
+      }
+      if (Test-Path -LiteralPath $root) {
+          throw 'PATH search-order lab directory still exists'
+      }
+
+      $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+      if ($machinePath) {
+          foreach ($entry in ($machinePath -split ';')) {
+              if (-not $entry -or -not $entry.Trim()) { continue }
+              $normalized = $entry.Trim().TrimEnd('\')
+              if ($normalized -ieq $writableDir.TrimEnd('\')) { throw 'writable lab directory remains in machine PATH' }
+              if ($normalized -ieq $protectedDir.TrimEnd('\')) { throw 'protected lab directory remains in machine PATH' }
+          }
+      }
+
+      Write-Output 'WINDOWS_LPE_PATH_SEARCH_ORDER_HIJACKING=CLEAN'
+  register: windows_lpe_path_search_order_hijacking_clean
+  when:
+    - windows_lpe_action == 'reset' or (windows_lpe_action == 'validate' and windows_lpe_validate_state == 'clean')
+
+- name: Show clean PATH search-order hijacking validation
+  ansible.builtin.debug:
+    var: windows_lpe_path_search_order_hijacking_clean.output
+  when:
+    - windows_lpe_path_search_order_hijacking_clean is defined
+    - windows_lpe_path_search_order_hijacking_clean.output is defined

@@ -45,17 +45,18 @@ windows_lpe_catalog:
   - writable_program_directory
   - insecure_service_registry
 
-# Batch 1 candidates. The original unquoted-service implementation passed its
-# one-technique engine proof, but it was subsequently refactored for independent
-# batch reset semantics and therefore must be revalidated with the current code.
+# The five original service techniques passed their exact current-source live
+# promotion gate on 2026-09-02. PATH search-order hijacking is the next isolated
+# candidate and remains opt-in until its own reversible live gate passes.
 windows_lpe_candidate_techniques:
+  - path_search_order_hijacking
+
+windows_lpe_implemented_techniques:
   - unquoted_service_path
   - weak_service_dacl
   - weak_service_binary_permissions
   - weak_service_registry_permissions
   - service_dll_hijacking
-
-windows_lpe_implemented_techniques: []
 
 windows_lpe_profiles:
   none: []
@@ -123,3 +124,14 @@ windows_lpe_service_dll_hijacking:
   service_directory: 'C:\Kingdom LPE\DLL Hijack\Service'
   executable: 'C:\Kingdom LPE\DLL Hijack\Service\KingdomDllHost.exe'
   writable_dll: 'C:\Kingdom LPE\DLL Hijack\KingdomHelper.dll'
+
+windows_lpe_path_search_order_hijacking:
+  service_name: KingdomPathSvc
+  display_name: GOAD Kingdoms PATH Search Service
+  root: 'C:\Kingdom LPE\Path Search'
+  service_directory: 'C:\Kingdom LPE\Path Search\Service'
+  executable: 'C:\Kingdom LPE\Path Search\Service\KingdomPathSvc.exe'
+  writable_directory: 'C:\Kingdom LPE\Path Search\UserBin'
+  protected_directory: 'C:\Kingdom LPE\Path Search\SystemBin'
+  helper_name: KingdomPathHelper.exe
+  protected_helper: 'C:\Kingdom LPE\Path Search\SystemBin\KingdomPathHelper.exe'
