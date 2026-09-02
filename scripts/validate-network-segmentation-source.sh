@@ -33,10 +33,14 @@ pass "Git source-of-truth gate"
 for file in \
     goad_nomad.py \
     goad/provisioner/ansible/ansible.py \
+    goad/provider/provider_factory.py \
+    goad/provider/vagrant/vmware_kingdoms.py \
+    goad/provider/vagrant/vmware_nomad.py \
     scripts/lab-mode.sh \
     scripts/provisioning-routes.sh \
     scripts/setup-vmware-networks.sh \
     scripts/check-vmware-networks.sh \
+    scripts/check-vmware-instance-conflicts.sh \
     scripts/verify-test-source.sh \
     scripts/validate-network-segmentation.sh \
     scripts/validate-network-segmentation-runtime.sh \
@@ -64,6 +68,7 @@ for file in \
     scripts/provisioning-routes.sh \
     scripts/setup-vmware-networks.sh \
     scripts/check-vmware-networks.sh \
+    scripts/check-vmware-instance-conflicts.sh \
     scripts/verify-test-source.sh \
     scripts/validate-network-segmentation.sh \
     scripts/validate-network-segmentation-runtime.sh \
@@ -79,9 +84,45 @@ pass "shell syntax"
 python3 -m py_compile \
     goad/config.py \
     goad_nomad.py \
+    goad/provider/provider_factory.py \
     goad/provider/vagrant/vmware.py \
+    goad/provider/vagrant/vmware_kingdoms.py \
+    goad/provider/vagrant/vmware_nomad.py \
     goad/provisioner/ansible/ansible.py
 pass "Python syntax"
+
+# The deterministic segmented MACs are intentionally stable within one lab so
+# IP/NIC validation remains reproducible. Two lab instances must therefore never
+# be allowed to run those identities on the same VMware vmnets concurrently.
+conflict_tmp="$(mktemp -d)"
+trap 'rm -rf "${conflict_tmp}"' EXIT
+mkdir -p "${conflict_tmp}/current" "${conflict_tmp}/other"
+printf 'ethernet1.address = "00:50:56:20:20:10"\n' > "${conflict_tmp}/current/current.vmx"
+printf 'ethernet1.address = "00:50:56:20:20:10"\n' > "${conflict_tmp}/other/conflict.vmx"
+
+cat > "${conflict_tmp}/vmrun-current" <<EOF
+#!/usr/bin/env bash
+printf 'Total running VMs: 1\\n%s\\n' '${conflict_tmp}/current/current.vmx'
+EOF
+chmod +x "${conflict_tmp}/vmrun-current"
+
+GOAD_KINGDOMS_VMRUN_BIN="${conflict_tmp}/vmrun-current" \
+    bash scripts/check-vmware-instance-conflicts.sh "${conflict_tmp}/current" >/dev/null ||
+    fail "collision guard rejects a VM belonging to the selected provider"
+
+cat > "${conflict_tmp}/vmrun-conflict" <<EOF
+#!/usr/bin/env bash
+printf 'Total running VMs: 1\\n%s\\n' '${conflict_tmp}/other/conflict.vmx'
+EOF
+chmod +x "${conflict_tmp}/vmrun-conflict"
+
+if GOAD_KINGDOMS_VMRUN_BIN="${conflict_tmp}/vmrun-conflict" \
+    bash scripts/check-vmware-instance-conflicts.sh "${conflict_tmp}/current" >/dev/null 2>&1; then
+    fail "collision guard allows an outside provider to reuse a segmented MAC"
+fi
+rm -rf "${conflict_tmp}"
+trap - EXIT
+pass "deterministic VMware MAC collision guard"
 
 if command -v ruby >/dev/null 2>&1; then
     ruby -c ad/GOAD/providers/vmware/Vagrantfile >/dev/null
@@ -182,6 +223,16 @@ if 'return self._finalize_provider_provisioning()' not in ansible_source:
     raise SystemExit('Ansible full-lab run no longer owns provider finalization')
 PY
 pass "single final-isolation owner and human-readable install timer"
+
+grep -Fq 'GoadKingdomsVmwareProvider' goad/provider/provider_factory.py ||
+    fail "provider factory does not select the guarded GOAD Kingdoms VMware provider"
+grep -Fq '_check_segmented_instance_conflicts' goad/provider/vagrant/vmware_kingdoms.py ||
+    fail "GOAD Kingdoms VMware provider has no collision preflight"
+grep -Fq 'check-vmware-instance-conflicts.sh' goad/provider/vagrant/vmware_kingdoms.py ||
+    fail "GOAD Kingdoms VMware provider does not invoke the collision guard"
+grep -Fq 'return super().prepare_install()' goad/provider/vagrant/vmware_kingdoms.py ||
+    fail "collision preflight does not return to the validated M1 prepare_install lifecycle"
+pass "GOAD Kingdoms provider owns fail-closed pre-start collision policy"
 
 grep -Fq 'name: DNS' ansible/roles/child_domain/tasks/main.yml ||
     fail "child-domain role does not explicitly install DNS"
