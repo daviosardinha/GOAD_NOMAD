@@ -1,0 +1,152 @@
+---
+- name: Apply scheduled task directory permissions candidate
+  ansible.windows.win_powershell:
+    script: |
+      $ErrorActionPreference = 'Stop'
+
+      $taskName = '{{ windows_lpe_scheduled_task_directory_permissions.task_name }}'
+      $root = '{{ windows_lpe_scheduled_task_directory_permissions.root }}'
+      $binDir = '{{ windows_lpe_scheduled_task_directory_permissions.directory }}'
+      $exe = '{{ windows_lpe_scheduled_task_directory_permissions.executable }}'
+
+      Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+      if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }
+      New-Item -ItemType Directory -Path $binDir -Force | Out-Null
+
+      $source = @"
+      public static class KingdomTaskDirectory
+      {
+          public static void Main() { }
+      }
+      "@
+      Add-Type -TypeDefinition $source -Language CSharp -OutputAssembly $exe -OutputType ConsoleApplication
+
+      # Freeze the executable ACL before weakening only its containing directory.
+      $exeAcl = Get-Acl -LiteralPath $exe
+      $exeAcl.SetAccessRuleProtection($true, $true)
+      Set-Acl -LiteralPath $exe -AclObject $exeAcl
+
+      $dirAcl = Get-Acl -LiteralPath $binDir
+      $usersSid = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-32-545')
+      $rights = [System.Security.AccessControl.FileSystemRights]::CreateFiles `
+          -bor [System.Security.AccessControl.FileSystemRights]::AppendData `
+          -bor [System.Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles `
+          -bor [System.Security.AccessControl.FileSystemRights]::ReadAndExecute `
+          -bor [System.Security.AccessControl.FileSystemRights]::ReadAttributes `
+          -bor [System.Security.AccessControl.FileSystemRights]::ReadExtendedAttributes `
+          -bor [System.Security.AccessControl.FileSystemRights]::ReadPermissions `
+          -bor [System.Security.AccessControl.FileSystemRights]::Synchronize
+      $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+          $usersSid,
+          $rights,
+          [System.Security.AccessControl.InheritanceFlags]::None,
+          [System.Security.AccessControl.PropagationFlags]::None,
+          [System.Security.AccessControl.AccessControlType]::Allow
+      )
+      $dirAcl.AddAccessRule($rule) | Out-Null
+      Set-Acl -LiteralPath $binDir -AclObject $dirAcl
+
+      $action = New-ScheduledTaskAction -Execute $exe
+      $trigger = New-ScheduledTaskTrigger -AtStartup
+      $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+      Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Force | Out-Null
+
+      Write-Output 'WINDOWS_LPE_SCHEDULED_TASK_DIRECTORY_PERMISSIONS=APPLIED'
+  when: windows_lpe_action == 'apply'
+
+- name: Reset scheduled task directory permissions candidate
+  ansible.windows.win_powershell:
+    script: |
+      $taskName = '{{ windows_lpe_scheduled_task_directory_permissions.task_name }}'
+      $root = '{{ windows_lpe_scheduled_task_directory_permissions.root }}'
+      Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+      if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }
+      Write-Output 'WINDOWS_LPE_SCHEDULED_TASK_DIRECTORY_PERMISSIONS=RESET'
+  when: windows_lpe_action == 'reset'
+
+- name: Validate vulnerable scheduled task directory permissions state
+  ansible.windows.win_powershell:
+    script: |
+      $ErrorActionPreference = 'Stop'
+      $taskName = '{{ windows_lpe_scheduled_task_directory_permissions.task_name }}'
+      $binDir = '{{ windows_lpe_scheduled_task_directory_permissions.directory }}'
+      $exe = '{{ windows_lpe_scheduled_task_directory_permissions.executable }}'
+      $usersSid = 'S-1-5-32-545'
+
+      function Convert-IdentityToSid([System.Security.Principal.IdentityReference] $Identity) {
+          try { return $Identity.Translate([System.Security.Principal.SecurityIdentifier]).Value } catch { return $null }
+      }
+      function Test-WriteCapableRights([System.Security.AccessControl.FileSystemRights] $Rights) {
+          $writeBits = @(
+              [System.Security.AccessControl.FileSystemRights]::WriteData,
+              [System.Security.AccessControl.FileSystemRights]::AppendData,
+              [System.Security.AccessControl.FileSystemRights]::WriteAttributes,
+              [System.Security.AccessControl.FileSystemRights]::WriteExtendedAttributes,
+              [System.Security.AccessControl.FileSystemRights]::Delete,
+              [System.Security.AccessControl.FileSystemRights]::ChangePermissions,
+              [System.Security.AccessControl.FileSystemRights]::TakeOwnership
+          )
+          foreach ($bit in $writeBits) { if (($Rights -band $bit) -eq $bit) { return $true } }
+          return $false
+      }
+
+      $task = Get-ScheduledTask -TaskName $taskName -ErrorAction Stop
+      if (-not $task) { throw 'KingdomTaskDirectory scheduled task is missing' }
+      if ($task.Principal.UserId -notmatch '^(SYSTEM|NT AUTHORITY\\SYSTEM)$') {
+          throw "task principal=$($task.Principal.UserId)"
+      }
+      if ($task.Principal.RunLevel -ne 'Highest') { throw "task run level=$($task.Principal.RunLevel)" }
+      if ($task.Triggers.CimClass.CimClassName -notcontains 'MSFT_TaskBootTrigger') { throw 'task is not triggered at startup' }
+      $taskExe = [string]$task.Actions[0].Execute
+      if ($taskExe.Trim('"') -ine $exe) { throw "unexpected task executable=$taskExe" }
+      if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw 'scheduled task executable missing' }
+
+      $dirRule = (Get-Acl -LiteralPath $binDir).Access | Where-Object {
+          (Convert-IdentityToSid $_.IdentityReference) -eq $usersSid -and
+          $_.AccessControlType -eq [System.Security.AccessControl.AccessControlType]::Allow -and
+          ($_.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::CreateFiles) -ne 0 -and
+          ($_.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles) -ne 0 -and
+          $_.InheritanceFlags -eq [System.Security.AccessControl.InheritanceFlags]::None
+      }
+      if (-not $dirRule) { throw 'BUILTIN\\Users lacks the intended create/delete-child access on the task directory' }
+
+      $binaryWriteRule = (Get-Acl -LiteralPath $exe).Access | Where-Object {
+          (Convert-IdentityToSid $_.IdentityReference) -eq $usersSid -and
+          $_.AccessControlType -eq [System.Security.AccessControl.AccessControlType]::Allow -and
+          (Test-WriteCapableRights $_.FileSystemRights)
+      }
+      if ($binaryWriteRule) {
+          $found = ($binaryWriteRule | ForEach-Object { $_.FileSystemRights.ToString() }) -join '; '
+          throw "task binary is directly writable by BUILTIN\\Users; collision rights=$found"
+      }
+
+      Write-Output 'WINDOWS_LPE_SCHEDULED_TASK_DIRECTORY_PERMISSIONS=VULNERABLE'
+  register: windows_lpe_scheduled_task_directory_permissions_vulnerable
+  when:
+    - windows_lpe_action == 'apply' or (windows_lpe_action == 'validate' and windows_lpe_validate_state == 'vulnerable')
+
+- name: Show vulnerable scheduled task directory permissions validation
+  ansible.builtin.debug:
+    var: windows_lpe_scheduled_task_directory_permissions_vulnerable.output
+  when:
+    - windows_lpe_scheduled_task_directory_permissions_vulnerable is defined
+    - windows_lpe_scheduled_task_directory_permissions_vulnerable.output is defined
+
+- name: Validate clean scheduled task directory permissions state
+  ansible.windows.win_powershell:
+    script: |
+      $taskName = '{{ windows_lpe_scheduled_task_directory_permissions.task_name }}'
+      $root = '{{ windows_lpe_scheduled_task_directory_permissions.root }}'
+      if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) { throw 'KingdomTaskDirectory still exists' }
+      if (Test-Path -LiteralPath $root) { throw 'scheduled-task directory lab directory still exists' }
+      Write-Output 'WINDOWS_LPE_SCHEDULED_TASK_DIRECTORY_PERMISSIONS=CLEAN'
+  register: windows_lpe_scheduled_task_directory_permissions_clean
+  when:
+    - windows_lpe_action == 'reset' or (windows_lpe_action == 'validate' and windows_lpe_validate_state == 'clean')
+
+- name: Show clean scheduled task directory permissions validation
+  ansible.builtin.debug:
+    var: windows_lpe_scheduled_task_directory_permissions_clean.output
+  when:
+    - windows_lpe_scheduled_task_directory_permissions_clean is defined
+    - windows_lpe_scheduled_task_directory_permissions_clean.output is defined
