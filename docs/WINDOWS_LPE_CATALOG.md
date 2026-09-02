@@ -98,7 +98,7 @@ The four new candidates are intentionally isolated from one another:
 - weak service registry permissions uses a quoted ImagePath and keeps the service binary non-writable;
 - DLL hijacking gives Users write/create capability only on the missing-DLL parent path, not on the legitimate service executable.
 
-The batch promotion gate executes all five in one lifecycle:
+The **service batch live promotion gate** executes all five in one lifecycle:
 
 ```text
 clean WS01 baseline
