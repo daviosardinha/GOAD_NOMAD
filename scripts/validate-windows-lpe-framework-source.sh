@@ -22,14 +22,16 @@ for file in \
     ansible/roles/windows_lpe/tasks/main.yml \
     ansible/roles/windows_lpe/tasks/techniques/unquoted_service_path.yml \
     docs/WINDOWS_LPE_CATALOG.md \
-    docs/GOAD_KINGDOMS_MILESTONES.md
+    docs/GOAD_KINGDOMS_MILESTONES.md \
+    scripts/validate-windows-lpe-unquoted-service-path-runtime.sh
 do
     [[ -f "${file}" ]] || fail "missing Windows LPE framework file: ${file}"
 done
 pass "required Windows LPE framework files"
 
 bash -n scripts/validate-windows-lpe-framework-source.sh
-pass "framework validator shell syntax"
+bash -n scripts/validate-windows-lpe-unquoted-service-path-runtime.sh
+pass "framework/runtime validator shell syntax"
 
 python3 - <<'PY'
 from pathlib import Path
@@ -58,6 +60,7 @@ defaults = Path('ansible/roles/windows_lpe/defaults/main.yml').read_text()
 tasks = Path('ansible/roles/windows_lpe/tasks/main.yml').read_text()
 technique = Path('ansible/roles/windows_lpe/tasks/techniques/unquoted_service_path.yml').read_text()
 playbook = Path('ansible/windows-lpe.yml').read_text()
+runtime_gate = Path('scripts/validate-windows-lpe-unquoted-service-path-runtime.sh').read_text()
 catalog_doc = Path('docs/WINDOWS_LPE_CATALOG.md').read_text()
 milestones = Path('docs/GOAD_KINGDOMS_MILESTONES.md').read_text()
 
@@ -153,6 +156,20 @@ if technique.count('S-1-5-32-545') < 2:
     fail('unquoted service path source does not validate BUILTIN\\Users by SID')
 if 'Set-MpPreference' in technique or 'Set-NetFirewallProfile' in technique:
     fail('unquoted service path candidate weakens unrelated endpoint security controls')
+
+for token in (
+    'validate-ws01-runtime.sh',
+    'windows_lpe_action=apply',
+    'windows_lpe_action=${action}',
+    'windows_lpe_allow_candidate=true',
+    'unquoted_service_path',
+    'run_lpe reset',
+    'run_lpe validate clean',
+    'run_lpe apply',
+    '[READY] unquoted_service_path live promotion gate passed.',
+):
+    if token not in runtime_gate:
+        fail(f'unquoted service path runtime promotion gate missing: {token}')
 
 for forbidden in (
     'Set-MpPreference -DisableRealtimeMonitoring',
