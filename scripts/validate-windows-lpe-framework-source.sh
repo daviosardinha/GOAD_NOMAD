@@ -155,7 +155,7 @@ for technique_id, marker in marker_contracts.items():
 path_source = Path('ansible/roles/windows_lpe/tasks/techniques/path_search_order_hijacking.yml').read_text()
 for token in (
     'EnvironmentVariableTarget.Machine',
-    'KingdomPathHelper.exe',
+    'windows_lpe_path_search_order_hijacking.helper_name',
     "WINDOWS_LPE_PATH_SEARCH_ORDER_HIJACKING=VULNERABLE",
     "WINDOWS_LPE_PATH_SEARCH_ORDER_HIJACKING=CLEAN",
 ):
