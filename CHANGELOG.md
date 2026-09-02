@@ -1,8 +1,26 @@
 # Changelog
 
-All notable GOAD_NOMAD changes are documented in this file.
+All notable project changes are documented in this file.
+
+## [Unreleased] — GOAD Kingdoms
+
+### Changed
+- Renamed the public project identity from **GOAD_NOMAD** to **GOAD Kingdoms** (`GOAD_Kingdoms` in repository/directory contexts).
+- Added a canonical GOAD Kingdoms milestone roadmap for development after v1.0.0.
+- Established Git as the mandatory source of truth for testable project code: changes must be committed and pushed before a test checkout is synchronized and validated.
+
+### Added
+- `scripts/verify-test-source.sh`, a fail-closed source gate that rejects dirty, untracked, ahead, behind, diverged, untracked-upstream, or otherwise unverifiable test checkouts.
+- Exact-commit source-gate support for detached reproducibility testing.
+- `docs/DEVELOPMENT_WORKFLOW.md` documenting the Git-first development/test process.
+
+### Compatibility
+- Milestone 1 and the `v1.0.0 — Segmented Foundation` release retain the historical GOAD_NOMAD name.
+- Internal compatibility identifiers such as `goad_nomad.py`, `vmware_nomad.py`, class names, and existing lifecycle markers are intentionally retained during the first rename pass. They will be migrated separately only with regression coverage so the validated v1.0.0 lifecycle is not destabilized by a cosmetic rename.
 
 ## [v1.0.0] - 2026-09-01
+
+> Historical release: this version was published under the **GOAD_NOMAD** project name.
 
 ### Added
 - Default segmented VMware topology for the GOAD lab using NORTH (`vmnet10` / `10.4.10.0/24`), SEVENKINGDOMS (`vmnet20` / `10.4.20.0/24`), ESSOS (`vmnet30` / `10.4.30.0/24`), and MANAGEMENT (`vmnet99` / `10.4.99.0/24`).

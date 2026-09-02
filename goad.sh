@@ -54,9 +54,10 @@ then
   fi
 fi
 
-# GOAD_NOMAD keeps ./goad.sh as the canonical operator entry point. The
-# console subclass preserves stock GOAD commands while adding the segmented
-# VMware lifecycle (network/mode/validate) used by this fork.
+# GOAD Kingdoms keeps ./goad.sh as the canonical operator entry point. The
+# existing goad_nomad.py module remains a compatibility implementation during
+# the public-name migration; it preserves stock GOAD commands while adding the
+# segmented VMware lifecycle (network/mode/validate) used by this fork.
 source "$venv/bin/activate"
 $py goad_nomad.py "$@"
 result=$?
