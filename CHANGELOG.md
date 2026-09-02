@@ -21,11 +21,13 @@ All notable project changes are documented in this file.
 - `scripts/validate-ws01-source.sh` for the M2 workstation topology, identity, security-baseline and lifecycle source contract.
 - `scripts/validate-ws01-runtime.sh` for focused exercise-mode validation of WS01 domain membership, Rickon access, low privilege, UAC, Windows Firewall, Defender, RDP and persistent NIC isolation.
 - `ansible/ws01.yml` and `./goad.sh -t ws01 -i <instance-id>` for targeted, Git-driven WS01 materialization and baseline provisioning without replaying the full GOAD curriculum.
+- Fail-closed VMware instance-collision preflight that derives the project's deterministic segmented MAC identities from committed Vagrant source and blocks another provider from registering the same identities on the shared vmnet10/vmnet20/vmnet30/vmnet99 fabric.
 
 ### Fixed
 - Recover VMware Tools installation on Windows guests when the installer resets WinRM before the controller can issue its normal reboot; the lifecycle now performs one controlled recovery reboot and validates Tools plus guest-IP health.
 - Guarantee restoration of exercise isolation when focused WS01 provider bring-up fails before Ansible provisioning starts.
 - Propagate focused WS01 task failures through the non-interactive CLI exit status so unattended wrappers cannot report a failed deployment as finished successfully.
+- Prevent duplicate segmented GOAD Kingdoms instances from producing VMware `padrConflict` / `can't set PADR` failures that leave apparently configured custom NICs without Layer-2 connectivity.
 
 ### Security
 - WS01 starts with no planted LPE vulnerabilities. Defender, UAC and Windows Firewall remain at the native Windows client baseline; WS01 is not sent through GOAD's server-only Defender role and is never added to `defender_off`.
