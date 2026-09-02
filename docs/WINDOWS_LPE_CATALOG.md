@@ -37,8 +37,8 @@ Candidate techniques require an exact `windows_lpe_techniques` selection plus `w
 | `always_install_elevated` | Policy / Registry | Planned | Per-user and machine installer policy pair |
 | `registry_run_keys` | Registry / Autoruns | Planned | Writable privileged autorun configuration |
 | `writable_startup_folder` | Startup | Planned | Writable startup execution path |
-| `scheduled_task_binary_permissions` | Scheduled tasks | Planned | Writable privileged task executable |
-| `scheduled_task_directory_permissions` | Scheduled tasks | Planned | Writable task execution directory/path component |
+| `scheduled_task_binary_permissions` | Scheduled tasks | **Candidate** | SYSTEM startup task whose executable is directly modifiable by BUILTIN\\Users |
+| `scheduled_task_directory_permissions` | Scheduled tasks | **Candidate** | SYSTEM startup task whose protected executable sits in a directory where Users can delete/create children |
 | `unattend_credentials` | Credentials | Planned | Training-only answer-file credential artifact |
 | `powershell_history_credentials` | Credentials | Planned | Training-only history artifact |
 | `hardcoded_application_credentials` | Credentials | Planned | Training-only application/config secret |
@@ -86,7 +86,9 @@ clean WS01 baseline
 
 On 2026-09-02 the exact origin-synced source at commit `dc1b82fee451a921b53ebae16c0edd2923df2ca3` passed that gate with `unreachable=0` and `failed=0`. The final runtime state intentionally kept all five scenarios applied and vulnerable for training. They are therefore promoted to **Implemented**.
 
-## Next candidate — PATH search-order hijacking
+## Current candidate set
+
+### PATH search-order hijacking
 
 `path_search_order_hijacking` completes the planned `service-abuse` family without weakening the five already-live scenarios.
 
@@ -106,14 +108,29 @@ C:\Kingdom LPE\Path Search\SystemBin
 
 Reset removes only `KingdomPathSvc`, the `Path Search` subtree, and those two exact lab PATH entries. Every unrelated machine PATH entry and every previously implemented LPE scenario is preserved.
 
-Candidate testing remains exact and explicit:
+### Scheduled-task permissions batch
+
+The next two candidates use independent SYSTEM tasks triggered at startup:
 
 ```text
-windows_lpe_techniques=['path_search_order_hijacking']
+scheduled_task_binary_permissions
+scheduled_task_directory_permissions
+```
+
+`scheduled_task_binary_permissions` grants BUILTIN\\Users Modify on only the executable referenced by `KingdomTaskBinary`. Its containing directory remains otherwise normal.
+
+`scheduled_task_directory_permissions` keeps `KingdomTaskDirectory.exe` itself non-writable but grants Users create/delete-child capability on its containing `Bin` directory. This models path replacement through directory permissions without collapsing into the direct writable-binary case.
+
+Both task resets remove only their dedicated task and dedicated `C:\Kingdom LPE\Scheduled Task ...` subtree. They do not touch the existing service/PATH scenarios or global Task Scheduler configuration.
+
+Candidate testing remains exact and explicit, for example:
+
+```text
+windows_lpe_techniques=['scheduled_task_binary_permissions','scheduled_task_directory_permissions']
 windows_lpe_allow_candidate=true
 ```
 
-It remains **Candidate** until the current committed source passes its reversible live gate:
+Candidates remain **Candidate** until their current committed source passes the reversible live gate:
 
 ```text
 apply -> vulnerable -> reset -> clean -> re-apply -> vulnerable
@@ -135,10 +152,9 @@ Profiles remain:
 Current checkpoint:
 
 - 20-technique catalog committed;
-- five Service Batch 1 techniques are **Implemented** and currently live on the validated training WS01;
-- `path_search_order_hijacking` is the next **Candidate**;
-- 14 techniques remain Planned;
+- five Service Batch 1 techniques are **Implemented** and live on the validated training WS01;
+- `path_search_order_hijacking` plus both scheduled-task permissions scenarios are **Candidate**;
+- 12 techniques remain Planned;
 - normal profiles remain fail-closed while they include candidate/planned members;
 - candidate testing requires exact selection and explicit opt-in;
-- the runtime gates check WS01 power and WinRM around lifecycle phases;
 - Defender, UAC and Windows Firewall are not globally weakened.
