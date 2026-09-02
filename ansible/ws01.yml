@@ -16,6 +16,10 @@
     - { role: 'common', tags: 'common', http_proxy: "{{enable_http_proxy}}" }
     - { role: 'settings/keyboard', tags: 'keyboard', layouts: "{{keyboard_layouts}}" }
     - { role: 'settings/no_updates', tags: 'no_updates' }
+    # mayfly/windows10 is a Windows 10 Enterprise Evaluation image. Rearm only
+    # when the TIMEBASED_EVAL grace period has actually expired, then verify it
+    # after the required reboot so training sessions cannot be killed by WLMS.
+    - { role: 'settings/eval_rearm', tags: 'eval_rearm' }
     - { role: 'settings/admin_password', tags: 'admin_password' }
     - { role: 'settings/hostname', tags: 'hostname' }
   vars:
