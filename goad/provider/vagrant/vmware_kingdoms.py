@@ -13,6 +13,35 @@ class GoadKingdomsVmwareProvider(GoadNomadVmwareProvider):
     policy is added here so M2 changes do not casually rewrite the M1 core.
     """
 
+    def _require_cached_sudo(self):
+        """Require an already-authenticated sudo timestamp without prompting.
+
+        GOAD Kingdoms lifecycle commands must never stop deep inside a provider
+        transition waiting for an unexpected password prompt. The operator owns
+        interactive authentication explicitly with ``sudo -v`` before invoking
+        install/start/ws01. Every provider entry/mode transition refreshes that
+        timestamp non-interactively and fails before changing runtime state if
+        credentials are unavailable or expired.
+        """
+        result = subprocess.run(
+            ['sudo', '-n', '-v'],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            detail = result.stderr.strip()
+            if detail:
+                Log.error(f'GOAD Kingdoms: sudo cache unavailable: {detail}')
+            Log.error(
+                'GOAD Kingdoms: administrative credentials are not cached; '
+                'run `sudo -v` in this terminal, then repeat the command'
+            )
+            return False
+
+        return True
+
     def _check_segmented_instance_conflicts(self):
         if not self.is_goad_nomad_segmented():
             return True
@@ -44,7 +73,19 @@ class GoadKingdomsVmwareProvider(GoadNomadVmwareProvider):
         # This method is the first provider hook executed by the hardened
         # install/start/ws01 paths, before GOAD-ROUTER or any Windows guest is
         # powered on. Refuse to create a duplicate-MAC condition before VMware
-        # has an opportunity to register the conflicting adapter.
+        # has an opportunity to register the conflicting adapter. Require the
+        # operator to prime sudo before entering the lifecycle as well.
         if not self._check_segmented_instance_conflicts():
             return False
+        if not self._require_cached_sudo():
+            return False
         return super().prepare_install()
+
+    def set_runtime_mode(self, mode):
+        # Re-check immediately before every provisioning/exercise transition.
+        # This covers long-running starts where the sudo timestamp may have
+        # expired since prepare_install() and prevents the compatibility mode
+        # controller from ever becoming an interactive password prompt.
+        if self.is_goad_nomad_segmented() and not self._require_cached_sudo():
+            return False
+        return super().set_runtime_mode(mode)
