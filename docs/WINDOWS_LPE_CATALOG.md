@@ -26,7 +26,7 @@ Candidate techniques require an exact `windows_lpe_techniques` selection plus `w
 | `weak_service_registry_permissions` | Services / Registry | **Implemented** | Users can alter SCM service registry configuration |
 | `service_dll_hijacking` | Services / DLL | **Implemented** | Privileged service loads a missing DLL from a writable location |
 | `path_search_order_hijacking` | Services / PATH | **Candidate** | Users-writable PATH preemption directory before protected helper |
-| `always_install_elevated` | Policy / Registry | Planned | Per-user and machine installer policy pair |
+| `always_install_elevated` | Policy / Registry | **Candidate** | Machine plus Rickon user installer policy pair, with previous values preserved |
 | `registry_run_keys` | Registry / Autoruns | Planned | Writable privileged autorun configuration |
 | `writable_startup_folder` | Startup | Planned | Writable startup execution path |
 | `scheduled_task_binary_permissions` | Scheduled tasks | **Candidate** | SYSTEM startup task executable directly modifiable by Users |
@@ -34,7 +34,7 @@ Candidate techniques require an exact `windows_lpe_techniques` selection plus `w
 | `unattend_credentials` | Credentials | **Candidate** | Readable Panther answer-file credential for a local administrator |
 | `powershell_history_credentials` | Credentials | **Candidate** | PSReadLine history exposes a dedicated local-admin credential, even before Rickon has an interactive profile |
 | `hardcoded_application_credentials` | Credentials | **Candidate** | Readable application config contains a local-admin service credential |
-| `stored_runas_credentials` | Credentials | Planned | Stored RunAs credential scenario |
+| `stored_runas_credentials` | Credentials | **Candidate** | Rickon's Windows Credential Manager stores a credential for a dedicated local administrator |
 | `stored_winlogon_credentials` | Credentials / Registry | **Candidate** | Plaintext Winlogon DefaultPassword for a dedicated local administrator |
 | `sebackup_privilege` | User rights | **Candidate** | `NORTH\\rickon.stark` receives SeBackupPrivilege through a scoped LSA account-right assignment |
 | `seimpersonate_privilege` | User rights / Tokens | **Candidate** | `NORTH\\rickon.stark` receives SeImpersonatePrivilege through a scoped LSA account-right assignment |
@@ -49,9 +49,14 @@ The first five service techniques passed the exact current-source live promotion
 
 ## Current incremental state
 
-The following nine candidates have now passed their incremental apply + vulnerable-state validation and are intentionally left live on WS01:
+The two user-right candidates have now also passed incremental apply + vulnerable-state validation, taking the current WS01 construction state to **16 live scenarios**:
 
 ```text
+unquoted_service_path
+weak_service_dacl
+weak_service_binary_permissions
+weak_service_registry_permissions
+service_dll_hijacking
 path_search_order_hijacking
 scheduled_task_binary_permissions
 scheduled_task_directory_permissions
@@ -61,28 +66,26 @@ hardcoded_application_credentials
 stored_winlogon_credentials
 writable_program_directory
 insecure_service_registry
-```
-
-Together with the five implemented service scenarios, that leaves **14 live Windows LPE scenarios** on WS01 before the token-rights batch is applied.
-
-`powershell_history_credentials` prefers the actual `NORTH\\rickon.stark` profile when that profile already exists. A freshly built WS01 may not yet have a `ProfileList` entry for Rickon, so the candidate falls back to a dedicated stale profile-shaped artifact under `C:\Users\kingdom.pshistory`. It never creates or modifies Rickon's `ProfileList` entry.
-
-`insecure_service_registry` uses the native .NET Registry64 view for its dedicated `HelperPath` key so the scenario is deterministic across the WinRM/PowerShell host architecture.
-
-## Next candidate batch — token/user rights
-
-The next incremental batch contains:
-
-```text
 sebackup_privilege
 seimpersonate_privilege
 ```
 
-Both use the Windows LSA account-right APIs to add only the exact right to `NORTH\\rickon.stark`. Each scenario records whether that right existed before GOAD Kingdoms touched it. Reset therefore removes the right only when the lab added it and preserves a genuinely pre-existing assignment.
+The user-right candidates alter LSA account-right assignments, not already-issued access tokens. Manual training therefore needs a fresh Rickon interactive logon before `whoami /priv` is expected to expose the new privileges.
 
-The vulnerable-state gate validates the account-right assignment from the local security policy. A **fresh interactive logon token is required before manual training** because Windows does not retroactively add newly assigned privileges to an already-issued user token.
+## Next candidate batch — installer policy + saved credentials
 
-All candidate resets remain scoped to their own artifacts/accounts/services/rights and do not reset previously installed scenarios.
+The next incremental batch contains:
+
+```text
+always_install_elevated
+stored_runas_credentials
+```
+
+`always_install_elevated` sets the machine Windows Installer policy and Rickon's actual per-user policy to `1`. When Rickon has never logged on, the candidate creates his normal Windows profile first so the HKCU setting can be persisted in his `NTUSER.DAT`. Existing machine/user policy values are snapshotted and reset restores those values rather than blindly deleting registry state.
+
+`stored_runas_credentials` creates a dedicated local administrator (`kingdom.runas`) and seeds a Credential Manager target while executing `cmdkey.exe` in Rickon's user/profile context. Validation enumerates Rickon's credential manager rather than the Ansible management account's vault. Reset deletes only that stored target, dedicated account and scenario artifacts.
+
+All candidate resets remain scoped to their own artifacts/accounts/services/settings and do not reset previously installed scenarios.
 
 Candidates remain **Candidate** until their current committed source passes the reversible live gate:
 
@@ -92,20 +95,19 @@ apply -> vulnerable -> reset -> clean -> re-apply -> vulnerable
 
 ## Remaining planned techniques
 
-After the token-rights batch, the remaining planned set is:
+After this batch, the only remaining planned techniques are:
 
 ```text
-always_install_elevated
 registry_run_keys
 writable_startup_folder
-stored_runas_credentials
 ```
 
 Current checkpoint:
 
 - 20-technique catalog committed;
 - five Service Batch 1 techniques are **Implemented**;
-- eleven additional source-complete techniques are **Candidate**;
-- four techniques remain Planned;
+- thirteen additional source-complete techniques are **Candidate**;
+- two techniques remain Planned;
+- sixteen scenarios are currently live on WS01 before the next batch is applied;
 - normal profiles remain fail-closed while they include candidate/planned members;
 - Defender, UAC and Windows Firewall are not globally weakened.
