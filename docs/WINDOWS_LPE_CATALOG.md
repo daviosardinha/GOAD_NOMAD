@@ -32,7 +32,7 @@ Candidate techniques require an exact `windows_lpe_techniques` selection plus `w
 | `scheduled_task_binary_permissions` | Scheduled tasks | **Candidate** | SYSTEM startup task executable directly modifiable by Users |
 | `scheduled_task_directory_permissions` | Scheduled tasks | **Candidate** | SYSTEM startup task executable replaceable through directory rights |
 | `unattend_credentials` | Credentials | **Candidate** | Readable Panther answer-file credential for a local administrator |
-| `powershell_history_credentials` | Credentials | **Candidate** | Rickon's PSReadLine history contains a dedicated local-admin credential |
+| `powershell_history_credentials` | Credentials | **Candidate** | PSReadLine history exposes a dedicated local-admin credential, even before Rickon has an interactive profile |
 | `hardcoded_application_credentials` | Credentials | **Candidate** | Readable application config contains a local-admin service credential |
 | `stored_runas_credentials` | Credentials | Planned | Stored RunAs credential scenario |
 | `stored_winlogon_credentials` | Credentials / Registry | **Candidate** | Plaintext Winlogon DefaultPassword for a dedicated local administrator |
@@ -68,7 +68,7 @@ writable_program_directory
 insecure_service_registry
 ```
 
-`powershell_history_credentials` resolves the actual `NORTH\\rickon.stark` profile through its SID/ProfileList entry and injects one unique PSReadLine history command containing credentials for a dedicated local administrator. Reset removes only that exact training line and account, preserving unrelated PowerShell history.
+`powershell_history_credentials` prefers the actual `NORTH\\rickon.stark` profile when that profile already exists. A freshly built WS01 may not yet have a `ProfileList` entry for Rickon, so the candidate now falls back to a dedicated stale profile-shaped artifact under `C:\Users\kingdom.pshistory`. Only that managed fallback history tree is made readable to ordinary users. Reset removes the exact injected line from a real profile, or deletes the marked fallback profile when the fallback path was used, then removes the dedicated training account. It never creates or modifies Rickon's `ProfileList` entry.
 
 `writable_program_directory` creates a dedicated manual LocalSystem service under `C:\Program Files\Kingdom Agent`. The executable itself is protected and only readable by Users, while the containing directory grants create/delete-child capability. Users can START/STOP the service but cannot reconfigure it, keeping this distinct from the weak-service-DACL and direct-writable-binary scenarios.
 
