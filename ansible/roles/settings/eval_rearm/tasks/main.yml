@@ -36,13 +36,15 @@
       $stderr = Join-Path $env:TEMP 'goad-kingdoms-slmgr-rearm.err'
       Remove-Item -LiteralPath $stdout,$stderr -Force -ErrorAction SilentlyContinue
 
-      $process = Start-Process \
-          -FilePath "$env:SystemRoot\System32\cscript.exe" \
-          -ArgumentList @('//NoLogo', "$env:SystemRoot\System32\slmgr.vbs", '/rearm') \
-          -Wait \
-          -PassThru \
-          -RedirectStandardOutput $stdout \
-          -RedirectStandardError $stderr
+      $startProcess = @{
+          FilePath = "$env:SystemRoot\System32\cscript.exe"
+          ArgumentList = @('//NoLogo', "$env:SystemRoot\System32\slmgr.vbs", '/rearm')
+          Wait = $true
+          PassThru = $true
+          RedirectStandardOutput = $stdout
+          RedirectStandardError = $stderr
+      }
+      $process = Start-Process @startProcess
 
       $out = if (Test-Path -LiteralPath $stdout) { Get-Content -LiteralPath $stdout -Raw } else { '' }
       $err = if (Test-Path -LiteralPath $stderr) { Get-Content -LiteralPath $stderr -Raw } else { '' }
