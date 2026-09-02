@@ -40,10 +40,21 @@ def fail(message):
 
 
 def yaml_list(text, key):
-    match = re.search(rf'(?ms)^{re.escape(key)}:\s*\n((?:  - .+\n)+)', text)
+    # Parse only the contiguous, two-space-indented YAML sequence directly
+    # beneath KEY. Do not use `.` here: this regex runs with multiline matching
+    # elsewhere and a dot that spans newlines can greedily consume later
+    # comments/profile lists and turn them into fake technique IDs.
+    match = re.search(
+        rf'(?m)^{re.escape(key)}:[ \t]*\r?\n((?:  - [^\r\n]+\r?\n)+)',
+        text,
+    )
     if match is None:
         fail(f'missing YAML list: {key}')
-    return [line.strip()[2:].strip() for line in match.group(1).splitlines()]
+    return [
+        line.strip()[2:].strip()
+        for line in match.group(1).splitlines()
+        if line.strip()
+    ]
 
 
 def yaml_empty_list(text, key):
