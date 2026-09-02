@@ -121,6 +121,20 @@ cat > "${LOG_DIR}/ws01-runtime.yml" <<'YAML'
           if (-not $defender.AntivirusEnabled) { throw 'Defender antivirus is disabled' }
           if (-not $defender.RealTimeProtectionEnabled) { throw 'Defender real-time protection is disabled' }
 
+          $eval = Get-CimInstance SoftwareLicensingProduct -ErrorAction SilentlyContinue |
+              Where-Object {
+                  $_.Name -like 'Windows*' -and
+                  $_.PartialProductKey -and
+                  $_.Description -match 'TIMEBASED_EVAL'
+              } |
+              Select-Object -First 1
+          if ($eval) {
+              if ([int64]$eval.GracePeriodRemaining -le 0) {
+                  throw "Windows evaluation is expired; status=$($eval.LicenseStatus) grace=$($eval.GracePeriodRemaining)"
+              }
+              Write-Output "WS01_EVAL_GRACE_MINUTES=$($eval.GracePeriodRemaining)"
+          }
+          Write-Output 'WS01_EVAL_READY=PASS'
           Write-Output 'WS01_FOUNDATION=PASS'
       register: ws01_validation
 
@@ -138,9 +152,10 @@ YAML
             "${LOG_DIR}/ws01-runtime.yml"
 ) 2>&1 | tee "${LOG_DIR}/ansible.log"
 
+grep -Fq 'WS01_EVAL_READY=PASS' "${LOG_DIR}/ansible.log" || fail 'WS01 Windows evaluation grace check did not pass'
 grep -Fq 'WS01_FOUNDATION=PASS' "${LOG_DIR}/ansible.log" || fail 'WS01 PowerShell foundation checks did not pass'
 grep -Eq 'failed=0.*unreachable=0|unreachable=0.*failed=0' "${LOG_DIR}/ansible.log" || fail 'WS01 Ansible validation did not finish cleanly'
-pass "WS01 domain, Rickon rights, UAC, Firewall and Defender"
+pass "WS01 domain, Rickon rights, UAC, Firewall, Defender and evaluation grace"
 
 printf '\n[READY] GOAD Kingdoms WS01 runtime validation passed.\n'
 printf 'Logs: %s\n' "${LOG_DIR}"
