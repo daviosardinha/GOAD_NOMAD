@@ -83,7 +83,22 @@ The detailed historical M1 record remains at [`GOAD_NOMAD_MILESTONES.md`](./GOAD
 
 ## Milestone 2 — NORTH Workstation Foothold & Windows Local Privilege Escalation
 
-**Status: IMPLEMENTATION IN PROGRESS — WS01 FOUNDATION IN SOURCE**
+**Status: IMPLEMENTATION IN PROGRESS — WS01 FOUNDATION VALIDATED**
+
+WS01 clean-foundation checkpoint validated on **2026-09-02** from origin-synced source:
+
+- validated commit: `4003f8b41f5344650f82c746b83b2fe8fec32010`;
+- runtime mode: `exercise`;
+- WS01 address: `10.4.10.31/24` on NORTH (`vmnet10`);
+- domain: `north.sevenkingdoms.local`;
+- foothold identity: `NORTH\\rickon.stark`;
+- Rickon has Remote Desktop access and is not a local administrator;
+- provisioning NAT is persistently disabled in exercise mode;
+- RDP (`3389/tcp`) and WinRM HTTPS (`5986/tcp`) are reachable from NORTH;
+- UAC, Windows Firewall, and Defender remain enabled;
+- focused runtime result: `WS01_FOUNDATION=PASS` with Ansible `unreachable=0` and `failed=0`.
+
+ICMP echo is not a WS01 health requirement: the Windows client firewall may block echo while the intended RDP and WinRM services remain healthy. The runtime validator therefore uses the service contract rather than requiring ping.
 
 ### Goal
 
@@ -101,9 +116,9 @@ valid NORTH user
 
 Milestone 2 is an extension to GOAD's attack journey, not a separate standalone CTF.
 
-### Planned WS01 baseline
+### Validated WS01 baseline
 
-| Property | Target |
+| Property | Validated value |
 | --- | --- |
 | VMware VM | `GOAD-WS01` |
 | Hostname | `WS01` |
@@ -117,7 +132,7 @@ Milestone 2 is an extension to GOAD's attack journey, not a separate standalone 
 | Starting identity | `NORTH\\rickon.stark` |
 | Provisioning | Vagrant NAT, same M1 lifecycle contract as existing Windows guests |
 
-The WS01 box is pinned before LPE work begins. The foundation keeps Defender, UAC and Windows Firewall at their native Windows client baseline; WS01 is excluded from both GOAD's server-oriented `defender_on` role and `defender_off`. `rickon.stark` receives Remote Desktop access but is not placed in local Administrators. Runtime validation of the workstation/domain/lifecycle contract remains required before the first LPE profile is planted.
+The WS01 box is pinned before LPE work begins. The foundation keeps Defender, UAC and Windows Firewall at their native Windows client baseline; WS01 is excluded from both GOAD's server-oriented `defender_on` role and `defender_off`. `rickon.stark` receives Remote Desktop access but is not placed in local Administrators.
 
 ### LPE architecture
 
@@ -176,18 +191,18 @@ Planned profiles:
 
 Milestone 2 cannot close until all of the following are proven from committed, origin-synced source:
 
-1. WS01 installs as a first-class GOAD workstation and joins `north.sevenkingdoms.local`.
-2. WS01 follows the exact M1 provisioning/exercise NIC contract.
+1. WS01 installs as a first-class GOAD workstation and joins `north.sevenkingdoms.local`. **PASSED for the clean-foundation checkpoint.**
+2. WS01 follows the exact M1 provisioning/exercise NIC contract. **PASSED for the clean-foundation checkpoint.**
 3. Start/stop/power-cycle behavior cannot restore its provisioning bypass.
-4. The chosen existing NORTH user can obtain the intended low-privilege foothold without receiving unintended local-admin rights.
+4. The chosen existing NORTH user can obtain the intended low-privilege foothold without receiving unintended local-admin rights. **Baseline rights validated; interactive foothold exercise remains part of the end-to-end gate.**
 5. Every supported LPE technique has an explicit apply check and validation check.
 6. Reset is deterministic: apply -> validate vulnerable -> reset -> validate clean -> reapply -> validate vulnerable.
 7. Technique profiles do not accidentally collide or destroy unrelated scenarios.
-8. Defender/UAC/Firewall baseline state is recorded and not globally weakened merely to make the lab easier.
+8. Defender/UAC/Firewall baseline state is recorded and not globally weakened merely to make the lab easier. **PASSED for the clean-foundation checkpoint.**
 9. The exact WS01 Windows build has a compatibility matrix for every advertised technique.
 10. The intended progression from the starting NORTH account to SYSTEM and then into an existing GOAD AD attack path is demonstrated end to end.
 11. M1 segmentation/trust/DNS/linked-SQL validation remains green after WS01 is added.
-12. The final candidate is tested only after `scripts/verify-test-source.sh` proves the test checkout matches Git.
+12. The final candidate is tested only after `scripts/verify-test-source.sh` proves the test checkout matches Git. **Enforced and passed for the clean-foundation checkpoint.**
 
 ---
 
