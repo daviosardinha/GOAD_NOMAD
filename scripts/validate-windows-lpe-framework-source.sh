@@ -20,6 +20,7 @@ for file in \
     ansible/windows-lpe.yml \
     ansible/roles/windows_lpe/defaults/main.yml \
     ansible/roles/windows_lpe/tasks/main.yml \
+    ansible/roles/windows_lpe/tasks/techniques/unquoted_service_path.yml \
     docs/WINDOWS_LPE_CATALOG.md \
     docs/GOAD_KINGDOMS_MILESTONES.md
 do
@@ -40,21 +41,13 @@ def fail(message):
 
 
 def yaml_list(text, key):
-    # Parse only the contiguous, two-space-indented YAML sequence directly
-    # beneath KEY. Do not use `.` here: this regex runs with multiline matching
-    # elsewhere and a dot that spans newlines can greedily consume later
-    # comments/profile lists and turn them into fake technique IDs.
     match = re.search(
-        rf'(?m)^{re.escape(key)}:[ \t]*\r?\n((?:  - [^\r\n]+\r?\n)+)',
+        rf'(?m)^{re.escape(key)}:\s*\n((?:  - [^\r\n]+(?:\r?\n|$))+)',
         text,
     )
     if match is None:
         fail(f'missing YAML list: {key}')
-    return [
-        line.strip()[2:].strip()
-        for line in match.group(1).splitlines()
-        if line.strip()
-    ]
+    return [line.strip()[2:].strip() for line in match.group(1).splitlines()]
 
 
 def yaml_empty_list(text, key):
@@ -63,6 +56,7 @@ def yaml_empty_list(text, key):
 
 defaults = Path('ansible/roles/windows_lpe/defaults/main.yml').read_text()
 tasks = Path('ansible/roles/windows_lpe/tasks/main.yml').read_text()
+technique = Path('ansible/roles/windows_lpe/tasks/techniques/unquoted_service_path.yml').read_text()
 playbook = Path('ansible/windows-lpe.yml').read_text()
 catalog_doc = Path('docs/WINDOWS_LPE_CATALOG.md').read_text()
 milestones = Path('docs/GOAD_KINGDOMS_MILESTONES.md').read_text()
@@ -94,8 +88,12 @@ catalog = yaml_list(defaults, 'windows_lpe_catalog')
 if catalog != expected_catalog:
     fail(f'Windows LPE catalog mismatch: {catalog!r}')
 
+candidates = yaml_list(defaults, 'windows_lpe_candidate_techniques')
+if candidates != ['unquoted_service_path']:
+    fail(f'unexpected Windows LPE candidate set: {candidates!r}')
+
 if not yaml_empty_list(defaults, 'windows_lpe_implemented_techniques'):
-    fail('framework checkpoint must keep windows_lpe_implemented_techniques empty')
+    fail('candidate checkpoint must not promote any technique to implemented before live re-apply validation')
 
 for profile in (
     'none', 'service-abuse', 'credential-hunting',
@@ -114,12 +112,47 @@ for token in (
 for token in (
     'windows_lpe_action in windows_lpe_supported_actions',
     'windows_lpe_profile in windows_lpe_profiles',
-    'difference(windows_lpe_implemented_techniques)',
-    "windows_lpe_action in ['apply', 'reset']",
-    'No Windows LPE technique implementation exists at this framework checkpoint',
+    'windows_lpe_validate_state in windows_lpe_supported_validate_states',
+    'windows_lpe_techniques | difference(windows_lpe_catalog)',
+    'windows_lpe_candidate_techniques',
+    'windows_lpe_allow_candidate | bool',
+    "windows_lpe_action in ['apply', 'validate', 'reset']",
+    'techniques/unquoted_service_path.yml',
 ):
     if token not in tasks:
         fail(f'fail-closed Windows LPE controller contract missing: {token}')
+
+for token in (
+    'windows_lpe_action: status',
+    'windows_lpe_validate_state: vulnerable',
+    'windows_lpe_allow_candidate: false',
+    'KingdomUpdaterSvc',
+    "root: 'C:\\Kingdom LPE'",
+    "writable_candidate: 'C:\\Kingdom LPE\\Unquoted.exe'",
+):
+    if token not in defaults:
+        fail(f'unquoted service path defaults contract missing: {token}')
+
+for token in (
+    'WINDOWS_LPE_UNQUOTED_SERVICE_PATH=APPLIED',
+    'WINDOWS_LPE_UNQUOTED_SERVICE_PATH=VULNERABLE',
+    'WINDOWS_LPE_UNQUOTED_SERVICE_PATH=RESET',
+    'WINDOWS_LPE_UNQUOTED_SERVICE_PATH=CLEAN',
+    'LocalSystem',
+    'StartupType Automatic',
+    'InheritanceFlags]::None',
+    'technique collision detected',
+):
+    if token not in technique:
+        fail(f'unquoted service path lifecycle contract missing: {token}')
+
+# The candidate must not silently turn into the later weak-binary-permissions
+# exercise. Its special Users ACE is this-folder-only, and runtime validation
+# must reject a Users-writable legitimate service executable.
+if technique.count('S-1-5-32-545') < 2:
+    fail('unquoted service path source does not validate BUILTIN\\Users by SID')
+if 'Set-MpPreference' in technique or 'Set-NetFirewallProfile' in technique:
+    fail('unquoted service path candidate weakens unrelated endpoint security controls')
 
 for forbidden in (
     'Set-MpPreference -DisableRealtimeMonitoring',
@@ -128,20 +161,27 @@ for forbidden in (
     'Set-NetFirewallProfile -Enabled False',
     'netsh advfirewall set allprofiles state off',
 ):
-    if forbidden.lower() in (defaults + tasks + playbook).lower():
-        fail(f'framework checkpoint globally weakens WS01 security: {forbidden}')
+    if forbidden.lower() in (defaults + tasks + technique + playbook).lower():
+        fail(f'Windows LPE framework globally weakens WS01 security: {forbidden}')
 
 if 'WS01 FOUNDATION VALIDATED' not in milestones:
     fail('M2 milestone tracker does not record the validated WS01 foundation')
 if '4003f8b41f5344650f82c746b83b2fe8fec32010' not in milestones:
     fail('M2 milestone tracker does not record the validated WS01 source commit')
 
-for technique in expected_catalog:
-    if f'`{technique}`' not in catalog_doc:
-        fail(f'catalog documentation missing technique: {technique}')
+for technique_id in expected_catalog:
+    if f'`{technique_id}`' not in catalog_doc:
+        fail(f'catalog documentation missing technique: {technique_id}')
+
+if '| `unquoted_service_path` | Services | **Candidate** |' not in catalog_doc:
+    fail('catalog does not mark unquoted_service_path as Candidate')
+if 'C:\\Kingdom LPE\\Unquoted.exe' not in catalog_doc:
+    fail('catalog does not document the intended writable ambiguous candidate')
+if 'windows_lpe_allow_candidate=true' not in catalog_doc:
+    fail('catalog does not document explicit candidate opt-in')
 
 PY
-pass "catalog, profiles and fail-closed controller contract"
+pass "catalog, candidate lifecycle and fail-closed controller contract"
 
 git diff --check
 pass "Git whitespace check"
