@@ -1,0 +1,76 @@
+---
+# GOAD Kingdoms Windows LPE framework.
+#
+# This first framework checkpoint is intentionally non-destructive: no
+# vulnerability is implemented or enabled yet. Technique IDs and profile names
+# are committed first so later apply/reset logic can be added one technique at
+# a time with deterministic validation.
+
+windows_lpe_action: status
+windows_lpe_profile: none
+
+windows_lpe_supported_actions:
+  - status
+  - apply
+  - reset
+
+windows_lpe_catalog:
+  - unquoted_service_path
+  - weak_service_dacl
+  - weak_service_binary_permissions
+  - weak_service_registry_permissions
+  - service_dll_hijacking
+  - path_search_order_hijacking
+  - always_install_elevated
+  - registry_run_keys
+  - writable_startup_folder
+  - scheduled_task_binary_permissions
+  - scheduled_task_directory_permissions
+  - unattend_credentials
+  - powershell_history_credentials
+  - hardcoded_application_credentials
+  - stored_runas_credentials
+  - stored_winlogon_credentials
+  - sebackup_privilege
+  - seimpersonate_privilege
+  - writable_program_directory
+  - insecure_service_registry
+
+# A technique moves into this list only after apply, vulnerable-state validate,
+# reset, clean-state validate, and re-apply validation all exist.
+windows_lpe_implemented_techniques: []
+
+# Profiles describe the intended curriculum. They may reference planned
+# techniques, but apply remains fail-closed until every selected technique is
+# present in windows_lpe_implemented_techniques.
+windows_lpe_profiles:
+  none: []
+  service-abuse:
+    - unquoted_service_path
+    - weak_service_dacl
+    - weak_service_binary_permissions
+    - weak_service_registry_permissions
+    - service_dll_hijacking
+    - path_search_order_hijacking
+  credential-hunting:
+    - unattend_credentials
+    - powershell_history_credentials
+    - hardcoded_application_credentials
+    - stored_runas_credentials
+    - stored_winlogon_credentials
+  registry-abuse:
+    - always_install_elevated
+    - registry_run_keys
+    - writable_startup_folder
+    - insecure_service_registry
+  token-abuse:
+    - sebackup_privilege
+    - seimpersonate_privilege
+  mixed:
+    - unquoted_service_path
+    - weak_service_binary_permissions
+    - always_install_elevated
+    - scheduled_task_binary_permissions
+    - hardcoded_application_credentials
+    - seimpersonate_privilege
+  full-lpe: "{{ windows_lpe_catalog }}"
