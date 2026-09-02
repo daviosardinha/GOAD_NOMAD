@@ -1,5 +1,6 @@
 import os
 import re
+import shutil
 import socket
 import subprocess
 import time
@@ -25,6 +26,7 @@ class VmwareProvider(VagrantProvider):
         'GOAD-DC03',
         'GOAD-SRV02',
         'GOAD-SRV03',
+        'GOAD-WS01',
     ]
 
     def check(self):
@@ -293,7 +295,56 @@ if ($p.ExitCode -ne 0 -and $p.ExitCode -ne 3010) { exit $p.ExitCode }
             'v.vmx["ethernet0.startConnected"] = "TRUE"',
         )
         missing = [setting for setting in required if setting not in text]
+
+        ws01_marker = ':name => "GOAD-WS01"'
+        if ws01_marker in text:
+            ws01_contract = (
+                ':ip => "10.4.10.31"',
+                ':box => "mayfly/windows10"',
+                ':box_version => "2024.01.06"',
+                ':vnet => "vmnet10"',
+            )
+            if any(token not in text for token in ws01_contract):
+                Log.error(
+                    'GOAD Kingdoms: an incompatible GOAD-WS01 definition '
+                    'already exists in the instance Vagrantfile; refusing to '
+                    'overwrite an unknown workstation automatically'
+                )
+                return False
+        else:
+            source_vagrantfile = os.path.join(
+                GoadPath.get_lab_provider_path('GOAD', 'vmware'),
+                'Vagrantfile',
+            )
+            with open(source_vagrantfile, 'r', encoding='utf-8') as handle:
+                source_text = handle.read()
+
+            ws01_match = re.search(
+                r'(?ms)^  # GOAD Kingdoms M2 first-class NORTH workstation\.\n'
+                r'(.*?)(?=^  # GOAD_NOMAD routing plane\.)',
+                source_text,
+            )
+            router_marker = '  # GOAD_NOMAD routing plane.'
+            if ws01_match is None or router_marker not in text:
+                Log.error(
+                    'GOAD_NOMAD: cannot safely add GOAD-WS01 to the existing '
+                    'instance Vagrantfile; expected source markers are missing'
+                )
+                return False
+
+            ws01_block = (
+                '  # GOAD Kingdoms M2 first-class NORTH workstation.\n'
+                + ws01_match.group(1)
+            )
+            text = text.replace(router_marker, ws01_block + router_marker, 1)
+            Log.success(
+                'GOAD Kingdoms: added the committed GOAD-WS01 definition to '
+                'the existing instance Vagrantfile'
+            )
+
         if not missing:
+            with open(vagrantfile, 'w', encoding='utf-8') as handle:
+                handle.write(text)
             return True
 
         marker = '        v.vmx["numvcpus"] = box[:cpus]\n'
@@ -327,10 +378,77 @@ if ($p.ExitCode -ne 0 -and $p.ExitCode -ne 3010) { exit $p.ExitCode }
         )
         return True
 
+    def _sync_goad_nomad_inventories(self):
+        """Refresh generated GOAD inventories from committed canonical source.
+
+        Instance inventories are generated when the workspace is created. M2
+        adds WS01 to an existing M1 instance, so a pulled Git commit must update
+        those generated files without asking the operator to edit the test
+        checkout or workspace manually.
+        """
+        instance_path = os.path.dirname(str(self.path))
+        provider_source = (
+            GoadPath.get_lab_provider_path('GOAD', 'vmware')
+            + os.path.sep
+            + 'inventory'
+        )
+        provider_destination = os.path.join(instance_path, 'inventory')
+        disabled_source = (
+            GoadPath.get_lab_data_path('GOAD')
+            + os.path.sep
+            + 'inventory_disable_vagrant'
+        )
+        disabled_destination = os.path.join(
+            instance_path,
+            'inventory_disable_vagrant',
+        )
+
+        for source in (provider_source, disabled_source):
+            if not os.path.isfile(source):
+                Log.error(f'GOAD_NOMAD canonical inventory not found: {source}')
+                return False
+
+        shutil.copyfile(provider_source, provider_destination)
+
+        with open(disabled_source, 'r', encoding='utf-8') as handle:
+            disabled_text = handle.read()
+
+        # Reuse the already-established NORTH administrator connection rather
+        # than publishing another credential literal for WS01. The generated
+        # runtime inventory remains deterministic and source-derived.
+        srv02_match = re.search(r'(?m)^srv02 ansible_host=.*$', disabled_text)
+        if srv02_match is None:
+            Log.error(
+                'GOAD_NOMAD: cannot derive the WS01 post-Vagrant inventory '
+                'from the canonical NORTH server entry'
+            )
+            return False
+        ws01_line = re.sub(
+            r'^srv02 ansible_host=\S+ dns_domain=\S+ dict_key=srv02',
+            'ws01 ansible_host=10.4.10.31 dns_domain=dc02 dict_key=ws01',
+            srv02_match.group(0),
+        )
+        disabled_text = disabled_text.replace(
+            srv02_match.group(0),
+            srv02_match.group(0) + '\n' + ws01_line,
+            1,
+        )
+        with open(disabled_destination, 'w', encoding='utf-8') as handle:
+            handle.write(disabled_text)
+
+        Log.success(
+            'GOAD Kingdoms: generated instance inventories synchronized from '
+            'committed source'
+        )
+        return True
+
     def install(self):
         """Bring up VMware guests and prepare GOAD_NOMAD local provisioning reachability."""
         if self.lab_name != 'GOAD':
             return super().install()
+
+        if not self._sync_goad_nomad_inventories():
+            return False
 
         if not self._sync_goad_nomad_vagrantfile_compatibility():
             return False

@@ -41,6 +41,8 @@ for file in \
     scripts/validate-network-segmentation.sh \
     scripts/validate-network-segmentation-runtime.sh \
     scripts/validate-network-segmentation-source.sh \
+    scripts/validate-ws01-source.sh \
+    scripts/validate-ws01-runtime.sh \
     ad/GOAD/providers/vmware/router/provision.sh \
     ad/GOAD/providers/vmware/router/nftables/provisioning.nft \
     ad/GOAD/providers/vmware/router/nftables/exercise.nft \
@@ -66,6 +68,8 @@ for file in \
     scripts/validate-network-segmentation.sh \
     scripts/validate-network-segmentation-runtime.sh \
     scripts/validate-network-segmentation-source.sh \
+    scripts/validate-ws01-source.sh \
+    scripts/validate-ws01-runtime.sh \
     ad/GOAD/providers/vmware/router/provision.sh
  do
     bash -n "${file}"

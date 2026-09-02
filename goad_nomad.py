@@ -210,6 +210,44 @@ class GoadNomad(BaseGoad):
         )
         return True
 
+    def do_ws01(self, arg=''):
+        """Materialize and provision only the clean M2 WS01 foundation."""
+        return self._run_with_install_timer(self._do_ws01)
+
+    def _do_ws01(self):
+        provider = self._nomad_provider(require_instance=True)
+        if provider is None:
+            Log.error('Load a GOAD/VMware instance before installing GOAD-WS01')
+            return False
+
+        self._install_phase = 'GOAD-WS01 VM materialization + management readiness'
+        if not provider.install():
+            Log.error('GOAD Kingdoms: GOAD-WS01 provider bring-up failed')
+            return False
+
+        provision_result = False
+        isolation_result = False
+        try:
+            self._install_phase = 'GOAD-WS01 clean workstation provisioning'
+            provision_result = (
+                self.lab_manager.get_current_instance_provisioner().run('ws01.yml')
+            )
+        finally:
+            self._install_phase = 'GOAD-WS01 final exercise isolation'
+            isolation_result = provider.finalize_install()
+
+        if not provision_result:
+            Log.error('GOAD Kingdoms: GOAD-WS01 Ansible provisioning failed')
+            return False
+        if not isolation_result:
+            Log.error('GOAD Kingdoms: GOAD-WS01 provisioned but exercise isolation failed')
+            return False
+
+        Log.success(
+            'GOAD Kingdoms: GOAD-WS01 clean foundation installed and exercise isolation restored'
+        )
+        return True
+
     def do_help(self, arg):
         super().do_help(arg)
         if self._nomad_provider() is not None:
@@ -218,6 +256,7 @@ class GoadNomad(BaseGoad):
             if self.lab_manager.get_current_instance() is not None:
                 print_menu_entry('mode [status|provisioning|exercise]', 'show or change the lab network mode')
                 print_menu_entry('validate', 'run the complete Milestone 1 network validation')
+                print_menu_entry('ws01', 'install the clean Milestone 2 WS01 foundation')
 
     def do_network(self, arg=''):
         provider = self._nomad_provider()
@@ -290,7 +329,7 @@ class GoadNomad(BaseGoad):
 
 
 def parse_args():
-    task_help = 'tasks available: install/check/start/stop/restart/destroy/status/snapshot/reset/validate'
+    task_help = 'tasks available: install/check/start/stop/restart/destroy/status/snapshot/reset/validate/ws01'
     parser = argparse.ArgumentParser(
         prog='goad_nomad.py',
         description='GOAD_NOMAD lab management console.',
@@ -354,6 +393,8 @@ def _dispatch_task(goad, args):
         goad.do_reset()
     elif args.task == 'validate':
         goad.do_validate()
+    elif args.task == 'ws01':
+        goad.do_ws01()
     elif args.task == 'mode':
         goad.do_mode('status')
     elif args.task == 'show':

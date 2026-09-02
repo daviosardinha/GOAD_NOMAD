@@ -1,0 +1,40 @@
+---
+# GOAD Kingdoms M2 clean workstation foundation.
+#
+# This playbook intentionally plants no local-privilege-escalation scenario.
+# It creates the deterministic WS01 baseline that must pass before the LPE role
+# and resettable profiles are introduced.
+
+- import_playbook: data.yml
+  vars:
+    data_path: "../ad/{{domain_name}}/data/"
+  tags: 'data'
+
+- name: Prepare the WS01 Windows client baseline
+  hosts: ws01
+  roles:
+    - { role: 'common', tags: 'common', http_proxy: "{{enable_http_proxy}}" }
+    - { role: 'settings/keyboard', tags: 'keyboard', layouts: "{{keyboard_layouts}}" }
+    - { role: 'settings/no_updates', tags: 'no_updates' }
+    - { role: 'settings/admin_password', tags: 'admin_password' }
+    - { role: 'settings/hostname', tags: 'hostname' }
+  vars:
+    local_admin_password: "{{lab.domains[lab.hosts[dict_key].domain].domain_password}}"
+    hostname: "{{lab.hosts[dict_key].hostname}}"
+
+- name: Join WS01 to NORTH
+  hosts: ws01
+  roles:
+    - { role: 'commonwkstn', tags: 'workstation' }
+  vars:
+    member_domain: "{{lab.hosts[dict_key].domain}}"
+    domain_username: "{{admin_user}}@{{member_domain}}"
+    domain_password: "{{lab.domains[member_domain].domain_password}}"
+
+- name: Grant only the intended WS01 foothold rights
+  hosts: ws01
+  roles:
+    - { role: 'settings/adjust_rights', tags: 'adjust_rights' }
+    - { role: 'settings/user_rights', tags: 'adjust_rights' }
+  vars:
+    local_groups: "{{lab.hosts[dict_key].local_groups | default({}) }}"

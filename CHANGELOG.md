@@ -8,11 +8,22 @@ All notable project changes are documented in this file.
 - Renamed the public project identity from **GOAD_NOMAD** to **GOAD Kingdoms** (`GOAD_Kingdoms` in repository/directory contexts).
 - Added a canonical GOAD Kingdoms milestone roadmap for development after v1.0.0.
 - Established Git as the mandatory source of truth for testable project code: changes must be committed and pushed before a test checkout is synchronized and validated.
+- Expanded the segmented Windows lifecycle, WinRM readiness gate, start/stop handling, provisioning-mode control and persistent NAT isolation from five guests to six.
+- GOAD instance inventories are refreshed from committed canonical source during VMware install, and existing M1 instance Vagrantfiles receive the committed WS01 definition automatically.
+- Removed GOAD compatibility from the legacy optional `ws01` extension to prevent a duplicate `GOAD-WS01` Vagrant identity; the extension remains available to GOAD-Light and GOAD-Mini.
 
 ### Added
 - `scripts/verify-test-source.sh`, a fail-closed source gate that rejects dirty, untracked, ahead, behind, diverged, untracked-upstream, or otherwise unverifiable test checkouts.
 - Exact-commit source-gate support for detached reproducibility testing.
 - `docs/DEVELOPMENT_WORKFLOW.md` documenting the Git-first development/test process.
+- First-class `GOAD-WS01` Windows 10 workstation in NORTH at `10.4.10.31`, pinned to the `mayfly/windows10` `2024.01.06` VMware box.
+- `NORTH\\rickon.stark` as the intended low-privilege WS01 foothold with Remote Desktop access and no local-administrator grant.
+- `scripts/validate-ws01-source.sh` for the M2 workstation topology, identity, security-baseline and lifecycle source contract.
+- `scripts/validate-ws01-runtime.sh` for focused exercise-mode validation of WS01 domain membership, Rickon access, low privilege, UAC, Windows Firewall, Defender, RDP and persistent NIC isolation.
+- `ansible/ws01.yml` and `./goad.sh -t ws01 -i <instance-id>` for targeted, Git-driven WS01 materialization and baseline provisioning without replaying the full GOAD curriculum.
+
+### Security
+- WS01 starts with no planted LPE vulnerabilities. Defender, UAC and Windows Firewall remain at the native Windows client baseline; WS01 is not sent through GOAD's server-only Defender role and is never added to `defender_off`.
 
 ### Compatibility
 - Milestone 1 and the `v1.0.0 — Segmented Foundation` release retain the historical GOAD_NOMAD name.

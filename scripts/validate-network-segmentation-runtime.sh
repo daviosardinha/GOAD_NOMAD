@@ -8,7 +8,7 @@ readonly INVENTORY_DATA="${ROOT}/ad/GOAD/data/inventory"
 readonly INVENTORY_PROVIDER="${ROOT}/ad/GOAD/providers/vmware/inventory"
 readonly ANSIBLE_CFG="${ROOT}/ansible/ansible.cfg"
 
-readonly WINDOWS_VMS=(GOAD-DC01 GOAD-DC02 GOAD-DC03 GOAD-SRV02 GOAD-SRV03)
+readonly WINDOWS_VMS=(GOAD-DC01 GOAD-DC02 GOAD-DC03 GOAD-SRV02 GOAD-SRV03 GOAD-WS01)
 
 declare -A EXPECTED_NAME=(
     [GOAD-DC01]=KINGSLANDING
@@ -16,6 +16,7 @@ declare -A EXPECTED_NAME=(
     [GOAD-DC03]=MEEREEN
     [GOAD-SRV02]=CASTELBLACK
     [GOAD-SRV03]=BRAAVOS
+    [GOAD-WS01]=WS01
 )
 
 declare -A NAT_IP=()
@@ -279,9 +280,66 @@ PS
 
     printf '%-12s %-15s %s\n' "${vm}" "${nat}" "${EXPECTED_NAME[$vm]}"
 done
-pass "all five Vagrant management paths"
+pass "all six Vagrant management paths"
 
-section "4. REPLAY COMMITTED CHILD-DOMAIN / DNS SOURCE"
+section "4. WS01 CLEAN FOUNDATION CONTRACT"
+
+out="$(vagrant_ps GOAD-WS01 <<'PS'
+$ErrorActionPreference = 'Stop'
+
+$computer = Get-CimInstance Win32_ComputerSystem
+if (-not $computer.PartOfDomain) { throw 'WS01 is not joined to a domain' }
+if ($computer.Domain -ne 'north.sevenkingdoms.local') { throw "unexpected WS01 domain: $($computer.Domain)" }
+if (-not (Test-ComputerSecureChannel)) { throw 'WS01 domain secure channel is unhealthy' }
+
+$rdpUsers = @(
+    Get-LocalGroupMember -Group 'Remote Desktop Users' |
+        ForEach-Object { $_.Name.ToLowerInvariant() }
+)
+if ($rdpUsers -notcontains 'north\rickon.stark') {
+    throw "Rickon missing from Remote Desktop Users: $($rdpUsers -join ',')"
+}
+
+$admins = @(
+    Get-LocalGroupMember -Group 'Administrators' |
+        ForEach-Object { $_.Name.ToLowerInvariant() }
+)
+if ($admins -contains 'north\rickon.stark') { throw 'Rickon is unexpectedly a local administrator' }
+
+$uac = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System').EnableLUA
+if ($uac -ne 1) { throw "UAC EnableLUA=$uac" }
+
+$disabledProfiles = @(Get-NetFirewallProfile | Where-Object { -not $_.Enabled })
+if ($disabledProfiles.Count -ne 0) {
+    throw "disabled firewall profiles: $($disabledProfiles.Name -join ',')"
+}
+
+$defender = Get-MpComputerStatus
+if (-not $defender.AntivirusEnabled) { throw 'Microsoft Defender antivirus is disabled' }
+if (-not $defender.RealTimeProtectionEnabled) { throw 'Microsoft Defender real-time protection is disabled' }
+
+Write-Output 'WS01_DOMAIN=PASS'
+Write-Output 'WS01_RICKON_RDP=PASS'
+Write-Output 'WS01_RICKON_LOW_PRIV=PASS'
+Write-Output 'WS01_UAC=PASS'
+Write-Output 'WS01_FIREWALL=PASS'
+Write-Output 'WS01_DEFENDER=PASS'
+PS
+)"
+printf '%s\n' "${out}" | tee "${LOG_DIR}/ws01-foundation.log"
+for check in \
+    WS01_DOMAIN \
+    WS01_RICKON_RDP \
+    WS01_RICKON_LOW_PRIV \
+    WS01_UAC \
+    WS01_FIREWALL \
+    WS01_DEFENDER
+do
+    printf '%s\n' "${out}" | grep -Fq "${check}=PASS" || fatal "${check} validation failed"
+done
+pass "WS01 domain, foothold, low-privilege and native security baseline"
+
+section "5. REPLAY COMMITTED CHILD-DOMAIN / DNS SOURCE"
 
 run_playbook ad-child_domain.yml "${LOG_DIR}/ad-child-domain-pass1.log" || fatal "first ad-child_domain.yml replay failed"
 pass "child-domain/DNS source replay #1"
@@ -300,7 +358,7 @@ pass "child-domain promotion idempotency"
 run_playbook ad-trusts.yml "${LOG_DIR}/ad-trusts.log" || fatal "ad-trusts.yml replay failed"
 pass "trust/DNS source replay"
 
-section "5. POST-REPLAY DNS STATE"
+section "6. POST-REPLAY DNS STATE"
 
 out="$(vagrant_ps GOAD-DC02 <<'PS'
 $ErrorActionPreference = 'Stop'
@@ -347,7 +405,7 @@ printf '%s\n' "${out}" | tee "${LOG_DIR}/kingslanding-forwarder.log"
 printf '%s\n' "${out}" | grep -Fq 'KINGSLANDING_ESSOS_FORWARDER=PASS' || fatal "Kingslanding ESSOS forwarder validation failed"
 pass "forest-replicated ESSOS forwarder"
 
-section "6. TRUST / BOT / LINKED-SQL HEALTH IN PROVISIONING MODE"
+section "7. TRUST / BOT / LINKED-SQL HEALTH IN PROVISIONING MODE"
 
 out="$(vagrant_ps GOAD-DC02 <<'PS'
 $ErrorActionPreference = 'Stop'
@@ -444,7 +502,7 @@ printf '%s\n' "${out}" | tee "${LOG_DIR}/sql-braavos-castelblack.log"
 printf '%s\n' "${out}" | grep -Fq 'BRAAVOS_TO_CASTELBLACK=PASS' || fatal "Braavos -> Castelblack linked SQL failed"
 pass "Braavos -> Castelblack linked SQL"
 
-section "7. RETURN TO EXERCISE MODE"
+section "8. RETURN TO EXERCISE MODE"
 
 GOAD_PROVIDER_DIR="${PROVIDER}" bash "${ROOT}/scripts/lab-mode.sh" exercise | tee "${LOG_DIR}/exercise-transition.log"
 FINAL_EXERCISE=1
@@ -455,7 +513,7 @@ grep -Fq 'Recorded mode: exercise' "${LOG_DIR}/exercise-status.log" || fatal "re
 grep -Fq 'policy drop;' "${LOG_DIR}/exercise-status.log" || fatal "router is not deny-by-default"
 pass "exercise mode / deny-by-default router"
 
-section "8. FINAL PERSISTENT NAT ISOLATION"
+section "9. FINAL PERSISTENT NAT ISOLATION"
 
 for vm in "${WINDOWS_VMS[@]}"; do
     vmx="$(vmx_for "${vm}")"
@@ -468,18 +526,20 @@ for vm in "${WINDOWS_VMS[@]}"; do
     fi
     echo '[PASS] isolated'
 done
-pass "all five Windows NAT paths persistently isolated"
+pass "all six Windows NAT paths persistently isolated"
 
 [[ -z "$(ip route show 10.4.20.0/24)" ]] || fatal "SevenKingdoms provisioning route remains in exercise mode"
 [[ -z "$(ip route show 10.4.30.0/24)" ]] || fatal "ESSOS provisioning route remains in exercise mode"
 pass "protected-zone host routes removed"
 
-section "9. STUDENT-SIDE NETWORK BOUNDARY"
+section "10. STUDENT-SIDE NETWORK BOUNDARY"
 
 ping -c 2 -W 2 10.4.10.11 >/dev/null || fatal "Winterfell unreachable from NORTH"
 ping -c 2 -W 2 10.4.10.22 >/dev/null || fatal "Castelblack unreachable from NORTH"
+ping -c 2 -W 2 10.4.10.31 >/dev/null || fatal "WS01 unreachable from NORTH"
 timeout 3 nc -zw2 10.4.10.11 445 || fatal "Winterfell SMB unreachable from NORTH"
 timeout 3 nc -zw2 10.4.10.22 445 || fatal "Castelblack SMB unreachable from NORTH"
+timeout 3 nc -zw2 10.4.10.31 3389 || fatal "WS01 RDP unreachable from NORTH"
 pass "NORTH remains directly reachable"
 
 if timeout 3 nc -zw2 10.4.20.10 445 2>/dev/null; then
@@ -490,7 +550,7 @@ if timeout 3 nc -zw2 10.4.30.12 445 2>/dev/null; then
 fi
 pass "direct SevenKingdoms / ESSOS access blocked"
 
-section "10. EXERCISE-PATH DNS / TRUST / SQL FROM NORTH"
+section "11. EXERCISE-PATH DNS / TRUST / SQL FROM NORTH"
 
 ansible_ps_north dc02 exercise-dns-trust <<'PS'
 $ErrorActionPreference = 'Stop'
@@ -533,7 +593,7 @@ REVERT;
 PS
 pass "exercise-mode Castelblack -> Braavos linked SQL"
 
-section "11. FINAL FIREWALL EVIDENCE"
+section "12. FINAL FIREWALL EVIDENCE"
 
 router_cmd 'sudo nft list chain inet goad_nomad forward' | tee "${LOG_DIR}/final-firewall.log"
 
@@ -553,7 +613,7 @@ p_sql="$(packets_for_rule 'ip saddr 10.4.10.22 ip daddr 10.4.30.23 tcp dport 143
 [[ "${p_sql:-0}" -gt 0 ]] || fatal "Castelblack -> Braavos SQL firewall rule did not record traffic"
 pass "required exercise firewall paths recorded traffic"
 
-section "12. FINAL STATE"
+section "13. FINAL STATE"
 
 GOAD_PROVIDER_DIR="${PROVIDER}" bash "${ROOT}/scripts/lab-mode.sh" status | tee "${LOG_DIR}/final-status.log"
 grep -Fq 'Recorded mode: exercise' "${LOG_DIR}/final-status.log" || fatal "final mode is not exercise"

@@ -41,13 +41,13 @@ A compromised credential should not automatically mean every system is directly 
 
 ## Current segmented architecture
 
-GOAD Kingdoms currently places the five original GOAD Windows systems behind a dedicated Debian routing plane.
+GOAD Kingdoms places the five original GOAD Windows systems and the M2 WS01 workstation behind a dedicated Debian routing plane.
 
 <img width="1448" height="1086" alt="Topology" src="https://github.com/user-attachments/assets/6e2a98d7-54bc-4d3b-9bf2-69e7105ae4ae" />
 
 | Zone | VMware network | Subnet | Systems |
 | --- | --- | --- | --- |
-| NORTH | `vmnet10` | `10.4.10.0/24` | Winterfell `10.4.10.11`, Castelblack `10.4.10.22` |
+| NORTH | `vmnet10` | `10.4.10.0/24` | Winterfell `10.4.10.11`, Castelblack `10.4.10.22`, WS01 `10.4.10.31` |
 | SEVENKINGDOMS | `vmnet20` | `10.4.20.0/24` | Kingslanding `10.4.20.10` |
 | ESSOS | `vmnet30` | `10.4.30.0/24` | Meereen `10.4.30.12`, Braavos `10.4.30.23` |
 | MANAGEMENT | `vmnet99` | `10.4.99.0/24` | GOAD-ROUTER management plane |
@@ -161,9 +161,9 @@ The historical detailed record remains in [`docs/GOAD_NOMAD_MILESTONES.md`](./do
 
 ### Milestone 2 — NORTH Workstation & Windows Local Privilege Escalation
 
-**Status: ACTIVE DESIGN / IMPLEMENTATION NEXT**
+**Status: IMPLEMENTATION IN PROGRESS**
 
-The current plan adds a first-class NORTH workstation (`GOAD-WS01` / `WS01`, target `10.4.10.31`) and extends the GOAD journey from an existing low-privilege NORTH identity through local Windows privilege escalation into the existing GOAD Active Directory attack surface.
+The first implementation layer adds a first-class NORTH workstation (`GOAD-WS01` / `WS01`, `10.4.10.31`) using the pinned `mayfly/windows10` `2024.01.06` box. `NORTH\\rickon.stark` receives Remote Desktop access but no local-administrator membership. WS01 is included in domain enrollment, VMware lifecycle control, management readiness and persistent provisioning-NAT isolation. Defender, UAC and Windows Firewall remain at the native client baseline; WS01 is deliberately excluded from GOAD's server-only Defender role and from `defender_off`. No LPE weakness is planted until this clean workstation foundation passes runtime validation.
 
 The target catalog is approximately **18–22 deterministic Windows local-privesc techniques**, delivered through resettable Ansible-native scenario profiles rather than a globally weakened Windows host.
 
@@ -214,6 +214,27 @@ Source-only segmentation preflight:
 
 ```bash
 bash scripts/validate-network-segmentation-source.sh
+```
+
+WS01 source-contract validation:
+
+```bash
+bash scripts/validate-ws01-source.sh
+```
+
+Install or update the clean WS01 foundation in an existing GOAD/VMware instance:
+
+```bash
+./goad.sh -t ws01 -i <instance-id>
+```
+
+The command materializes WS01 from committed source, provisions only the workstation baseline, validates all six management endpoints and restores exercise isolation before returning.
+
+Focused WS01 runtime validation:
+
+```bash
+export GOAD_PROVIDER_DIR="$HOME/Documents/GOAD_Kingdoms/workspace/<instance>/provider"
+bash scripts/validate-ws01-runtime.sh
 ```
 
 Complete runtime validation against a deployed provider:

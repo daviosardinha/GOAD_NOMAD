@@ -31,6 +31,7 @@ class GoadNomadVmwareProvider(VmwareProvider):
         'GOAD-DC03': '10.4.30.12',
         'GOAD-SRV02': '10.4.10.22',
         'GOAD-SRV03': '10.4.30.23',
+        'GOAD-WS01': '10.4.10.31',
     }
 
     def is_goad_nomad_segmented(self):
@@ -107,7 +108,7 @@ class GoadNomadVmwareProvider(VmwareProvider):
         return running
 
     def _all_windows_materialized(self):
-        """Return True only when all five Windows VMX files already exist."""
+        """Return True only when all six Windows VMX files already exist."""
         return all(self._vmx_path(machine) for machine in self.goad_nomad_windows)
 
     def _router_policy_path(self, mode):
@@ -121,7 +122,7 @@ class GoadNomadVmwareProvider(VmwareProvider):
     def _apply_router_policy(self, mode):
         """Apply one router policy without requiring the Windows VMs to exist.
 
-        ``lab-mode.sh provisioning`` deliberately validates all five Windows VMX
+        ``lab-mode.sh provisioning`` deliberately validates all six Windows VMX
         files before changing state. That is correct for normal mode switching,
         but a genuinely fresh installation needs the router forwarding plane
         before the Windows VMs have even been created. This small bootstrap path
@@ -196,7 +197,7 @@ class GoadNomadVmwareProvider(VmwareProvider):
 
         # On the first ever install the Windows VMX files do not exist yet, so
         # only bootstrap the router + host routes. Full mode state is persisted
-        # after VmwareProvider.install() has created all five guests.
+        # after VmwareProvider.install() has created all six guests.
         if not self._apply_router_policy('provisioning'):
             return False
         if not self._enable_provisioning_routes():
@@ -249,8 +250,8 @@ class GoadNomadVmwareProvider(VmwareProvider):
         return False
 
     def _validate_management_plane(self):
-        """Fail closed unless all five inventory endpoints are ready."""
-        Log.info('GOAD_NOMAD: validating all five Ansible management endpoints')
+        """Fail closed unless all six inventory endpoints are ready."""
+        Log.info('GOAD_NOMAD: validating all six Ansible management endpoints')
         for machine, host in self.management_hosts.items():
             if not self._wait_lab_winrm_ready(machine, host):
                 return False
@@ -440,7 +441,7 @@ class GoadNomadVmwareProvider(VmwareProvider):
             return False
 
         # Do not let the console launch Ansible merely because Vagrant returned.
-        # Prove the exact five HTTPS/WinRM inventory endpoints first.
+        # Prove the exact six HTTPS/WinRM inventory endpoints first.
         if not self._validate_management_plane():
             Log.error('GOAD_NOMAD: provider bring-up incomplete; refusing Ansible provisioning')
             return False

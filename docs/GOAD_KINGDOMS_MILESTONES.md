@@ -83,7 +83,7 @@ The detailed historical M1 record remains at [`GOAD_NOMAD_MILESTONES.md`](./GOAD
 
 ## Milestone 2 — NORTH Workstation Foothold & Windows Local Privilege Escalation
 
-**Status: ACTIVE DESIGN / IMPLEMENTATION NEXT**
+**Status: IMPLEMENTATION IN PROGRESS — WS01 FOUNDATION IN SOURCE**
 
 ### Goal
 
@@ -112,10 +112,12 @@ Milestone 2 is an extension to GOAD's attack journey, not a separate standalone 
 | Exercise address | `10.4.10.31/24` |
 | Gateway | `10.4.10.1` |
 | Domain | `north.sevenkingdoms.local` |
-| Starting identity | existing NORTH domain identity, currently `NORTH\\rickon.stark` candidate |
+| Windows baseline | Windows 10 Enterprise 22H2 (`mayfly/windows10`) |
+| Vagrant box version | `2024.01.06` |
+| Starting identity | `NORTH\\rickon.stark` |
 | Provisioning | Vagrant NAT, same M1 lifecycle contract as existing Windows guests |
 
-The exact Windows build must be selected and frozen before the LPE compatibility matrix is considered final.
+The WS01 box is pinned before LPE work begins. The foundation keeps Defender, UAC and Windows Firewall at their native Windows client baseline; WS01 is excluded from both GOAD's server-oriented `defender_on` role and `defender_off`. `rickon.stark` receives Remote Desktop access but is not placed in local Administrators. Runtime validation of the workstation/domain/lifecycle contract remains required before the first LPE profile is planted.
 
 ### LPE architecture
 
