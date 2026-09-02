@@ -11,6 +11,7 @@ All notable project changes are documented in this file.
 - Expanded the segmented Windows lifecycle, WinRM readiness gate, start/stop handling, provisioning-mode control and persistent NAT isolation from five guests to six.
 - GOAD instance inventories are refreshed from committed canonical source during VMware install, and existing M1 instance Vagrantfiles receive the committed WS01 definition automatically.
 - Removed GOAD compatibility from the legacy optional `ws01` extension to prevent a duplicate `GOAD-WS01` Vagrant identity; the extension remains available to GOAD-Light and GOAD-Mini.
+- WS01 runtime reachability validation now uses the intended NORTH service contract (RDP 3389/tcp and WinRM HTTPS 5986/tcp) rather than requiring ICMP echo through the Windows client firewall.
 
 ### Added
 - `scripts/verify-test-source.sh`, a fail-closed source gate that rejects dirty, untracked, ahead, behind, diverged, untracked-upstream, or otherwise unverifiable test checkouts.
@@ -22,15 +23,20 @@ All notable project changes are documented in this file.
 - `scripts/validate-ws01-runtime.sh` for focused exercise-mode validation of WS01 domain membership, Rickon access, low privilege, UAC, Windows Firewall, Defender, RDP and persistent NIC isolation.
 - `ansible/ws01.yml` and `./goad.sh -t ws01 -i <instance-id>` for targeted, Git-driven WS01 materialization and baseline provisioning without replaying the full GOAD curriculum.
 - Fail-closed VMware instance-collision preflight that derives the project's deterministic segmented MAC identities from committed Vagrant source and blocks another provider from registering the same identities on the shared vmnet10/vmnet20/vmnet30/vmnet99 fabric.
+- Validated M2 WS01 clean-foundation checkpoint at source `4003f8b41f5344650f82c746b83b2fe8fec32010`: domain joined to NORTH, Rickon remains low privilege, exercise NAT remains persistently disabled, and UAC/Firewall/Defender remain enabled.
+- Initial Ansible-native Windows LPE framework skeleton with a 20-technique target catalog, named training profiles, a dedicated `windows-lpe.yml` entrypoint, and a fail-closed controller that refuses apply/reset before techniques have complete implementation contracts.
+- `docs/WINDOWS_LPE_CATALOG.md` and `scripts/validate-windows-lpe-framework-source.sh` to track and validate the LPE catalog/profile framework before the first vulnerability is planted.
 
 ### Fixed
 - Recover VMware Tools installation on Windows guests when the installer resets WinRM before the controller can issue its normal reboot; the lifecycle now performs one controlled recovery reboot and validates Tools plus guest-IP health.
 - Guarantee restoration of exercise isolation when focused WS01 provider bring-up fails before Ansible provisioning starts.
 - Propagate focused WS01 task failures through the non-interactive CLI exit status so unattended wrappers cannot report a failed deployment as finished successfully.
 - Prevent duplicate segmented GOAD Kingdoms instances from producing VMware `padrConflict` / `can't set PADR` failures that leave apparently configured custom NICs without Layer-2 connectivity.
+- Prevent lifecycle commands from unexpectedly prompting for sudo mid-operation by requiring a non-interactive cached-sudo preflight at the GOAD Kingdoms provider boundary.
 
 ### Security
 - WS01 starts with no planted LPE vulnerabilities. Defender, UAC and Windows Firewall remain at the native Windows client baseline; WS01 is not sent through GOAD's server-only Defender role and is never added to `defender_off`.
+- The initial Windows LPE framework checkpoint is non-destructive: `windows_lpe_implemented_techniques` is empty and apply/reset fail closed until technique-specific apply/validate/reset logic exists.
 
 ### Compatibility
 - Milestone 1 and the `v1.0.0 — Segmented Foundation` release retain the historical GOAD_NOMAD name.
