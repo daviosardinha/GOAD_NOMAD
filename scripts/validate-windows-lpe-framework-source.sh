@@ -32,6 +32,15 @@ bash -n scripts/validate-windows-lpe-service-batch-runtime.sh
 bash -n scripts/diagnose-ws01-shutdown.sh
 pass 'framework/runtime/helper shell syntax'
 
+readonly ANSIBLE_PLAYBOOK="${HOME}/.goad/.venv/bin/ansible-playbook"
+[[ -x "${ANSIBLE_PLAYBOOK}" ]] || fail "GOAD Ansible runtime missing: ${ANSIBLE_PLAYBOOK}"
+ANSIBLE_CONFIG="${ROOT}/ansible/ansible.cfg" \
+    "${ANSIBLE_PLAYBOOK}" \
+    -i 'ws01,' \
+    "${ROOT}/ansible/windows-lpe.yml" \
+    --syntax-check >/dev/null
+pass 'Ansible/YAML syntax check for complete Windows LPE role'
+
 python3 - <<'PY'
 from pathlib import Path
 import re
@@ -123,6 +132,7 @@ contracts = {
     'unattend_credentials': ('<PlainText>true</PlainText>', 'New-LocalUser'),
     'powershell_history_credentials': ('ConsoleHost_history.txt', 'ProfileList'),
     'hardcoded_application_credentials': ('service_password=', 'New-LocalUser'),
+    'stored_runas_credentials': ('credential.Flags = 8196', 'Encoding.ASCII.GetBytes', 'Domain:interactive=', 'RUNAS_SAVECRED_OK', 'SeBatchLogonRight'),
     'stored_winlogon_credentials': ('DefaultPassword', 'AutoAdminLogon'),
     'writable_program_directory': ('DeleteSubdirectoriesAndFiles', 'CreateFiles', 'SetAccessRuleProtection($true, $true)'),
     'insecure_service_registry': ('RegistryRights]::SetValue', 'HelperPath', 'Microsoft.Win32'),
