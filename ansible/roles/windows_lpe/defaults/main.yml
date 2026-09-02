@@ -4,7 +4,8 @@
 # Techniques move through three states:
 #   planned -> candidate -> implemented
 # Candidate techniques have source apply/validate/reset logic but have not yet
-# completed the live apply -> vulnerable -> reset -> clean -> reapply gate.
+# completed the live apply -> vulnerable -> reset -> clean -> reapply gate for
+# their current committed implementation.
 
 windows_lpe_action: status
 windows_lpe_profile: none
@@ -44,14 +45,17 @@ windows_lpe_catalog:
   - writable_program_directory
   - insecure_service_registry
 
+# Batch 1 candidates. The original unquoted-service implementation passed its
+# one-technique engine proof, but it was subsequently refactored for independent
+# batch reset semantics and therefore must be revalidated with the current code.
 windows_lpe_candidate_techniques:
+  - unquoted_service_path
   - weak_service_dacl
   - weak_service_binary_permissions
   - weak_service_registry_permissions
   - service_dll_hijacking
 
-windows_lpe_implemented_techniques:
-  - unquoted_service_path
+windows_lpe_implemented_techniques: []
 
 windows_lpe_profiles:
   none: []
