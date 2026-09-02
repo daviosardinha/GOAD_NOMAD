@@ -15,17 +15,45 @@
       windows_lpe_profile must be one of {{ windows_lpe_profiles.keys() | list | join(', ') }};
       got {{ windows_lpe_profile }}
 
+- name: Validate Windows LPE validation state
+  ansible.builtin.assert:
+    that:
+      - windows_lpe_validate_state in windows_lpe_supported_validate_states
+    fail_msg: >-
+      windows_lpe_validate_state must be one of
+      {{ windows_lpe_supported_validate_states | join(', ') }};
+      got {{ windows_lpe_validate_state }}
+  when: windows_lpe_action == 'validate'
+
+- name: Validate exact Windows LPE technique selection
+  ansible.builtin.assert:
+    that:
+      - (windows_lpe_techniques | difference(windows_lpe_catalog) | length) == 0
+    fail_msg: >-
+      windows_lpe_techniques contains unknown techniques:
+      {{ windows_lpe_techniques | difference(windows_lpe_catalog) | join(', ') }}
+
 - name: Resolve requested Windows LPE techniques
   ansible.builtin.set_fact:
-    windows_lpe_requested_techniques: "{{ windows_lpe_profiles[windows_lpe_profile] | list }}"
+    windows_lpe_requested_techniques: >-
+      {{ (windows_lpe_techniques | list)
+         if (windows_lpe_techniques | length > 0)
+         else (windows_lpe_profiles[windows_lpe_profile] | list) }}
 
 - name: Validate Windows LPE profile catalog references
   ansible.builtin.assert:
     that:
       - (windows_lpe_requested_techniques | difference(windows_lpe_catalog) | length) == 0
     fail_msg: >-
-      profile {{ windows_lpe_profile }} references unknown techniques:
+      requested Windows LPE set references unknown techniques:
       {{ windows_lpe_requested_techniques | difference(windows_lpe_catalog) | join(', ') }}
+
+- name: Resolve available and selected candidate techniques
+  ansible.builtin.set_fact:
+    windows_lpe_available_techniques: >-
+      {{ (windows_lpe_implemented_techniques + windows_lpe_candidate_techniques) | unique | list }}
+    windows_lpe_selected_candidates: >-
+      {{ windows_lpe_requested_techniques | intersect(windows_lpe_candidate_techniques) | list }}
 
 - name: Show Windows LPE framework status
   ansible.builtin.debug:
@@ -34,25 +62,45 @@
       - "action={{ windows_lpe_action }}"
       - "profile={{ windows_lpe_profile }}"
       - "catalog={{ windows_lpe_catalog | length }} techniques"
+      - "candidates={{ windows_lpe_candidate_techniques | length }} techniques"
       - "implemented={{ windows_lpe_implemented_techniques | length }} techniques"
       - "requested={{ windows_lpe_requested_techniques | join(', ') if windows_lpe_requested_techniques else 'none' }}"
   when: windows_lpe_action == 'status'
 
-- name: Refuse apply/reset until selected techniques are implemented
+- name: Require a non-empty Windows LPE selection for lifecycle actions
   ansible.builtin.assert:
     that:
-      - (windows_lpe_requested_techniques | difference(windows_lpe_implemented_techniques) | length) == 0
+      - windows_lpe_requested_techniques | length > 0
     fail_msg: >-
-      GOAD Kingdoms Windows LPE {{ windows_lpe_action }} is intentionally fail-closed.
-      Profile {{ windows_lpe_profile }} contains techniques that do not yet have the required
-      apply/validate/reset contract: {{ windows_lpe_requested_techniques | difference(windows_lpe_implemented_techniques) | join(', ') }}
-  when: windows_lpe_action in ['apply', 'reset']
+      Windows LPE {{ windows_lpe_action }} requires a non-empty profile or an exact
+      windows_lpe_techniques selection.
+  when: windows_lpe_action in ['apply', 'validate', 'reset']
 
-- name: Refuse empty apply/reset framework checkpoint
-  ansible.builtin.fail:
-    msg: >-
-      No Windows LPE technique implementation exists at this framework checkpoint.
-      Use windows_lpe_action=status until the first validated technique is committed.
+- name: Refuse Windows LPE techniques with no source implementation
+  ansible.builtin.assert:
+    that:
+      - (windows_lpe_requested_techniques | difference(windows_lpe_available_techniques) | length) == 0
+    fail_msg: >-
+      GOAD Kingdoms Windows LPE {{ windows_lpe_action }} is fail-closed. The selected
+      set contains techniques with no source apply/validate/reset implementation:
+      {{ windows_lpe_requested_techniques | difference(windows_lpe_available_techniques) | join(', ') }}
+  when: windows_lpe_action in ['apply', 'validate', 'reset']
+
+- name: Require explicit opt-in for candidate Windows LPE testing
+  ansible.builtin.assert:
+    that:
+      - windows_lpe_allow_candidate | bool
+      - windows_lpe_techniques | length > 0
+    fail_msg: >-
+      Candidate techniques are not advertised as implemented yet. Test them only with
+      an exact windows_lpe_techniques selection and windows_lpe_allow_candidate=true.
+      Selected candidates: {{ windows_lpe_selected_candidates | join(', ') }}
   when:
-    - windows_lpe_action in ['apply', 'reset']
-    - windows_lpe_implemented_techniques | length == 0
+    - windows_lpe_action in ['apply', 'validate', 'reset']
+    - windows_lpe_selected_candidates | length > 0
+
+- name: Manage unquoted service path candidate
+  ansible.builtin.include_tasks: techniques/unquoted_service_path.yml
+  when:
+    - windows_lpe_action != 'status'
+    - "'unquoted_service_path' in windows_lpe_requested_techniques"
