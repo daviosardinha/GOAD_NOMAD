@@ -201,6 +201,14 @@ for token in (
         fail(f'WS01 runtime foundation check missing: {token}')
 if 'WS01_FOUNDATION=PASS' not in focused_runtime:
     fail('focused WS01 runtime validator is missing its success contract')
+for token in (
+    'nc -zw2 10.4.10.31 3389',
+    'nc -zw2 10.4.10.31 5986',
+):
+    if token not in focused_runtime:
+        fail(f'focused WS01 runtime validator missing service reachability check: {token}')
+if re.search(r'ping\s+[^\n]*10\.4\.10\.31', focused_runtime):
+    fail('focused WS01 runtime validator must not require ICMP echo while Windows Firewall remains enabled')
 
 playbook = Path('ansible/ws01.yml').read_text()
 ad_servers = Path('ansible/ad-servers.yml').read_text()
