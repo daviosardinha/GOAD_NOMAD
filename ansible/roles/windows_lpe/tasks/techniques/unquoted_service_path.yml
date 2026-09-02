@@ -1,5 +1,5 @@
 ---
-- name: Apply unquoted service path candidate
+- name: Apply unquoted service path technique
   ansible.windows.win_powershell:
     script: |
       $ErrorActionPreference = 'Stop'
@@ -7,78 +7,41 @@
       $name = '{{ windows_lpe_unquoted_service_path.service_name }}'
       $display = '{{ windows_lpe_unquoted_service_path.display_name }}'
       $root = '{{ windows_lpe_unquoted_service_path.root }}'
+      $scenarioDir = '{{ windows_lpe_unquoted_service_path.scenario_directory }}'
       $serviceDir = '{{ windows_lpe_unquoted_service_path.service_directory }}'
       $exe = '{{ windows_lpe_unquoted_service_path.executable }}'
       $candidate = '{{ windows_lpe_unquoted_service_path.writable_candidate }}'
 
       $existing = Get-Service -Name $name -ErrorAction SilentlyContinue
       if ($existing) {
-          if ($existing.Status -ne 'Stopped') {
-              Stop-Service -Name $name -Force -ErrorAction SilentlyContinue
-          }
+          if ($existing.Status -ne 'Stopped') { Stop-Service -Name $name -Force -ErrorAction SilentlyContinue }
           & sc.exe delete $name | Out-Null
-          for ($i = 0; $i -lt 20; $i++) {
-              if (-not (Get-Service -Name $name -ErrorAction SilentlyContinue)) { break }
-              Start-Sleep -Milliseconds 250
-          }
+          Start-Sleep -Milliseconds 750
       }
 
-      if (Test-Path -LiteralPath $root) {
-          Remove-Item -LiteralPath $root -Recurse -Force
-      }
-
+      if (Test-Path -LiteralPath $scenarioDir) { Remove-Item -LiteralPath $scenarioDir -Recurse -Force }
+      if (Test-Path -LiteralPath $candidate) { Remove-Item -LiteralPath $candidate -Force }
       New-Item -ItemType Directory -Path $serviceDir -Force | Out-Null
 
       $source = @"
       using System;
       using System.ServiceProcess;
-
       public sealed class KingdomUpdaterService : ServiceBase
       {
-          public KingdomUpdaterService()
-          {
-              ServiceName = "KingdomUpdaterSvc";
-              CanStop = true;
-              AutoLog = true;
-          }
-
+          public KingdomUpdaterService() { ServiceName = "KingdomUpdaterSvc"; }
           protected override void OnStart(string[] args) { }
           protected override void OnStop() { }
-
-          public static void Main()
-          {
-              ServiceBase.Run(new KingdomUpdaterService());
-          }
+          public static void Main() { ServiceBase.Run(new KingdomUpdaterService()); }
       }
       "@
 
-      Add-Type `
-          -TypeDefinition $source `
-          -Language CSharp `
-          -ReferencedAssemblies 'System.ServiceProcess.dll' `
-          -OutputAssembly $exe `
-          -OutputType WindowsApplication
-
-      New-Service `
-          -Name $name `
-          -BinaryPathName $exe `
-          -DisplayName $display `
-          -StartupType Automatic | Out-Null
-
-      # Preserve the deliberate vulnerability exactly: the service ImagePath is
-      # stored without surrounding quotes even though it contains spaces.
-      Set-ItemProperty `
-          -LiteralPath "HKLM:\SYSTEM\CurrentControlSet\Services\$name" `
-          -Name ImagePath `
-          -Value $exe `
-          -Type ExpandString
-
+      Add-Type -TypeDefinition $source -Language CSharp -ReferencedAssemblies 'System.ServiceProcess.dll' -OutputAssembly $exe -OutputType WindowsApplication
+      New-Service -Name $name -BinaryPathName $exe -DisplayName $display -StartupType Automatic | Out-Null
+      Set-ItemProperty -LiteralPath "HKLM:\SYSTEM\CurrentControlSet\Services\$name" -Name ImagePath -Value $exe -Type ExpandString
       & sc.exe description $name 'GOAD Kingdoms training service - unquoted service path scenario' | Out-Null
 
-      # Give BUILTIN\Users create/write rights on this directory only, without
-      # propagating that ACE to the legitimate service directory/binary. This
-      # creates the writable candidate C:\Kingdom LPE\Unquoted.exe while avoiding
-      # a second weak-service-binary-permissions vulnerability.
+      # The shared C:\Kingdom LPE parent is used by multiple scenarios. Add only
+      # one this-folder-only ACE and never delete the shared parent during reset.
       $acl = Get-Acl -LiteralPath $root
       $usersSid = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-32-545')
       $rights = [System.Security.AccessControl.FileSystemRights]::CreateFiles `
@@ -96,40 +59,51 @@
           [System.Security.AccessControl.PropagationFlags]::None,
           [System.Security.AccessControl.AccessControlType]::Allow
       )
+      $acl.RemoveAccessRuleSpecific($rule)
       $acl.AddAccessRule($rule) | Out-Null
       Set-Acl -LiteralPath $root -AclObject $acl
-
-      # Re-application always begins with no planted payload. The learner owns
-      # creation of the candidate executable during the exercise.
-      if (Test-Path -LiteralPath $candidate) {
-          Remove-Item -LiteralPath $candidate -Force
-      }
 
       Write-Output 'WINDOWS_LPE_UNQUOTED_SERVICE_PATH=APPLIED'
   when: windows_lpe_action == 'apply'
 
-- name: Reset unquoted service path candidate
+- name: Reset unquoted service path technique
   ansible.windows.win_powershell:
     script: |
       $ErrorActionPreference = 'Stop'
-
       $name = '{{ windows_lpe_unquoted_service_path.service_name }}'
       $root = '{{ windows_lpe_unquoted_service_path.root }}'
+      $scenarioDir = '{{ windows_lpe_unquoted_service_path.scenario_directory }}'
+      $candidate = '{{ windows_lpe_unquoted_service_path.writable_candidate }}'
 
       $existing = Get-Service -Name $name -ErrorAction SilentlyContinue
       if ($existing) {
-          if ($existing.Status -ne 'Stopped') {
-              Stop-Service -Name $name -Force -ErrorAction SilentlyContinue
-          }
+          if ($existing.Status -ne 'Stopped') { Stop-Service -Name $name -Force -ErrorAction SilentlyContinue }
           & sc.exe delete $name | Out-Null
-          for ($i = 0; $i -lt 20; $i++) {
-              if (-not (Get-Service -Name $name -ErrorAction SilentlyContinue)) { break }
-              Start-Sleep -Milliseconds 250
-          }
+          Start-Sleep -Milliseconds 750
       }
+      if (Test-Path -LiteralPath $scenarioDir) { Remove-Item -LiteralPath $scenarioDir -Recurse -Force }
+      if (Test-Path -LiteralPath $candidate) { Remove-Item -LiteralPath $candidate -Force }
 
       if (Test-Path -LiteralPath $root) {
-          Remove-Item -LiteralPath $root -Recurse -Force
+          $acl = Get-Acl -LiteralPath $root
+          $usersSid = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-32-545')
+          $rights = [System.Security.AccessControl.FileSystemRights]::CreateFiles `
+              -bor [System.Security.AccessControl.FileSystemRights]::WriteData `
+              -bor [System.Security.AccessControl.FileSystemRights]::AppendData `
+              -bor [System.Security.AccessControl.FileSystemRights]::ReadAndExecute `
+              -bor [System.Security.AccessControl.FileSystemRights]::ReadAttributes `
+              -bor [System.Security.AccessControl.FileSystemRights]::ReadExtendedAttributes `
+              -bor [System.Security.AccessControl.FileSystemRights]::ReadPermissions `
+              -bor [System.Security.AccessControl.FileSystemRights]::Synchronize
+          $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+              $usersSid,
+              $rights,
+              [System.Security.AccessControl.InheritanceFlags]::None,
+              [System.Security.AccessControl.PropagationFlags]::None,
+              [System.Security.AccessControl.AccessControlType]::Allow
+          )
+          $acl.RemoveAccessRuleSpecific($rule)
+          Set-Acl -LiteralPath $root -AclObject $acl
       }
 
       Write-Output 'WINDOWS_LPE_UNQUOTED_SERVICE_PATH=RESET'
@@ -139,24 +113,14 @@
   ansible.windows.win_powershell:
     script: |
       $ErrorActionPreference = 'Stop'
-
       $name = '{{ windows_lpe_unquoted_service_path.service_name }}'
       $root = '{{ windows_lpe_unquoted_service_path.root }}'
       $exe = '{{ windows_lpe_unquoted_service_path.executable }}'
 
       function Convert-IdentityToSid([System.Security.Principal.IdentityReference] $Identity) {
-          try {
-              return $Identity.Translate([System.Security.Principal.SecurityIdentifier]).Value
-          }
-          catch {
-              return $null
-          }
+          try { return $Identity.Translate([System.Security.Principal.SecurityIdentifier]).Value } catch { return $null }
       }
-
       function Test-WriteCapableRights([System.Security.AccessControl.FileSystemRights] $Rights) {
-          # Do not use composite enum values such as Write, Modify or FullControl
-          # here. Those values also contain read/execute bits, so a normal RX ACE
-          # can produce a false-positive when tested with a simple bitwise mask.
           $writeBits = @(
               [System.Security.AccessControl.FileSystemRights]::WriteData,
               [System.Security.AccessControl.FileSystemRights]::AppendData,
@@ -166,58 +130,36 @@
               [System.Security.AccessControl.FileSystemRights]::ChangePermissions,
               [System.Security.AccessControl.FileSystemRights]::TakeOwnership
           )
-
-          foreach ($bit in $writeBits) {
-              if (($Rights -band $bit) -eq $bit) {
-                  return $true
-              }
-          }
-
+          foreach ($bit in $writeBits) { if (($Rights -band $bit) -eq $bit) { return $true } }
           return $false
       }
 
       $service = Get-CimInstance Win32_Service -Filter "Name='$name'" -ErrorAction Stop
       if (-not $service) { throw 'KingdomUpdaterSvc is missing' }
-      if ($service.PathName -ne $exe) {
-          throw "Unexpected service ImagePath: $($service.PathName)"
-      }
-      if ($service.PathName.TrimStart().StartsWith('"')) {
-          throw 'Service ImagePath is quoted; scenario is not vulnerable'
-      }
-      if ($service.PathName -notmatch '\s') {
-          throw 'Service ImagePath contains no spaces'
-      }
-      if ($service.StartMode -ne 'Auto') {
-          throw "Service start mode is $($service.StartMode), expected Auto"
-      }
-      if ($service.StartName -ne 'LocalSystem') {
-          throw "Service account is $($service.StartName), expected LocalSystem"
-      }
-      if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
-          throw 'Legitimate service executable is missing'
-      }
+      if ($service.PathName -ne $exe) { throw "Unexpected service ImagePath: $($service.PathName)" }
+      if ($service.PathName.TrimStart().StartsWith('"')) { throw 'Service ImagePath is quoted' }
+      if ($service.PathName -notmatch '\s') { throw 'Service ImagePath contains no spaces' }
+      if ($service.StartMode -ne 'Auto') { throw "Service start mode=$($service.StartMode)" }
+      if ($service.StartName -ne 'LocalSystem') { throw "Service account=$($service.StartName)" }
+      if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw 'Legitimate service executable is missing' }
 
       $usersSid = 'S-1-5-32-545'
-      $rootAcl = Get-Acl -LiteralPath $root
-      $rootWriteRule = $rootAcl.Access | Where-Object {
+      $rootWriteRule = (Get-Acl -LiteralPath $root).Access | Where-Object {
           (Convert-IdentityToSid $_.IdentityReference) -eq $usersSid -and
           $_.AccessControlType -eq [System.Security.AccessControl.AccessControlType]::Allow -and
           ($_.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::WriteData) -ne 0 -and
           $_.InheritanceFlags -eq [System.Security.AccessControl.InheritanceFlags]::None
       }
-      if (-not $rootWriteRule) {
-          throw 'BUILTIN\Users lacks the intended this-folder-only create/write permission'
-      }
+      if (-not $rootWriteRule) { throw 'BUILTIN\Users lacks the intended this-folder-only create/write permission' }
 
-      $exeAcl = Get-Acl -LiteralPath $exe
-      $binaryWriteRule = $exeAcl.Access | Where-Object {
+      $binaryWriteRule = (Get-Acl -LiteralPath $exe).Access | Where-Object {
           (Convert-IdentityToSid $_.IdentityReference) -eq $usersSid -and
           $_.AccessControlType -eq [System.Security.AccessControl.AccessControlType]::Allow -and
           (Test-WriteCapableRights $_.FileSystemRights)
       }
       if ($binaryWriteRule) {
-          $rights = ($binaryWriteRule | ForEach-Object { $_.FileSystemRights.ToString() }) -join '; '
-          throw "Legitimate service binary is writable by BUILTIN\Users; technique collision detected. Rights=$rights"
+          $found = ($binaryWriteRule | ForEach-Object { $_.FileSystemRights.ToString() }) -join '; '
+          throw "Legitimate service binary is writable by BUILTIN\\Users; technique collision detected. Rights=$found"
       }
 
       Write-Output 'WINDOWS_LPE_UNQUOTED_SERVICE_PATH=VULNERABLE'
@@ -235,16 +177,25 @@
 - name: Validate clean unquoted service path state
   ansible.windows.win_powershell:
     script: |
-      $ErrorActionPreference = 'Stop'
-
       $name = '{{ windows_lpe_unquoted_service_path.service_name }}'
       $root = '{{ windows_lpe_unquoted_service_path.root }}'
+      $scenarioDir = '{{ windows_lpe_unquoted_service_path.scenario_directory }}'
+      $candidate = '{{ windows_lpe_unquoted_service_path.writable_candidate }}'
+      $usersSid = 'S-1-5-32-545'
 
-      if (Get-Service -Name $name -ErrorAction SilentlyContinue) {
-          throw 'KingdomUpdaterSvc still exists after reset'
-      }
+      if (Get-Service -Name $name -ErrorAction SilentlyContinue) { throw 'KingdomUpdaterSvc still exists after reset' }
+      if (Test-Path -LiteralPath $scenarioDir) { throw 'unquoted path scenario directory still exists after reset' }
+      if (Test-Path -LiteralPath $candidate) { throw 'unquoted path candidate still exists after reset' }
+
       if (Test-Path -LiteralPath $root) {
-          throw 'Unquoted service path lab directory still exists after reset'
+          $remaining = (Get-Acl -LiteralPath $root).Access | Where-Object {
+              try { $sid = $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value } catch { $sid = '' }
+              $sid -eq $usersSid -and
+              $_.AccessControlType -eq [System.Security.AccessControl.AccessControlType]::Allow -and
+              ($_.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::WriteData) -ne 0 -and
+              $_.InheritanceFlags -eq [System.Security.AccessControl.InheritanceFlags]::None
+          }
+          if ($remaining) { throw 'unquoted-path this-folder-only Users ACE remains after reset' }
       }
 
       Write-Output 'WINDOWS_LPE_UNQUOTED_SERVICE_PATH=CLEAN'
