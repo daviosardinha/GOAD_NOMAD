@@ -1,0 +1,6 @@
+---
+- name: Manage GOAD Kingdoms Windows LPE scenarios on WS01
+  hosts: ws01
+  gather_facts: false
+  roles:
+    - role: windows_lpe
