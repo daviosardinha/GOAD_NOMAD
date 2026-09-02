@@ -153,6 +153,29 @@
           }
       }
 
+      function Test-WriteCapableRights([System.Security.AccessControl.FileSystemRights] $Rights) {
+          # Do not use composite enum values such as Write, Modify or FullControl
+          # here. Those values also contain read/execute bits, so a normal RX ACE
+          # can produce a false-positive when tested with a simple bitwise mask.
+          $writeBits = @(
+              [System.Security.AccessControl.FileSystemRights]::WriteData,
+              [System.Security.AccessControl.FileSystemRights]::AppendData,
+              [System.Security.AccessControl.FileSystemRights]::WriteExtendedAttributes,
+              [System.Security.AccessControl.FileSystemRights]::WriteAttributes,
+              [System.Security.AccessControl.FileSystemRights]::Delete,
+              [System.Security.AccessControl.FileSystemRights]::ChangePermissions,
+              [System.Security.AccessControl.FileSystemRights]::TakeOwnership
+          )
+
+          foreach ($bit in $writeBits) {
+              if (($Rights -band $bit) -eq $bit) {
+                  return $true
+              }
+          }
+
+          return $false
+      }
+
       $service = Get-CimInstance Win32_Service -Filter "Name='$name'" -ErrorAction Stop
       if (-not $service) { throw 'KingdomUpdaterSvc is missing' }
       if ($service.PathName -ne $exe) {
@@ -187,16 +210,14 @@
       }
 
       $exeAcl = Get-Acl -LiteralPath $exe
-      $dangerous = [System.Security.AccessControl.FileSystemRights]::Write `
-          -bor [System.Security.AccessControl.FileSystemRights]::Modify `
-          -bor [System.Security.AccessControl.FileSystemRights]::FullControl
       $binaryWriteRule = $exeAcl.Access | Where-Object {
           (Convert-IdentityToSid $_.IdentityReference) -eq $usersSid -and
           $_.AccessControlType -eq [System.Security.AccessControl.AccessControlType]::Allow -and
-          ($_.FileSystemRights -band $dangerous) -ne 0
+          (Test-WriteCapableRights $_.FileSystemRights)
       }
       if ($binaryWriteRule) {
-          throw 'Legitimate service binary is writable by BUILTIN\Users; technique collision detected'
+          $rights = ($binaryWriteRule | ForEach-Object { $_.FileSystemRights.ToString() }) -join '; '
+          throw "Legitimate service binary is writable by BUILTIN\Users; technique collision detected. Rights=$rights"
       }
 
       Write-Output 'WINDOWS_LPE_UNQUOTED_SERVICE_PATH=VULNERABLE'
