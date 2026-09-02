@@ -159,13 +159,13 @@ if 'Set-MpPreference' in technique or 'Set-NetFirewallProfile' in technique:
 
 for token in (
     'validate-ws01-runtime.sh',
-    'windows_lpe_action=apply',
     'windows_lpe_action=${action}',
     'windows_lpe_allow_candidate=true',
     'unquoted_service_path',
+    'run_lpe apply',
+    'run_lpe validate vulnerable',
     'run_lpe reset',
     'run_lpe validate clean',
-    'run_lpe apply',
     '[READY] unquoted_service_path live promotion gate passed.',
 ):
     if token not in runtime_gate:
