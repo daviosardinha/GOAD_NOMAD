@@ -1,0 +1,146 @@
+---
+- name: Apply writable program directory candidate
+  ansible.windows.win_powershell:
+    script: |
+      $ErrorActionPreference = 'Stop'
+      $name = '{{ windows_lpe_writable_program_directory.service_name }}'
+      $display = '{{ windows_lpe_writable_program_directory.display_name }}'
+      $root = '{{ windows_lpe_writable_program_directory.root }}'
+      $exe = '{{ windows_lpe_writable_program_directory.executable }}'
+
+      $existing = Get-Service -Name $name -ErrorAction SilentlyContinue
+      if ($existing) {
+          Stop-Service -Name $name -Force -ErrorAction SilentlyContinue
+          & sc.exe delete $name | Out-Null
+          Start-Sleep -Milliseconds 750
+      }
+      if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }
+      New-Item -ItemType Directory -Path $root -Force | Out-Null
+
+      $source = @"
+      using System.ServiceProcess;
+      public sealed class KingdomProgramService : ServiceBase
+      {
+          public KingdomProgramService() { ServiceName = "$name"; }
+          protected override void OnStart(string[] args) { }
+          protected override void OnStop() { }
+          public static void Main() { ServiceBase.Run(new KingdomProgramService()); }
+      }
+      "@
+      Add-Type -TypeDefinition $source -Language CSharp -ReferencedAssemblies 'System.ServiceProcess.dll' -OutputAssembly $exe -OutputType WindowsApplication
+
+      # Protect the binary itself, then make only the containing Program Files
+      # directory replaceable by BUILTIN\Users through create/delete-child rights.
+      $fileAcl = Get-Acl -LiteralPath $exe
+      $fileAcl.SetAccessRuleProtection($true, $true)
+      foreach ($ace in @($fileAcl.Access)) {
+          try { $sid = $ace.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value } catch { continue }
+          if ($sid -eq 'S-1-5-32-545' -and $ace.AccessControlType -eq 'Allow') { $fileAcl.RemoveAccessRuleSpecific($ace) }
+      }
+      $usersSid = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-32-545')
+      $readRule = New-Object System.Security.AccessControl.FileSystemAccessRule($usersSid, [System.Security.AccessControl.FileSystemRights]'ReadAndExecute', [System.Security.AccessControl.AccessControlType]::Allow)
+      $fileAcl.AddAccessRule($readRule) | Out-Null
+      Set-Acl -LiteralPath $exe -AclObject $fileAcl
+
+      $dirAcl = Get-Acl -LiteralPath $root
+      $dirRule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+          $usersSid,
+          [System.Security.AccessControl.FileSystemRights]'ReadAndExecute,CreateFiles,CreateDirectories,DeleteSubdirectoriesAndFiles',
+          [System.Security.AccessControl.InheritanceFlags]::None,
+          [System.Security.AccessControl.PropagationFlags]::None,
+          [System.Security.AccessControl.AccessControlType]::Allow
+      )
+      $dirAcl.AddAccessRule($dirRule) | Out-Null
+      Set-Acl -LiteralPath $root -AclObject $dirAcl
+
+      New-Service -Name $name -BinaryPathName ('"{0}"' -f $exe) -DisplayName $display -StartupType Manual | Out-Null
+      $sddl = 'D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWLOCRRC;;;IU)(A;;CCLCSWLOCRRC;;;SU)(A;;RPWP;;;BU)'
+      $result = & sc.exe sdset $name $sddl 2>&1
+      if ($LASTEXITCODE -ne 0) { throw "sc sdset failed: $result" }
+
+      Write-Output 'WINDOWS_LPE_WRITABLE_PROGRAM_DIRECTORY=APPLIED'
+  when: windows_lpe_action == 'apply'
+
+- name: Reset writable program directory candidate
+  ansible.windows.win_powershell:
+    script: |
+      $name = '{{ windows_lpe_writable_program_directory.service_name }}'
+      $root = '{{ windows_lpe_writable_program_directory.root }}'
+      $existing = Get-Service -Name $name -ErrorAction SilentlyContinue
+      if ($existing) {
+          Stop-Service -Name $name -Force -ErrorAction SilentlyContinue
+          & sc.exe delete $name | Out-Null
+          Start-Sleep -Milliseconds 750
+      }
+      if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }
+      Write-Output 'WINDOWS_LPE_WRITABLE_PROGRAM_DIRECTORY=RESET'
+  when: windows_lpe_action == 'reset'
+
+- name: Validate vulnerable writable program directory state
+  ansible.windows.win_powershell:
+    script: |
+      $ErrorActionPreference = 'Stop'
+      $name = '{{ windows_lpe_writable_program_directory.service_name }}'
+      $root = '{{ windows_lpe_writable_program_directory.root }}'
+      $exe = '{{ windows_lpe_writable_program_directory.executable }}'
+      $usersSid = 'S-1-5-32-545'
+
+      $service = Get-CimInstance Win32_Service -Filter "Name='$name'" -ErrorAction Stop
+      if (-not $service) { throw 'KingdomProgramSvc is missing' }
+      if ($service.StartName -ne 'LocalSystem') { throw "service account=$($service.StartName)" }
+      if (-not $service.PathName.TrimStart().StartsWith('"')) { throw 'service path is not quoted' }
+      if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw 'program service executable missing' }
+
+      $dirRights = [System.Security.AccessControl.FileSystemRights]0
+      foreach ($ace in (Get-Acl -LiteralPath $root).Access) {
+          try { $sid = $ace.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value } catch { continue }
+          if ($sid -eq $usersSid -and $ace.AccessControlType -eq 'Allow') { $dirRights = $dirRights -bor $ace.FileSystemRights }
+      }
+      if (($dirRights -band [System.Security.AccessControl.FileSystemRights]::CreateFiles) -eq 0) { throw 'Users cannot create files in program directory' }
+      if (($dirRights -band [System.Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles) -eq 0) { throw 'Users cannot replace children in program directory' }
+
+      foreach ($ace in (Get-Acl -LiteralPath $exe).Access) {
+          try { $sid = $ace.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value } catch { continue }
+          if ($sid -ne $usersSid -or $ace.AccessControlType -ne 'Allow') { continue }
+          if (($ace.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::WriteData) -ne 0 -or
+              ($ace.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::ChangePermissions) -ne 0 -or
+              ($ace.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::TakeOwnership) -ne 0) {
+              throw "binary is directly writable; collision rights=$($ace.FileSystemRights)"
+          }
+      }
+
+      $sd = (& sc.exe sdshow $name 2>&1 | Out-String).Trim()
+      $bu = [regex]::Match($sd, '\(A;;([^;]+);;;BU\)')
+      if (-not $bu.Success -or $bu.Groups[1].Value -notmatch 'RP') { throw 'Users cannot start the dedicated service' }
+      if ($bu.Groups[1].Value -match 'DC') { throw 'service grants CHANGE_CONFIG; collision with weak-service-DACL scenario' }
+
+      Write-Output 'WINDOWS_LPE_WRITABLE_PROGRAM_DIRECTORY=VULNERABLE'
+  register: windows_lpe_writable_program_directory_vulnerable
+  when:
+    - windows_lpe_action == 'apply' or (windows_lpe_action == 'validate' and windows_lpe_validate_state == 'vulnerable')
+
+- name: Show vulnerable writable program directory validation
+  ansible.builtin.debug:
+    var: windows_lpe_writable_program_directory_vulnerable.output
+  when:
+    - windows_lpe_writable_program_directory_vulnerable is defined
+    - windows_lpe_writable_program_directory_vulnerable.output is defined
+
+- name: Validate clean writable program directory state
+  ansible.windows.win_powershell:
+    script: |
+      $name = '{{ windows_lpe_writable_program_directory.service_name }}'
+      $root = '{{ windows_lpe_writable_program_directory.root }}'
+      if (Get-Service -Name $name -ErrorAction SilentlyContinue) { throw 'KingdomProgramSvc still exists' }
+      if (Test-Path -LiteralPath $root) { throw 'writable program directory still exists' }
+      Write-Output 'WINDOWS_LPE_WRITABLE_PROGRAM_DIRECTORY=CLEAN'
+  register: windows_lpe_writable_program_directory_clean
+  when:
+    - windows_lpe_action == 'reset' or (windows_lpe_action == 'validate' and windows_lpe_validate_state == 'clean')
+
+- name: Show clean writable program directory validation
+  ansible.builtin.debug:
+    var: windows_lpe_writable_program_directory_clean.output
+  when:
+    - windows_lpe_writable_program_directory_clean is defined
+    - windows_lpe_writable_program_directory_clean.output is defined

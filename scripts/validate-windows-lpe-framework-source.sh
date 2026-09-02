@@ -20,8 +20,11 @@ readonly TECHNIQUE_FILES=(
     ansible/roles/windows_lpe/tasks/techniques/scheduled_task_binary_permissions.yml
     ansible/roles/windows_lpe/tasks/techniques/scheduled_task_directory_permissions.yml
     ansible/roles/windows_lpe/tasks/techniques/unattend_credentials.yml
+    ansible/roles/windows_lpe/tasks/techniques/powershell_history_credentials.yml
     ansible/roles/windows_lpe/tasks/techniques/hardcoded_application_credentials.yml
     ansible/roles/windows_lpe/tasks/techniques/stored_winlogon_credentials.yml
+    ansible/roles/windows_lpe/tasks/techniques/writable_program_directory.yml
+    ansible/roles/windows_lpe/tasks/techniques/insecure_service_registry.yml
 )
 
 for file in \
@@ -86,8 +89,11 @@ candidates = [
     'scheduled_task_binary_permissions',
     'scheduled_task_directory_permissions',
     'unattend_credentials',
+    'powershell_history_credentials',
     'hardcoded_application_credentials',
     'stored_winlogon_credentials',
+    'writable_program_directory',
+    'insecure_service_registry',
 ]
 
 markers = {
@@ -100,8 +106,11 @@ markers = {
     'scheduled_task_binary_permissions': 'WINDOWS_LPE_SCHEDULED_TASK_BINARY_PERMISSIONS',
     'scheduled_task_directory_permissions': 'WINDOWS_LPE_SCHEDULED_TASK_DIRECTORY_PERMISSIONS',
     'unattend_credentials': 'WINDOWS_LPE_UNATTEND_CREDENTIALS',
+    'powershell_history_credentials': 'WINDOWS_LPE_POWERSHELL_HISTORY_CREDENTIALS',
     'hardcoded_application_credentials': 'WINDOWS_LPE_HARDCODED_APPLICATION_CREDENTIALS',
     'stored_winlogon_credentials': 'WINDOWS_LPE_STORED_WINLOGON_CREDENTIALS',
+    'writable_program_directory': 'WINDOWS_LPE_WRITABLE_PROGRAM_DIRECTORY',
+    'insecure_service_registry': 'WINDOWS_LPE_INSECURE_SERVICE_REGISTRY',
 }
 
 privilege_evidence_tokens = {
@@ -114,8 +123,11 @@ privilege_evidence_tokens = {
     'scheduled_task_binary_permissions': "UserId 'SYSTEM'",
     'scheduled_task_directory_permissions': "UserId 'SYSTEM'",
     'unattend_credentials': "Group 'Administrators'",
+    'powershell_history_credentials': "Group 'Administrators'",
     'hardcoded_application_credentials': "Group 'Administrators'",
     'stored_winlogon_credentials': "Group 'Administrators'",
+    'writable_program_directory': 'LocalSystem',
+    'insecure_service_registry': 'LocalSystem',
 }
 
 defaults = Path('ansible/roles/windows_lpe/defaults/main.yml').read_text()
@@ -173,6 +185,7 @@ for token in ('DeleteSubdirectoriesAndFiles', 'SetAccessRuleProtection($true, $t
 
 credential_contracts = {
     'unattend_credentials': ('<PlainText>true</PlainText>', 'New-LocalUser'),
+    'powershell_history_credentials': ('ConsoleHost_history.txt', 'ProfileList'),
     'hardcoded_application_credentials': ('service_password=', 'New-LocalUser'),
     'stored_winlogon_credentials': ('DefaultPassword', 'AutoAdminLogon'),
 }
@@ -181,6 +194,16 @@ for technique_id, tokens in credential_contracts.items():
     for token in tokens:
         if token not in source:
             fail(f'{technique_id} credential contract missing: {token}')
+
+program_source = Path('ansible/roles/windows_lpe/tasks/techniques/writable_program_directory.yml').read_text()
+for token in ('DeleteSubdirectoriesAndFiles', 'CreateFiles', 'SetAccessRuleProtection($true, $true)'):
+    if token not in program_source:
+        fail(f'writable program directory contract missing: {token}')
+
+registry_source = Path('ansible/roles/windows_lpe/tasks/techniques/insecure_service_registry.yml').read_text()
+for token in ('RegistryRights]::SetValue', 'HelperPath', 'Microsoft.Win32'):
+    if token not in registry_source:
+        fail(f'insecure service registry contract missing: {token}')
 
 for token in ('windows_lpe_candidate_techniques', 'windows_lpe_implemented_techniques', 'windows_lpe_allow_candidate | bool', "windows_lpe_action in ['apply', 'validate', 'reset']"):
     if token not in tasks:

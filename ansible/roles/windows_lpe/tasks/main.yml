@@ -153,6 +153,12 @@
     - windows_lpe_action != 'status'
     - "'unattend_credentials' in windows_lpe_requested_techniques"
 
+- name: Manage PowerShell history credential candidate
+  ansible.builtin.include_tasks: techniques/powershell_history_credentials.yml
+  when:
+    - windows_lpe_action != 'status'
+    - "'powershell_history_credentials' in windows_lpe_requested_techniques"
+
 - name: Manage hardcoded application credential candidate
   ansible.builtin.include_tasks: techniques/hardcoded_application_credentials.yml
   when:
@@ -164,3 +170,15 @@
   when:
     - windows_lpe_action != 'status'
     - "'stored_winlogon_credentials' in windows_lpe_requested_techniques"
+
+- name: Manage writable program directory candidate
+  ansible.builtin.include_tasks: techniques/writable_program_directory.yml
+  when:
+    - windows_lpe_action != 'status'
+    - "'writable_program_directory' in windows_lpe_requested_techniques"
+
+- name: Manage insecure service registry candidate
+  ansible.builtin.include_tasks: techniques/insecure_service_registry.yml
+  when:
+    - windows_lpe_action != 'status'
+    - "'insecure_service_registry' in windows_lpe_requested_techniques"

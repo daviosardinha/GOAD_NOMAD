@@ -53,8 +53,11 @@ windows_lpe_candidate_techniques:
   - scheduled_task_binary_permissions
   - scheduled_task_directory_permissions
   - unattend_credentials
+  - powershell_history_credentials
   - hardcoded_application_credentials
   - stored_winlogon_credentials
+  - writable_program_directory
+  - insecure_service_registry
 
 windows_lpe_implemented_techniques:
   - unquoted_service_path
@@ -157,6 +160,11 @@ windows_lpe_unattend_credentials:
   password: 'RedKeep-Deploy-2026!'
   artifact: 'C:\Windows\Panther\Kingdom-Unattend.xml'
 
+windows_lpe_powershell_history_credentials:
+  target_account: 'NORTH\rickon.stark'
+  user_name: kingdom.pshistory
+  password: 'Kingdom-PSHistory-2026!'
+
 windows_lpe_hardcoded_application_credentials:
   user_name: kingdom.appsvc
   password: 'Kingdom-AppSvc-2026!'
@@ -168,3 +176,21 @@ windows_lpe_stored_winlogon_credentials:
   password: 'Kingdom-Autologon-2026!'
   root: 'C:\Kingdom LPE\Winlogon Credentials'
   backup_file: 'C:\Kingdom LPE\Winlogon Credentials\winlogon-backup.json'
+
+windows_lpe_writable_program_directory:
+  service_name: KingdomProgramSvc
+  display_name: GOAD Kingdoms Program Files Service
+  root: 'C:\Program Files\Kingdom Agent'
+  executable: 'C:\Program Files\Kingdom Agent\KingdomAgent.exe'
+
+windows_lpe_insecure_service_registry:
+  service_name: KingdomConfigSvc
+  display_name: GOAD Kingdoms Registry Config Service
+  root: 'C:\Kingdom LPE\Insecure Service Registry'
+  service_directory: 'C:\Kingdom LPE\Insecure Service Registry\Service'
+  executable: 'C:\Kingdom LPE\Insecure Service Registry\Service\KingdomConfigSvc.exe'
+  helper_directory: 'C:\Kingdom LPE\Insecure Service Registry\Protected'
+  helper_executable: 'C:\Kingdom LPE\Insecure Service Registry\Protected\KingdomConfigHelper.exe'
+  registry_key: 'HKLM:\SOFTWARE\GOAD Kingdoms\KingdomConfigSvc'
+  registry_subkey: 'SOFTWARE\GOAD Kingdoms\KingdomConfigSvc'
+  registry_value: HelperPath
