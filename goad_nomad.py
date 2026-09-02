@@ -220,22 +220,33 @@ class GoadNomad(BaseGoad):
             Log.error('Load a GOAD/VMware instance before installing GOAD-WS01')
             return False
 
-        self._install_phase = 'GOAD-WS01 VM materialization + management readiness'
-        if not provider.install():
-            Log.error('GOAD Kingdoms: GOAD-WS01 provider bring-up failed')
-            return False
-
+        provider_result = False
         provision_result = False
         isolation_result = False
         try:
-            self._install_phase = 'GOAD-WS01 clean workstation provisioning'
-            provision_result = (
-                self.lab_manager.get_current_instance_provisioner().run('ws01.yml')
-            )
+            self._install_phase = 'GOAD-WS01 VM materialization + management readiness'
+            provider_result = provider.install()
+            if provider_result:
+                self._install_phase = 'GOAD-WS01 clean workstation provisioning'
+                provision_result = (
+                    self.lab_manager.get_current_instance_provisioner().run('ws01.yml')
+                )
         finally:
             self._install_phase = 'GOAD-WS01 final exercise isolation'
             isolation_result = provider.finalize_install()
 
+        if not provider_result:
+            if isolation_result:
+                Log.error(
+                    'GOAD Kingdoms: GOAD-WS01 provider bring-up failed; '
+                    'exercise isolation was restored'
+                )
+            else:
+                Log.error(
+                    'GOAD Kingdoms: GOAD-WS01 provider bring-up failed and '
+                    'exercise isolation restoration also failed'
+                )
+            return False
         if not provision_result:
             Log.error('GOAD Kingdoms: GOAD-WS01 Ansible provisioning failed')
             return False

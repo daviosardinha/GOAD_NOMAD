@@ -204,14 +204,17 @@ if ($p.ExitCode -ne 0 -and $p.ExitCode -ne 3010) { exit $p.ExitCode }
             session.run_ps("shutdown.exe /r /t 5 /f | Out-Null")
         except Exception as exc:
             # VMware Tools installation/reboot can transiently tear down the
-            # WinRM transport itself. Do not immediately call that a failed
-            # installation: wait for WinRM/Tools/IP health and accept the
-            # recovery if the guest proves healthy afterward.
+            # WinRM transport itself. The disconnect can happen before the
+            # explicit reboot below, leaving a successful MSI installation in
+            # a reboot-pending state. First accept a guest that recovered on
+            # its own; otherwise, once WinRM is stable, perform exactly one
+            # controlled recovery reboot and validate Tools + guest-IP health.
             Log.warning(
                 f'GOAD_NOMAD: VMware Tools WinRM session interrupted for {machine}: {exc}; '
                 'checking whether the guest recovered successfully'
             )
-            deadline = time.time() + 240
+
+            deadline = time.time() + 45
             while time.time() < deadline:
                 if self._wait_tcp(port, 15) and self._guest_tools_healthy(port):
                     if self._wait_guest_ip(vmx, 60):
@@ -220,7 +223,53 @@ if ($p.ExitCode -ne 0 -and $p.ExitCode -ne 3010) { exit $p.ExitCode }
                             'despite transient WinRM reset'
                         )
                         return True
-                time.sleep(10)
+                time.sleep(5)
+
+            if not self._wait_tcp(port, 180):
+                Log.error(
+                    f'GOAD_NOMAD: {machine} WinRM did not return after the '
+                    'interrupted VMware Tools installation'
+                )
+                return False
+            if not self._wait_winrm_ready(port, 180):
+                Log.error(
+                    f'GOAD_NOMAD: {machine} WinRM did not stabilize after the '
+                    'interrupted VMware Tools installation'
+                )
+                return False
+
+            Log.warning(
+                f'GOAD_NOMAD: VMware Tools on {machine} require a recovery reboot; '
+                'restarting the guest once'
+            )
+            try:
+                recovery_session = self._winrm_session(port)
+                recovery_session.run_ps("shutdown.exe /r /t 5 /f | Out-Null")
+            except Exception as reboot_exc:
+                # A successful shutdown commonly closes WinRM before pywinrm
+                # receives a response. The readiness checks below are the
+                # authority, not the transport result of the reboot command.
+                Log.warning(
+                    f'GOAD_NOMAD: recovery reboot command interrupted WinRM for '
+                    f'{machine}: {reboot_exc}'
+                )
+
+            time.sleep(15)
+            if not self._wait_tcp(port, 240):
+                Log.error(f'GOAD_NOMAD: {machine} WinRM did not return after recovery reboot')
+                return False
+            if not self._wait_winrm_ready(port, 180):
+                Log.error(f'GOAD_NOMAD: {machine} WinRM did not stabilize after recovery reboot')
+                return False
+
+            deadline = time.time() + 240
+            while time.time() < deadline:
+                if self._guest_tools_healthy(port) and self._wait_guest_ip(vmx, 60):
+                    Log.success(
+                        f'GOAD_NOMAD: VMware Tools recovery reboot completed for {machine}'
+                    )
+                    return True
+                time.sleep(5)
 
             Log.error(f'GOAD_NOMAD: VMware Tools recovery did not become healthy for {machine}')
             return False

@@ -22,6 +22,10 @@ All notable project changes are documented in this file.
 - `scripts/validate-ws01-runtime.sh` for focused exercise-mode validation of WS01 domain membership, Rickon access, low privilege, UAC, Windows Firewall, Defender, RDP and persistent NIC isolation.
 - `ansible/ws01.yml` and `./goad.sh -t ws01 -i <instance-id>` for targeted, Git-driven WS01 materialization and baseline provisioning without replaying the full GOAD curriculum.
 
+### Fixed
+- Recover VMware Tools installation on Windows guests when the installer resets WinRM before the controller can issue its normal reboot; the lifecycle now performs one controlled recovery reboot and validates Tools plus guest-IP health.
+- Guarantee restoration of exercise isolation when focused WS01 provider bring-up fails before Ansible provisioning starts.
+
 ### Security
 - WS01 starts with no planted LPE vulnerabilities. Defender, UAC and Windows Firewall remain at the native Windows client baseline; WS01 is not sent through GOAD's server-only Defender role and is never added to `defender_off`.
 

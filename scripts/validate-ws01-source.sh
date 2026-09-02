@@ -141,7 +141,8 @@ for section in ('server', 'dc', 'defender_on', 'defender_off', 'laps_workstation
     if 'ws01' in section_items(lab_inventory, section):
         fail(f'ws01 must not be in [{section}]')
 
-vmware_tree = ast.parse(Path('goad/provider/vagrant/vmware.py').read_text())
+provider_source = Path('goad/provider/vagrant/vmware.py').read_text()
+vmware_tree = ast.parse(provider_source)
 vmware_class = next(
     node for node in vmware_tree.body
     if isinstance(node, ast.ClassDef) and node.name == 'VmwareProvider'
@@ -227,11 +228,69 @@ for token in (
     if token not in console:
         fail(f'GOAD-WS01 controller integration missing: {token}')
 
+console_tree = ast.parse(console)
+console_class = next(
+    node for node in console_tree.body
+    if isinstance(node, ast.ClassDef) and node.name == 'GoadNomad'
+)
+ws01_method = next(
+    node for node in console_class.body
+    if isinstance(node, ast.FunctionDef) and node.name == '_do_ws01'
+)
+fail_closed_try = next(
+    (
+        node for node in ast.walk(ws01_method)
+        if isinstance(node, ast.Try)
+        and any(
+            isinstance(call, ast.Call)
+            and isinstance(call.func, ast.Attribute)
+            and call.func.attr == 'install'
+            and isinstance(call.func.value, ast.Name)
+            and call.func.value.id == 'provider'
+            for statement in node.body
+            for call in ast.walk(statement)
+        )
+    ),
+    None,
+)
+if fail_closed_try is None:
+    fail('WS01 provider bring-up is not owned by a fail-closed try/finally')
+if not any(
+    isinstance(call, ast.Call)
+    and isinstance(call.func, ast.Attribute)
+    and call.func.attr == 'finalize_install'
+    for statement in fail_closed_try.finalbody
+    for call in ast.walk(statement)
+):
+    fail('WS01 provider failure does not guarantee final exercise isolation')
+
+tools_method = next(
+    node for node in vmware_class.body
+    if isinstance(node, ast.FunctionDef) and node.name == '_install_vmware_tools'
+)
+recovery_reboots = [
+    call
+    for handler in (
+        node for node in ast.walk(tools_method)
+        if isinstance(node, ast.ExceptHandler)
+    )
+    for call in ast.walk(handler)
+    if isinstance(call, ast.Call)
+    and isinstance(call.func, ast.Attribute)
+    and call.func.attr == 'run_ps'
+    and call.args
+    and isinstance(call.args[0], ast.Constant)
+    and 'shutdown.exe /r' in str(call.args[0].value)
+]
+if not recovery_reboots:
+    fail('interrupted VMware Tools installation has no controlled recovery reboot')
+if 'VMware Tools recovery reboot completed' not in provider_source:
+    fail('VMware Tools recovery reboot lacks a validated success contract')
+
 extension = json.loads(Path('extensions/ws01/extension.json').read_text())
 if 'GOAD' in extension.get('compatibility', []):
     fail('legacy ws01 extension still conflicts with first-class GOAD-WS01')
 
-provider_source = Path('goad/provider/vagrant/vmware.py').read_text()
 for token in (
     '_sync_goad_nomad_inventories',
     'added the committed GOAD-WS01 definition',
