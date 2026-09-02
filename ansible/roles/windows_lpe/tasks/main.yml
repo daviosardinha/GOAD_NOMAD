@@ -134,3 +134,15 @@
   when:
     - windows_lpe_action != 'status'
     - "'path_search_order_hijacking' in windows_lpe_requested_techniques"
+
+- name: Manage scheduled task binary permissions candidate
+  ansible.builtin.include_tasks: techniques/scheduled_task_binary_permissions.yml
+  when:
+    - windows_lpe_action != 'status'
+    - "'scheduled_task_binary_permissions' in windows_lpe_requested_techniques"
+
+- name: Manage scheduled task directory permissions candidate
+  ansible.builtin.include_tasks: techniques/scheduled_task_directory_permissions.yml
+  when:
+    - windows_lpe_action != 'status'
+    - "'scheduled_task_directory_permissions' in windows_lpe_requested_techniques"
