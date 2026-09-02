@@ -25,6 +25,7 @@ All notable project changes are documented in this file.
 ### Fixed
 - Recover VMware Tools installation on Windows guests when the installer resets WinRM before the controller can issue its normal reboot; the lifecycle now performs one controlled recovery reboot and validates Tools plus guest-IP health.
 - Guarantee restoration of exercise isolation when focused WS01 provider bring-up fails before Ansible provisioning starts.
+- Propagate focused WS01 task failures through the non-interactive CLI exit status so unattended wrappers cannot report a failed deployment as finished successfully.
 
 ### Security
 - WS01 starts with no planted LPE vulnerabilities. Defender, UAC and Windows Firewall remain at the native Windows client baseline; WS01 is not sent through GOAD's server-only Defender role and is never added to `defender_off`.

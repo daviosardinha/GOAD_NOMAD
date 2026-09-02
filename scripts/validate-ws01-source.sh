@@ -287,6 +287,32 @@ if not recovery_reboots:
 if 'VMware Tools recovery reboot completed' not in provider_source:
     fail('VMware Tools recovery reboot lacks a validated success contract')
 
+dispatch = next(
+    node for node in console_tree.body
+    if isinstance(node, ast.FunctionDef) and node.name == '_dispatch_task'
+)
+ws01_dispatch_calls = [
+    node for node in ast.walk(dispatch)
+    if isinstance(node, ast.Call)
+    and isinstance(node.func, ast.Attribute)
+    and node.func.attr == 'do_ws01'
+]
+if len(ws01_dispatch_calls) != 1:
+    fail('WS01 non-interactive dispatch must call do_ws01 exactly once')
+if not any(
+    isinstance(node, ast.If)
+    and any(call is ws01_dispatch_calls[0] for call in ast.walk(node.test))
+    and any(
+        isinstance(child, ast.Return)
+        and isinstance(child.value, ast.Constant)
+        and child.value.value == 1
+        for statement in node.body
+        for child in ast.walk(statement)
+    )
+    for node in ast.walk(dispatch)
+):
+    fail('WS01 non-interactive dispatch does not propagate a failed task exit status')
+
 extension = json.loads(Path('extensions/ws01/extension.json').read_text())
 if 'GOAD' in extension.get('compatibility', []):
     fail('legacy ws01 extension still conflicts with first-class GOAD-WS01')

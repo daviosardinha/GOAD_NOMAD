@@ -405,7 +405,8 @@ def _dispatch_task(goad, args):
     elif args.task == 'validate':
         goad.do_validate()
     elif args.task == 'ws01':
-        goad.do_ws01()
+        if not goad.do_ws01():
+            return 1
     elif args.task == 'mode':
         goad.do_mode('status')
     elif args.task == 'show':
