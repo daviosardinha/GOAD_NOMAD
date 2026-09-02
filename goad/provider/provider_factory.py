@@ -2,7 +2,7 @@ from goad.utils import *
 from goad.dependencies import Dependencies
 
 if Dependencies.vmware_enabled:
-    from goad.provider.vagrant.vmware_nomad import GoadNomadVmwareProvider
+    from goad.provider.vagrant.vmware_kingdoms import GoadKingdomsVmwareProvider
 if Dependencies.vmware_esxi_enabled:
     from goad.provider.vagrant.vmware_esxi import VmwareEsxiProvider
 if Dependencies.virtualbox_enabled:
@@ -25,7 +25,7 @@ class ProviderFactory:
         if provider_name == VIRTUALBOX and Dependencies.virtualbox_enabled:
             provider = VirtualboxProvider(lab_name)
         elif provider_name == VMWARE and Dependencies.vmware_enabled:
-            provider = GoadNomadVmwareProvider(lab_name)
+            provider = GoadKingdomsVmwareProvider(lab_name)
         elif provider_name == VMWARE_ESXI and Dependencies.vmware_esxi_enabled:
             provider = VmwareEsxiProvider(lab_name)
         elif provider_name == PROXMOX and Dependencies.proxmox_enabled:
