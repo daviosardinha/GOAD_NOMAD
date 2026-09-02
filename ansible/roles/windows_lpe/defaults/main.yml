@@ -1,18 +1,30 @@
 ---
 # GOAD Kingdoms Windows LPE framework.
 #
-# This first framework checkpoint is intentionally non-destructive: no
-# vulnerability is implemented or enabled yet. Technique IDs and profile names
-# are committed first so later apply/reset logic can be added one technique at
-# a time with deterministic validation.
+# Techniques move through three states:
+#   planned -> candidate -> implemented
+# Candidate techniques have source apply/validate/reset logic but have not yet
+# completed the live apply -> vulnerable -> reset -> clean -> reapply gate.
 
 windows_lpe_action: status
 windows_lpe_profile: none
 
+# Optional exact technique selection used for development/validation. When this
+# list is empty, the selected profile owns the requested technique set.
+windows_lpe_techniques: []
+
+windows_lpe_validate_state: vulnerable
+windows_lpe_allow_candidate: false
+
 windows_lpe_supported_actions:
   - status
   - apply
+  - validate
   - reset
+
+windows_lpe_supported_validate_states:
+  - vulnerable
+  - clean
 
 windows_lpe_catalog:
   - unquoted_service_path
@@ -36,13 +48,20 @@ windows_lpe_catalog:
   - writable_program_directory
   - insecure_service_registry
 
+# Candidate techniques have a complete source contract but still require the
+# pinned WS01 live re-apply gate before promotion to implemented.
+windows_lpe_candidate_techniques:
+  - unquoted_service_path
+
 # A technique moves into this list only after apply, vulnerable-state validate,
-# reset, clean-state validate, and re-apply validation all exist.
+# reset, clean-state validate, and re-apply validation all pass on the pinned
+# WS01 build.
 windows_lpe_implemented_techniques: []
 
 # Profiles describe the intended curriculum. They may reference planned
-# techniques, but apply remains fail-closed until every selected technique is
-# present in windows_lpe_implemented_techniques.
+# techniques, but normal apply/validate/reset remains fail-closed until every
+# selected technique is implemented. Candidate testing requires both an exact
+# windows_lpe_techniques selection and windows_lpe_allow_candidate=true.
 windows_lpe_profiles:
   none: []
   service-abuse:
@@ -74,3 +93,11 @@ windows_lpe_profiles:
     - hardcoded_application_credentials
     - seimpersonate_privilege
   full-lpe: "{{ windows_lpe_catalog }}"
+
+windows_lpe_unquoted_service_path:
+  service_name: KingdomUpdaterSvc
+  display_name: GOAD Kingdoms Update Service
+  root: 'C:\Kingdom LPE'
+  service_directory: 'C:\Kingdom LPE\Unquoted Service'
+  executable: 'C:\Kingdom LPE\Unquoted Service\KingdomUpdater.exe'
+  writable_candidate: 'C:\Kingdom LPE\Unquoted.exe'
