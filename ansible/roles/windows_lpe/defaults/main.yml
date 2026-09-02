@@ -46,10 +46,12 @@ windows_lpe_catalog:
   - insecure_service_registry
 
 # The five original service techniques passed their exact current-source live
-# promotion gate on 2026-09-02. PATH search-order hijacking is the next isolated
-# candidate and remains opt-in until its own reversible live gate passes.
+# promotion gate on 2026-09-02. New source-complete techniques stay candidate
+# until their reversible live promotion gates are run later.
 windows_lpe_candidate_techniques:
   - path_search_order_hijacking
+  - scheduled_task_binary_permissions
+  - scheduled_task_directory_permissions
 
 windows_lpe_implemented_techniques:
   - unquoted_service_path
@@ -135,3 +137,14 @@ windows_lpe_path_search_order_hijacking:
   protected_directory: 'C:\Kingdom LPE\Path Search\SystemBin'
   helper_name: KingdomPathHelper.exe
   protected_helper: 'C:\Kingdom LPE\Path Search\SystemBin\KingdomPathHelper.exe'
+
+windows_lpe_scheduled_task_binary_permissions:
+  task_name: KingdomTaskBinary
+  root: 'C:\Kingdom LPE\Scheduled Task Binary'
+  executable: 'C:\Kingdom LPE\Scheduled Task Binary\KingdomTaskBinary.exe'
+
+windows_lpe_scheduled_task_directory_permissions:
+  task_name: KingdomTaskDirectory
+  root: 'C:\Kingdom LPE\Scheduled Task Directory'
+  directory: 'C:\Kingdom LPE\Scheduled Task Directory\Bin'
+  executable: 'C:\Kingdom LPE\Scheduled Task Directory\Bin\KingdomTaskDirectory.exe'
