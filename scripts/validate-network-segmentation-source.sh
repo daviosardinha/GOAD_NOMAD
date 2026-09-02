@@ -2,6 +2,7 @@
 set -euo pipefail
 
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+readonly SOURCE_GATE="${ROOT}/scripts/verify-test-source.sh"
 cd "${ROOT}"
 
 fail() {
@@ -21,6 +22,14 @@ require_file() {
     [[ -f "$1" ]] || fail "missing required file: $1"
 }
 
+# Git is the source of truth for GOAD Kingdoms. Refuse to validate a local
+# repair, dirty checkout, unpushed commit, stale branch, or divergent branch.
+# An exact detached candidate can be tested by exporting
+# GOAD_KINGDOMS_EXPECTED_COMMIT=<sha> before running this preflight.
+[[ -f "${SOURCE_GATE}" ]] || fail "source-of-truth gate is missing: ${SOURCE_GATE}"
+bash "${SOURCE_GATE}"
+pass "Git source-of-truth gate"
+
 for file in \
     goad_nomad.py \
     goad/provisioner/ansible/ansible.py \
@@ -28,6 +37,7 @@ for file in \
     scripts/provisioning-routes.sh \
     scripts/setup-vmware-networks.sh \
     scripts/check-vmware-networks.sh \
+    scripts/verify-test-source.sh \
     scripts/validate-network-segmentation.sh \
     scripts/validate-network-segmentation-runtime.sh \
     scripts/validate-network-segmentation-source.sh \
@@ -52,6 +62,7 @@ for file in \
     scripts/provisioning-routes.sh \
     scripts/setup-vmware-networks.sh \
     scripts/check-vmware-networks.sh \
+    scripts/verify-test-source.sh \
     scripts/validate-network-segmentation.sh \
     scripts/validate-network-segmentation-runtime.sh \
     scripts/validate-network-segmentation-source.sh \
@@ -91,8 +102,10 @@ fi
 # A full Ansible run owns provider finalization. The console must not call the
 # same finalizer again, otherwise a successful install enters exercise mode
 # twice. Inspect executable Python with the AST so comments/docstrings cannot
-# create false positives. The console also owns GOAD_NOMAD's human-readable
-# elapsed timer and must not delegate to the upstream time.ctime wrapper.
+# create false positives. The console also owns the legacy-compatible NOMAD
+# human-readable elapsed timer and must not delegate to the upstream time.ctime
+# wrapper. Internal NOMAD identifiers remain compatibility names during the
+# public GOAD Kingdoms rename.
 python3 - <<'PY'
 import ast
 from pathlib import Path
@@ -116,7 +129,7 @@ for node in console_tree.body:
         break
 
 if method is None:
-    raise SystemExit('GOAD_NOMAD do_provision_lab not found')
+    raise SystemExit('GOAD_NOMAD compatibility do_provision_lab not found')
 
 finalize_calls = [
     node
@@ -128,7 +141,7 @@ finalize_calls = [
     )
 ]
 if finalize_calls:
-    raise SystemExit('GOAD_NOMAD do_provision_lab performs duplicate provider finalization')
+    raise SystemExit('GOAD_NOMAD compatibility do_provision_lab performs duplicate provider finalization')
 
 legacy_super_calls = [
     node
@@ -141,7 +154,7 @@ legacy_super_calls = [
     and node.func.value.func.id == 'super'
 ]
 if legacy_super_calls:
-    raise SystemExit('GOAD_NOMAD do_provision_lab delegates to legacy upstream timer')
+    raise SystemExit('GOAD_NOMAD compatibility do_provision_lab delegates to legacy upstream timer')
 
 # Remove the function docstring before text checks so explanatory prose cannot
 # satisfy or invalidate executable-code assertions.
@@ -156,11 +169,11 @@ if (
 executable = '\n'.join(ast.unparse(node) for node in body)
 
 if 'get_current_instance_provisioner().run()' not in executable:
-    raise SystemExit('GOAD_NOMAD do_provision_lab does not invoke the provisioner directly')
+    raise SystemExit('GOAD_NOMAD compatibility do_provision_lab does not invoke the provisioner directly')
 if 'set_status(READY)' not in executable:
-    raise SystemExit('GOAD_NOMAD do_provision_lab does not set READY after successful finalization')
+    raise SystemExit('GOAD_NOMAD compatibility do_provision_lab does not set READY after successful finalization')
 if '_format_elapsed' not in executable:
-    raise SystemExit('GOAD_NOMAD do_provision_lab does not use the human-readable timer')
+    raise SystemExit('GOAD_NOMAD compatibility do_provision_lab does not use the human-readable timer')
 if 'return self._finalize_provider_provisioning()' not in ansible_source:
     raise SystemExit('Ansible full-lab run no longer owns provider finalization')
 PY
@@ -196,4 +209,4 @@ if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
 fi
 
 echo
-echo "[READY] GOAD_NOMAD network-segmentation source preflight passed."
+echo "[READY] GOAD Kingdoms network-segmentation source preflight passed."
