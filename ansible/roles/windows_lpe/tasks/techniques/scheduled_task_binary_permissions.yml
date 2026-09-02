@@ -1,0 +1,111 @@
+---
+- name: Apply scheduled task binary permissions candidate
+  ansible.windows.win_powershell:
+    script: |
+      $ErrorActionPreference = 'Stop'
+
+      $taskName = '{{ windows_lpe_scheduled_task_binary_permissions.task_name }}'
+      $root = '{{ windows_lpe_scheduled_task_binary_permissions.root }}'
+      $exe = '{{ windows_lpe_scheduled_task_binary_permissions.executable }}'
+
+      Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+      if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }
+      New-Item -ItemType Directory -Path $root -Force | Out-Null
+
+      $source = @"
+      public static class KingdomTaskBinary
+      {
+          public static void Main() { }
+      }
+      "@
+      Add-Type -TypeDefinition $source -Language CSharp -OutputAssembly $exe -OutputType ConsoleApplication
+
+      $action = New-ScheduledTaskAction -Execute $exe
+      $trigger = New-ScheduledTaskTrigger -AtStartup
+      $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+      Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Force | Out-Null
+
+      $acl = Get-Acl -LiteralPath $exe
+      $usersSid = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-32-545')
+      $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+          $usersSid,
+          [System.Security.AccessControl.FileSystemRights]::Modify,
+          [System.Security.AccessControl.AccessControlType]::Allow
+      )
+      $acl.AddAccessRule($rule) | Out-Null
+      Set-Acl -LiteralPath $exe -AclObject $acl
+
+      Write-Output 'WINDOWS_LPE_SCHEDULED_TASK_BINARY_PERMISSIONS=APPLIED'
+  when: windows_lpe_action == 'apply'
+
+- name: Reset scheduled task binary permissions candidate
+  ansible.windows.win_powershell:
+    script: |
+      $taskName = '{{ windows_lpe_scheduled_task_binary_permissions.task_name }}'
+      $root = '{{ windows_lpe_scheduled_task_binary_permissions.root }}'
+      Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+      if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }
+      Write-Output 'WINDOWS_LPE_SCHEDULED_TASK_BINARY_PERMISSIONS=RESET'
+  when: windows_lpe_action == 'reset'
+
+- name: Validate vulnerable scheduled task binary permissions state
+  ansible.windows.win_powershell:
+    script: |
+      $ErrorActionPreference = 'Stop'
+      $taskName = '{{ windows_lpe_scheduled_task_binary_permissions.task_name }}'
+      $exe = '{{ windows_lpe_scheduled_task_binary_permissions.executable }}'
+      $usersSid = 'S-1-5-32-545'
+
+      $task = Get-ScheduledTask -TaskName $taskName -ErrorAction Stop
+      if (-not $task) { throw 'KingdomTaskBinary scheduled task is missing' }
+      if ($task.Principal.UserId -notmatch '^(SYSTEM|NT AUTHORITY\\SYSTEM)$') {
+          throw "task principal=$($task.Principal.UserId)"
+      }
+      if ($task.Principal.RunLevel -ne 'Highest') { throw "task run level=$($task.Principal.RunLevel)" }
+      if ($task.Triggers.CimClass.CimClassName -notcontains 'MSFT_TaskBootTrigger') { throw 'task is not triggered at startup' }
+      $taskExe = [string]$task.Actions[0].Execute
+      if ($taskExe.Trim('"') -ine $exe) { throw "unexpected task executable=$taskExe" }
+      if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw 'scheduled task executable missing' }
+
+      $writeFound = $false
+      foreach ($ace in (Get-Acl -LiteralPath $exe).Access) {
+          try { $sid = $ace.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value } catch { continue }
+          if ($sid -ne $usersSid -or $ace.AccessControlType -ne 'Allow') { continue }
+          if (($ace.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::WriteData) -ne 0 -or
+              ($ace.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::Delete) -ne 0 -or
+              ($ace.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::ChangePermissions) -ne 0) {
+              $writeFound = $true
+          }
+      }
+      if (-not $writeFound) { throw 'BUILTIN\\Users cannot modify the SYSTEM scheduled-task executable' }
+
+      Write-Output 'WINDOWS_LPE_SCHEDULED_TASK_BINARY_PERMISSIONS=VULNERABLE'
+  register: windows_lpe_scheduled_task_binary_permissions_vulnerable
+  when:
+    - windows_lpe_action == 'apply' or (windows_lpe_action == 'validate' and windows_lpe_validate_state == 'vulnerable')
+
+- name: Show vulnerable scheduled task binary permissions validation
+  ansible.builtin.debug:
+    var: windows_lpe_scheduled_task_binary_permissions_vulnerable.output
+  when:
+    - windows_lpe_scheduled_task_binary_permissions_vulnerable is defined
+    - windows_lpe_scheduled_task_binary_permissions_vulnerable.output is defined
+
+- name: Validate clean scheduled task binary permissions state
+  ansible.windows.win_powershell:
+    script: |
+      $taskName = '{{ windows_lpe_scheduled_task_binary_permissions.task_name }}'
+      $root = '{{ windows_lpe_scheduled_task_binary_permissions.root }}'
+      if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) { throw 'KingdomTaskBinary still exists' }
+      if (Test-Path -LiteralPath $root) { throw 'scheduled-task binary lab directory still exists' }
+      Write-Output 'WINDOWS_LPE_SCHEDULED_TASK_BINARY_PERMISSIONS=CLEAN'
+  register: windows_lpe_scheduled_task_binary_permissions_clean
+  when:
+    - windows_lpe_action == 'reset' or (windows_lpe_action == 'validate' and windows_lpe_validate_state == 'clean')
+
+- name: Show clean scheduled task binary permissions validation
+  ansible.builtin.debug:
+    var: windows_lpe_scheduled_task_binary_permissions_clean.output
+  when:
+    - windows_lpe_scheduled_task_binary_permissions_clean is defined
+    - windows_lpe_scheduled_task_binary_permissions_clean.output is defined
