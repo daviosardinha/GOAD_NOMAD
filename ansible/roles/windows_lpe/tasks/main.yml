@@ -1,0 +1,58 @@
+---
+- name: Validate Windows LPE action
+  ansible.builtin.assert:
+    that:
+      - windows_lpe_action in windows_lpe_supported_actions
+    fail_msg: >-
+      windows_lpe_action must be one of {{ windows_lpe_supported_actions | join(', ') }};
+      got {{ windows_lpe_action }}
+
+- name: Validate Windows LPE profile
+  ansible.builtin.assert:
+    that:
+      - windows_lpe_profile in windows_lpe_profiles
+    fail_msg: >-
+      windows_lpe_profile must be one of {{ windows_lpe_profiles.keys() | list | join(', ') }};
+      got {{ windows_lpe_profile }}
+
+- name: Resolve requested Windows LPE techniques
+  ansible.builtin.set_fact:
+    windows_lpe_requested_techniques: "{{ windows_lpe_profiles[windows_lpe_profile] | list }}"
+
+- name: Validate Windows LPE profile catalog references
+  ansible.builtin.assert:
+    that:
+      - (windows_lpe_requested_techniques | difference(windows_lpe_catalog) | length) == 0
+    fail_msg: >-
+      profile {{ windows_lpe_profile }} references unknown techniques:
+      {{ windows_lpe_requested_techniques | difference(windows_lpe_catalog) | join(', ') }}
+
+- name: Show Windows LPE framework status
+  ansible.builtin.debug:
+    msg:
+      - "GOAD Kingdoms Windows LPE framework"
+      - "action={{ windows_lpe_action }}"
+      - "profile={{ windows_lpe_profile }}"
+      - "catalog={{ windows_lpe_catalog | length }} techniques"
+      - "implemented={{ windows_lpe_implemented_techniques | length }} techniques"
+      - "requested={{ windows_lpe_requested_techniques | join(', ') if windows_lpe_requested_techniques else 'none' }}"
+  when: windows_lpe_action == 'status'
+
+- name: Refuse apply/reset until selected techniques are implemented
+  ansible.builtin.assert:
+    that:
+      - (windows_lpe_requested_techniques | difference(windows_lpe_implemented_techniques) | length) == 0
+    fail_msg: >-
+      GOAD Kingdoms Windows LPE {{ windows_lpe_action }} is intentionally fail-closed.
+      Profile {{ windows_lpe_profile }} contains techniques that do not yet have the required
+      apply/validate/reset contract: {{ windows_lpe_requested_techniques | difference(windows_lpe_implemented_techniques) | join(', ') }}
+  when: windows_lpe_action in ['apply', 'reset']
+
+- name: Refuse empty apply/reset framework checkpoint
+  ansible.builtin.fail:
+    msg: >-
+      No Windows LPE technique implementation exists at this framework checkpoint.
+      Use windows_lpe_action=status until the first validated technique is committed.
+  when:
+    - windows_lpe_action in ['apply', 'reset']
+    - windows_lpe_implemented_techniques | length == 0
