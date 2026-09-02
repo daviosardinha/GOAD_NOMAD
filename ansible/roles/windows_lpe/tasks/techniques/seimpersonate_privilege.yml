@@ -1,0 +1,155 @@
+---
+- name: Apply SeImpersonatePrivilege candidate
+  ansible.windows.win_powershell:
+    script: |
+      $ErrorActionPreference = 'Stop'
+      $target = '{{ windows_lpe_seimpersonate_privilege.target_account }}'
+      $right = '{{ windows_lpe_seimpersonate_privilege.right }}'
+      $root = '{{ windows_lpe_seimpersonate_privilege.root }}'
+      $stateFile = '{{ windows_lpe_seimpersonate_privilege.state_file }}'
+
+      Add-Type -TypeDefinition @"
+      using System;
+      using System.ComponentModel;
+      using System.Runtime.InteropServices;
+      using System.Security.Principal;
+
+      public static class KingdomSeImpersonateRights
+      {
+          [StructLayout(LayoutKind.Sequential)] struct LSA_OBJECT_ATTRIBUTES { public int Length; public IntPtr RootDirectory; public IntPtr ObjectName; public uint Attributes; public IntPtr SecurityDescriptor; public IntPtr SecurityQualityOfService; }
+          [StructLayout(LayoutKind.Sequential)] struct LSA_UNICODE_STRING { public ushort Length; public ushort MaximumLength; public IntPtr Buffer; }
+          [DllImport("advapi32.dll")] static extern uint LsaOpenPolicy(IntPtr s, ref LSA_OBJECT_ATTRIBUTES a, uint d, out IntPtr h);
+          [DllImport("advapi32.dll")] static extern uint LsaAddAccountRights(IntPtr h, IntPtr sid, LSA_UNICODE_STRING[] r, uint c);
+          [DllImport("advapi32.dll")] static extern uint LsaRemoveAccountRights(IntPtr h, IntPtr sid, bool all, LSA_UNICODE_STRING[] r, uint c);
+          [DllImport("advapi32.dll")] static extern uint LsaNtStatusToWinError(uint s);
+          [DllImport("advapi32.dll")] static extern uint LsaClose(IntPtr h);
+
+          static void Change(string sidText, string right, bool remove) {
+              var sid = new SecurityIdentifier(sidText); byte[] b = new byte[sid.BinaryLength]; sid.GetBinaryForm(b,0); IntPtr sp = Marshal.AllocHGlobal(b.Length); Marshal.Copy(b,0,sp,b.Length);
+              IntPtr rp = Marshal.StringToHGlobalUni(right); var ur = new LSA_UNICODE_STRING { Buffer=rp, Length=(ushort)(right.Length*2), MaximumLength=(ushort)((right.Length+1)*2) };
+              var oa = new LSA_OBJECT_ATTRIBUTES(); oa.Length = Marshal.SizeOf(typeof(LSA_OBJECT_ATTRIBUTES)); IntPtr ph; uint st = LsaOpenPolicy(IntPtr.Zero, ref oa, 0x810, out ph); if (st != 0) throw new Win32Exception((int)LsaNtStatusToWinError(st));
+              try { st = remove ? LsaRemoveAccountRights(ph, sp, false, new [] { ur }, 1) : LsaAddAccountRights(ph, sp, new [] { ur }, 1); if (st != 0) throw new Win32Exception((int)LsaNtStatusToWinError(st)); }
+              finally { LsaClose(ph); Marshal.FreeHGlobal(rp); Marshal.FreeHGlobal(sp); }
+          }
+          public static void Add(string sidText, string right) { Change(sidText, right, false); }
+          public static void Remove(string sidText, string right) { Change(sidText, right, true); }
+      }
+      "@
+
+      function Test-AccountRight([string] $Sid, [string] $Account, [string] $Right) {
+          $tmp = Join-Path $env:TEMP ("kingdom-rights-{0}.inf" -f ([guid]::NewGuid().ToString('N')))
+          try {
+              & secedit.exe /export /cfg $tmp /areas USER_RIGHTS | Out-Null
+              if ($LASTEXITCODE -ne 0) { throw "secedit export failed exit=$LASTEXITCODE" }
+              $line = Get-Content -LiteralPath $tmp | Where-Object { $_ -match ('^\s*' + [regex]::Escape($Right) + '\s*=') } | Select-Object -First 1
+              if (-not $line) { return $false }
+              $entries = @(($line -split '=',2)[1] -split ',' | ForEach-Object { $_.Trim() })
+              return ($entries -contains "*$Sid") -or ($entries -contains $Sid) -or ($entries -contains $Account)
+          } finally { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+      }
+
+      $sid = (New-Object System.Security.Principal.NTAccount($target)).Translate([System.Security.Principal.SecurityIdentifier]).Value
+      New-Item -ItemType Directory -Path $root -Force | Out-Null
+      if (Test-Path -LiteralPath $stateFile) {
+          $state = Get-Content -LiteralPath $stateFile -Raw | ConvertFrom-Json
+      } else {
+          $state = [pscustomobject]@{ target=$target; sid=$sid; right=$right; preexisting=[bool](Test-AccountRight $sid $target $right) }
+          $state | ConvertTo-Json | Set-Content -LiteralPath $stateFile -Encoding UTF8
+      }
+      if (-not (Test-AccountRight $sid $target $right)) { [KingdomSeImpersonateRights]::Add($sid, $right) }
+      if (-not (Test-AccountRight $sid $target $right)) { throw "$right was not assigned to $target" }
+      Write-Output 'WINDOWS_LPE_SEIMPERSONATE_PRIVILEGE=APPLIED'
+  when: windows_lpe_action == 'apply'
+
+- name: Reset SeImpersonatePrivilege candidate
+  ansible.windows.win_powershell:
+    script: |
+      $ErrorActionPreference = 'Stop'
+      $target = '{{ windows_lpe_seimpersonate_privilege.target_account }}'
+      $right = '{{ windows_lpe_seimpersonate_privilege.right }}'
+      $root = '{{ windows_lpe_seimpersonate_privilege.root }}'
+      $stateFile = '{{ windows_lpe_seimpersonate_privilege.state_file }}'
+
+      Add-Type -TypeDefinition @"
+      using System;
+      using System.ComponentModel;
+      using System.Runtime.InteropServices;
+      using System.Security.Principal;
+      public static class KingdomSeImpersonateRightsReset
+      {
+          [StructLayout(LayoutKind.Sequential)] struct LSA_OBJECT_ATTRIBUTES { public int Length; public IntPtr RootDirectory; public IntPtr ObjectName; public uint Attributes; public IntPtr SecurityDescriptor; public IntPtr SecurityQualityOfService; }
+          [StructLayout(LayoutKind.Sequential)] struct LSA_UNICODE_STRING { public ushort Length; public ushort MaximumLength; public IntPtr Buffer; }
+          [DllImport("advapi32.dll")] static extern uint LsaOpenPolicy(IntPtr s, ref LSA_OBJECT_ATTRIBUTES a, uint d, out IntPtr h);
+          [DllImport("advapi32.dll")] static extern uint LsaRemoveAccountRights(IntPtr h, IntPtr sid, bool all, LSA_UNICODE_STRING[] r, uint c);
+          [DllImport("advapi32.dll")] static extern uint LsaNtStatusToWinError(uint s);
+          [DllImport("advapi32.dll")] static extern uint LsaClose(IntPtr h);
+          public static void Remove(string sidText, string right) {
+              var sid = new SecurityIdentifier(sidText); byte[] b = new byte[sid.BinaryLength]; sid.GetBinaryForm(b,0); IntPtr sp = Marshal.AllocHGlobal(b.Length); Marshal.Copy(b,0,sp,b.Length);
+              IntPtr rp = Marshal.StringToHGlobalUni(right); var ur = new LSA_UNICODE_STRING { Buffer=rp, Length=(ushort)(right.Length*2), MaximumLength=(ushort)((right.Length+1)*2) };
+              var oa = new LSA_OBJECT_ATTRIBUTES(); oa.Length = Marshal.SizeOf(typeof(LSA_OBJECT_ATTRIBUTES)); IntPtr ph; uint st = LsaOpenPolicy(IntPtr.Zero, ref oa, 0x810, out ph); if (st != 0) throw new Win32Exception((int)LsaNtStatusToWinError(st));
+              try { st = LsaRemoveAccountRights(ph, sp, false, new [] { ur }, 1); if (st != 0) throw new Win32Exception((int)LsaNtStatusToWinError(st)); }
+              finally { LsaClose(ph); Marshal.FreeHGlobal(rp); Marshal.FreeHGlobal(sp); }
+          }
+      }
+      "@
+
+      function Test-AccountRight([string] $Sid, [string] $Account, [string] $Right) {
+          $tmp = Join-Path $env:TEMP ("kingdom-rights-{0}.inf" -f ([guid]::NewGuid().ToString('N')))
+          try { & secedit.exe /export /cfg $tmp /areas USER_RIGHTS | Out-Null; $line = Get-Content $tmp | Where-Object { $_ -match ('^\s*' + [regex]::Escape($Right) + '\s*=') } | Select-Object -First 1; if (-not $line) { return $false }; $e = @(($line -split '=',2)[1] -split ',' | ForEach-Object { $_.Trim() }); return ($e -contains "*$Sid") -or ($e -contains $Sid) -or ($e -contains $Account) }
+          finally { Remove-Item $tmp -Force -ErrorAction SilentlyContinue }
+      }
+
+      if (Test-Path -LiteralPath $stateFile) {
+          $state = Get-Content -LiteralPath $stateFile -Raw | ConvertFrom-Json
+          if (-not [bool]$state.preexisting -and (Test-AccountRight $state.sid $target $right)) {
+              [KingdomSeImpersonateRightsReset]::Remove([string]$state.sid, $right)
+              if (Test-AccountRight $state.sid $target $right) { throw "$right still assigned after reset" }
+          }
+      }
+      if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }
+      Write-Output 'WINDOWS_LPE_SEIMPERSONATE_PRIVILEGE=RESET'
+  when: windows_lpe_action == 'reset'
+
+- name: Validate vulnerable SeImpersonatePrivilege state
+  ansible.windows.win_powershell:
+    script: |
+      $target = '{{ windows_lpe_seimpersonate_privilege.target_account }}'
+      $right = '{{ windows_lpe_seimpersonate_privilege.right }}'
+      $stateFile = '{{ windows_lpe_seimpersonate_privilege.state_file }}'
+      if (-not (Test-Path -LiteralPath $stateFile -PathType Leaf)) { throw 'SeImpersonatePrivilege state marker missing' }
+      $sid = (New-Object System.Security.Principal.NTAccount($target)).Translate([System.Security.Principal.SecurityIdentifier]).Value
+      $tmp = Join-Path $env:TEMP ("kingdom-rights-{0}.inf" -f ([guid]::NewGuid().ToString('N')))
+      try {
+          & secedit.exe /export /cfg $tmp /areas USER_RIGHTS | Out-Null
+          $line = Get-Content $tmp | Where-Object { $_ -match ('^\s*' + [regex]::Escape($right) + '\s*=') } | Select-Object -First 1
+          $entries = if ($line) { @(($line -split '=',2)[1] -split ',' | ForEach-Object { $_.Trim() }) } else { @() }
+          if (($entries -notcontains "*$sid") -and ($entries -notcontains $sid) -and ($entries -notcontains $target)) { throw "$right is not assigned to $target" }
+      } finally { Remove-Item $tmp -Force -ErrorAction SilentlyContinue }
+      Write-Output 'WINDOWS_LPE_SEIMPERSONATE_PRIVILEGE=VULNERABLE'
+  register: windows_lpe_seimpersonate_privilege_vulnerable
+  when:
+    - windows_lpe_action == 'apply' or (windows_lpe_action == 'validate' and windows_lpe_validate_state == 'vulnerable')
+
+- name: Show vulnerable SeImpersonatePrivilege validation
+  ansible.builtin.debug:
+    var: windows_lpe_seimpersonate_privilege_vulnerable.output
+  when:
+    - windows_lpe_seimpersonate_privilege_vulnerable is defined
+    - windows_lpe_seimpersonate_privilege_vulnerable.output is defined
+
+- name: Validate clean SeImpersonatePrivilege state
+  ansible.windows.win_powershell:
+    script: |
+      $root = '{{ windows_lpe_seimpersonate_privilege.root }}'
+      if (Test-Path -LiteralPath $root) { throw 'SeImpersonatePrivilege scenario state directory still exists' }
+      Write-Output 'WINDOWS_LPE_SEIMPERSONATE_PRIVILEGE=CLEAN'
+  register: windows_lpe_seimpersonate_privilege_clean
+  when:
+    - windows_lpe_action == 'reset' or (windows_lpe_action == 'validate' and windows_lpe_validate_state == 'clean')
+
+- name: Show clean SeImpersonatePrivilege validation
+  ansible.builtin.debug:
+    var: windows_lpe_seimpersonate_privilege_clean.output
+  when:
+    - windows_lpe_seimpersonate_privilege_clean is defined
+    - windows_lpe_seimpersonate_privilege_clean.output is defined
