@@ -10,7 +10,6 @@
       $exe = '{{ windows_lpe_insecure_service_registry.executable }}'
       $helperDir = '{{ windows_lpe_insecure_service_registry.helper_directory }}'
       $helper = '{{ windows_lpe_insecure_service_registry.helper_executable }}'
-      $regPath = '{{ windows_lpe_insecure_service_registry.registry_key }}'
       $regSubkey = '{{ windows_lpe_insecure_service_registry.registry_subkey }}'
       $valueName = '{{ windows_lpe_insecure_service_registry.registry_value }}'
       if ($valueName -ne 'HelperPath') { throw "unexpected insecure-service registry value contract=$valueName" }
@@ -21,7 +20,24 @@
           & sc.exe delete $name | Out-Null
           Start-Sleep -Milliseconds 750
       }
-      Remove-Item -LiteralPath $regPath -Recurse -Force -ErrorAction SilentlyContinue
+
+      # Use the .NET registry API instead of the PowerShell registry provider.
+      # On this WS01 image Get-Acl against HKLM:\... can report PathNotFound even
+      # immediately after a successful New-ItemProperty. Registry64 also keeps the
+      # scenario deterministic regardless of the WinRM host process bitness.
+      $base = [Microsoft.Win32.RegistryKey]::OpenBaseKey(
+          [Microsoft.Win32.RegistryHive]::LocalMachine,
+          [Microsoft.Win32.RegistryView]::Registry64
+      )
+      try {
+          $parent = $base.OpenSubKey('SOFTWARE\GOAD Kingdoms', $true)
+          if ($parent) {
+              try { $parent.DeleteSubKeyTree('KingdomConfigSvc', $false) } finally { $parent.Close() }
+          }
+      } finally {
+          $base.Close()
+      }
+
       if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }
       New-Item -ItemType Directory -Path $serviceDir -Force | Out-Null
       New-Item -ItemType Directory -Path $helperDir -Force | Out-Null
@@ -38,7 +54,8 @@
           {
               try
               {
-                  using (RegistryKey key = Registry.LocalMachine.OpenSubKey(@"$regSubkey"))
+                  using (RegistryKey baseKey = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64))
+                  using (RegistryKey key = baseKey.OpenSubKey(@"$regSubkey"))
                   {
                       string helper = key == null ? null : key.GetValue("$valueName") as string;
                       if (!String.IsNullOrWhiteSpace(helper))
@@ -64,21 +81,33 @@
       "@
       Add-Type -TypeDefinition $helperSource -Language CSharp -OutputAssembly $helper -OutputType ConsoleApplication
 
-      New-Item -Path 'HKLM:\SOFTWARE' -Name 'GOAD Kingdoms' -Force | Out-Null
-      New-Item -Path 'HKLM:\SOFTWARE\GOAD Kingdoms' -Name 'KingdomConfigSvc' -Force | Out-Null
-      New-ItemProperty -LiteralPath $regPath -Name $valueName -Value $helper -PropertyType String -Force | Out-Null
-
-      $usersSid = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-32-545')
-      $regAcl = Get-Acl -LiteralPath $regPath
-      $regRule = New-Object System.Security.AccessControl.RegistryAccessRule(
-          $usersSid,
-          [System.Security.AccessControl.RegistryRights]::SetValue,
-          [System.Security.AccessControl.InheritanceFlags]::None,
-          [System.Security.AccessControl.PropagationFlags]::None,
-          [System.Security.AccessControl.AccessControlType]::Allow
+      $base = [Microsoft.Win32.RegistryKey]::OpenBaseKey(
+          [Microsoft.Win32.RegistryHive]::LocalMachine,
+          [Microsoft.Win32.RegistryView]::Registry64
       )
-      $regAcl.AddAccessRule($regRule) | Out-Null
-      Set-Acl -LiteralPath $regPath -AclObject $regAcl
+      try {
+          $key = $base.CreateSubKey($regSubkey, [Microsoft.Win32.RegistryKeyPermissionCheck]::ReadWriteSubTree)
+          if (-not $key) { throw "failed to create HKLM\$regSubkey" }
+          try {
+              $key.SetValue($valueName, $helper, [Microsoft.Win32.RegistryValueKind]::String)
+
+              $usersSid = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-32-545')
+              $security = $key.GetAccessControl()
+              $regRule = New-Object System.Security.AccessControl.RegistryAccessRule(
+                  $usersSid,
+                  [System.Security.AccessControl.RegistryRights]::SetValue,
+                  [System.Security.AccessControl.InheritanceFlags]::None,
+                  [System.Security.AccessControl.PropagationFlags]::None,
+                  [System.Security.AccessControl.AccessControlType]::Allow
+              )
+              $security.AddAccessRule($regRule) | Out-Null
+              $key.SetAccessControl($security)
+          } finally {
+              $key.Close()
+          }
+      } finally {
+          $base.Close()
+      }
 
       New-Service -Name $name -BinaryPathName ('"{0}"' -f $exe) -DisplayName $display -StartupType Manual | Out-Null
       $sddl = 'D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWLOCRRC;;;IU)(A;;CCLCSWLOCRRC;;;SU)(A;;RPWP;;;BU)'
@@ -97,14 +126,28 @@
     script: |
       $name = '{{ windows_lpe_insecure_service_registry.service_name }}'
       $root = '{{ windows_lpe_insecure_service_registry.root }}'
-      $regPath = '{{ windows_lpe_insecure_service_registry.registry_key }}'
+      $regSubkey = '{{ windows_lpe_insecure_service_registry.registry_subkey }}'
+
       $existing = Get-Service -Name $name -ErrorAction SilentlyContinue
       if ($existing) {
           Stop-Service -Name $name -Force -ErrorAction SilentlyContinue
           & sc.exe delete $name | Out-Null
           Start-Sleep -Milliseconds 750
       }
-      Remove-Item -LiteralPath $regPath -Recurse -Force -ErrorAction SilentlyContinue
+
+      $base = [Microsoft.Win32.RegistryKey]::OpenBaseKey(
+          [Microsoft.Win32.RegistryHive]::LocalMachine,
+          [Microsoft.Win32.RegistryView]::Registry64
+      )
+      try {
+          $parent = $base.OpenSubKey('SOFTWARE\GOAD Kingdoms', $true)
+          if ($parent) {
+              try { $parent.DeleteSubKeyTree('KingdomConfigSvc', $false) } finally { $parent.Close() }
+          }
+      } finally {
+          $base.Close()
+      }
+
       if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }
       Write-Output 'WINDOWS_LPE_INSECURE_SERVICE_REGISTRY=RESET'
   when: windows_lpe_action == 'reset'
@@ -116,7 +159,7 @@
       $name = '{{ windows_lpe_insecure_service_registry.service_name }}'
       $exe = '{{ windows_lpe_insecure_service_registry.executable }}'
       $helper = '{{ windows_lpe_insecure_service_registry.helper_executable }}'
-      $regPath = '{{ windows_lpe_insecure_service_registry.registry_key }}'
+      $regSubkey = '{{ windows_lpe_insecure_service_registry.registry_subkey }}'
       $valueName = '{{ windows_lpe_insecure_service_registry.registry_value }}'
       $usersSid = 'S-1-5-32-545'
 
@@ -126,15 +169,32 @@
       if (-not $service.PathName.TrimStart().StartsWith('"')) { throw 'service path is not quoted' }
       if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw 'service executable missing' }
       if (-not (Test-Path -LiteralPath $helper -PathType Leaf)) { throw 'protected helper missing' }
-      if ((Get-ItemProperty -LiteralPath $regPath -Name $valueName -ErrorAction Stop).$valueName -ne $helper) { throw 'unexpected configured helper path' }
 
-      $setValue = $false
-      foreach ($ace in (Get-Acl -LiteralPath $regPath).Access) {
-          try { $sid = $ace.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value } catch { continue }
-          if ($sid -ne $usersSid -or $ace.AccessControlType -ne 'Allow') { continue }
-          if (($ace.RegistryRights -band [System.Security.AccessControl.RegistryRights]::SetValue) -ne 0) { $setValue = $true }
+      $base = [Microsoft.Win32.RegistryKey]::OpenBaseKey(
+          [Microsoft.Win32.RegistryHive]::LocalMachine,
+          [Microsoft.Win32.RegistryView]::Registry64
+      )
+      try {
+          $key = $base.OpenSubKey($regSubkey, [Microsoft.Win32.RegistryKeyPermissionCheck]::ReadSubTree)
+          if (-not $key) { throw "custom registry key missing: HKLM\$regSubkey" }
+          try {
+              if ($key.GetValue($valueName, $null) -ne $helper) { throw 'unexpected configured helper path' }
+
+              $setValue = $false
+              $security = $key.GetAccessControl([System.Security.AccessControl.AccessControlSections]::Access)
+              $rules = $security.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])
+              foreach ($ace in $rules) {
+                  if ($ace.IdentityReference.Value -ne $usersSid) { continue }
+                  if ($ace.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow) { continue }
+                  if (($ace.RegistryRights -band [System.Security.AccessControl.RegistryRights]::SetValue) -ne 0) { $setValue = $true }
+              }
+              if (-not $setValue) { throw 'BUILTIN\Users lacks SetValue on custom privileged service configuration key' }
+          } finally {
+              $key.Close()
+          }
+      } finally {
+          $base.Close()
       }
-      if (-not $setValue) { throw 'BUILTIN\\Users lacks SetValue on custom privileged service configuration key' }
 
       foreach ($path in @($exe, $helper)) {
           foreach ($ace in (Get-Acl -LiteralPath $path).Access) {
@@ -164,9 +224,24 @@
     script: |
       $name = '{{ windows_lpe_insecure_service_registry.service_name }}'
       $root = '{{ windows_lpe_insecure_service_registry.root }}'
-      $regPath = '{{ windows_lpe_insecure_service_registry.registry_key }}'
+      $regSubkey = '{{ windows_lpe_insecure_service_registry.registry_subkey }}'
+
       if (Get-Service -Name $name -ErrorAction SilentlyContinue) { throw 'KingdomConfigSvc still exists' }
-      if (Test-Path -LiteralPath $regPath) { throw 'custom insecure service registry key still exists' }
+
+      $base = [Microsoft.Win32.RegistryKey]::OpenBaseKey(
+          [Microsoft.Win32.RegistryHive]::LocalMachine,
+          [Microsoft.Win32.RegistryView]::Registry64
+      )
+      try {
+          $key = $base.OpenSubKey($regSubkey)
+          if ($key) {
+              $key.Close()
+              throw 'custom insecure service registry key still exists'
+          }
+      } finally {
+          $base.Close()
+      }
+
       if (Test-Path -LiteralPath $root) { throw 'insecure service registry lab directory still exists' }
       Write-Output 'WINDOWS_LPE_INSECURE_SERVICE_REGISTRY=CLEAN'
   register: windows_lpe_insecure_service_registry_clean
