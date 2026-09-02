@@ -64,6 +64,10 @@ def yaml_list(text, key):
     return [line.strip()[2:].strip() for line in match.group(1).splitlines()]
 
 
+def yaml_empty_list(text, key):
+    return re.search(rf'(?m)^{re.escape(key)}:\s*\[\]\s*$', text) is not None
+
+
 expected_catalog = [
     'unquoted_service_path',
     'weak_service_dacl',
@@ -95,9 +99,6 @@ service_batch = [
     'service_dll_hijacking',
 ]
 
-candidates_expected = service_batch[1:]
-implemented_expected = ['unquoted_service_path']
-
 defaults = Path('ansible/roles/windows_lpe/defaults/main.yml').read_text()
 tasks = Path('ansible/roles/windows_lpe/tasks/main.yml').read_text()
 playbook = Path('ansible/windows-lpe.yml').read_text()
@@ -107,10 +108,10 @@ single_runtime = Path('scripts/validate-windows-lpe-unquoted-service-path-runtim
 
 if yaml_list(defaults, 'windows_lpe_catalog') != expected_catalog:
     fail('Windows LPE catalog does not match the 20-technique contract')
-if yaml_list(defaults, 'windows_lpe_candidate_techniques') != candidates_expected:
-    fail('service batch candidate set is incorrect')
-if yaml_list(defaults, 'windows_lpe_implemented_techniques') != implemented_expected:
-    fail('unquoted_service_path was not promoted exactly once')
+if yaml_list(defaults, 'windows_lpe_candidate_techniques') != service_batch:
+    fail('current service batch candidate set is incorrect')
+if not yaml_empty_list(defaults, 'windows_lpe_implemented_techniques'):
+    fail('current batch-safe source must remain unimplemented until its live batch gate passes')
 
 for profile in (
     'none', 'service-abuse', 'credential-hunting',
@@ -124,8 +125,7 @@ for token in ('hosts: ws01', 'role: windows_lpe'):
         fail(f'Windows LPE playbook missing: {token}')
 
 for technique_id in service_batch:
-    include_token = f'techniques/{technique_id}.yml'
-    if include_token not in tasks:
+    if f'techniques/{technique_id}.yml' not in tasks:
         fail(f'controller does not dispatch {technique_id}')
 
 marker_contracts = {
@@ -144,12 +144,7 @@ for technique_id, marker in marker_contracts.items():
             fail(f'{technique_id} lifecycle marker missing: {token}')
     if 'LocalSystem' not in source:
         fail(f'{technique_id} does not validate a privileged service identity')
-    for forbidden in (
-        'Set-MpPreference',
-        'Set-NetFirewallProfile',
-        'DisableAntiSpyware',
-        'EnableLUA = 0',
-    ):
+    for forbidden in ('Set-MpPreference', 'Set-NetFirewallProfile', 'DisableAntiSpyware', 'EnableLUA = 0'):
         if forbidden.lower() in source.lower():
             fail(f'{technique_id} weakens unrelated security controls: {forbidden}')
 
@@ -186,24 +181,24 @@ for token in (
     '[READY] unquoted_service_path live promotion gate passed.',
 ):
     if token not in single_runtime:
-        fail(f'original unquoted-service proof gate regressed: {token}')
+        fail(f'original engine-proof gate regressed: {token}')
 
 for technique_id in expected_catalog:
     if f'`{technique_id}`' not in catalog_doc:
         fail(f'catalog documentation missing technique: {technique_id}')
 
-if '| `unquoted_service_path` | Services | **Implemented** |' not in catalog_doc:
-    fail('catalog does not record unquoted_service_path promotion')
-for technique_id in candidates_expected:
+for technique_id in service_batch:
     if not re.search(rf'\| `{re.escape(technique_id)}` \|[^\n]*\| \*\*Candidate\*\* \|', catalog_doc):
-        fail(f'catalog does not mark {technique_id} as Candidate')
+        fail(f'catalog does not mark current {technique_id} source as Candidate')
 
 if 'windows_lpe_allow_candidate=true' not in catalog_doc:
     fail('catalog does not document explicit candidate opt-in')
 if 'service batch live promotion gate' not in catalog_doc.lower():
     fail('catalog does not document the service batch promotion lifecycle')
+if 'batch-safe' not in catalog_doc.lower():
+    fail('catalog does not explain why unquoted_service_path requires current-source revalidation')
 PY
-pass 'promotion, service-batch lifecycle and fail-closed controller contract'
+pass 'service-batch candidate lifecycle and fail-closed controller contract'
 
 git diff --check
 pass 'Git whitespace check'
