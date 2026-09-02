@@ -74,9 +74,13 @@ grep -Eiq '^ethernet1\.connectiontype[[:space:]]*=[[:space:]]*"custom"' "${VMX}"
 grep -Eiq '^ethernet1\.vnet[[:space:]]*=[[:space:]]*"vmnet10"' "${VMX}" || fail 'WS01 exercise NIC is not attached to vmnet10'
 pass "WS01 persistent two-NIC exercise layout"
 
-ping -c 2 -W 2 10.4.10.31 >/dev/null || fail 'WS01 is not reachable from NORTH'
-timeout 3 nc -zw2 10.4.10.31 3389 || fail 'WS01 RDP is not reachable from NORTH'
-pass "WS01 NORTH reachability and RDP foothold service"
+# Windows Firewall remains enabled on the clean WS01 baseline, so ICMP echo is
+# not a valid reachability contract. Prove NORTH connectivity using the actual
+# services required by the exercise and management paths instead.
+command -v nc >/dev/null 2>&1 || fail 'nc is required for WS01 TCP reachability validation'
+timeout 3 nc -zw2 10.4.10.31 3389 >/dev/null 2>&1 || fail 'WS01 RDP is not reachable from NORTH'
+timeout 3 nc -zw2 10.4.10.31 5986 >/dev/null 2>&1 || fail 'WS01 WinRM HTTPS is not reachable from NORTH'
+pass "WS01 NORTH TCP reachability, RDP foothold and WinRM management services"
 
 ANSIBLE_PLAYBOOK="$(find_ansible_playbook || true)"
 [[ -n "${ANSIBLE_PLAYBOOK}" ]] || fail 'ansible-playbook was not found'
