@@ -36,8 +36,8 @@ Candidate techniques require an exact `windows_lpe_techniques` selection plus `w
 | `hardcoded_application_credentials` | Credentials | **Candidate** | Readable application config contains a local-admin service credential |
 | `stored_runas_credentials` | Credentials | Planned | Stored RunAs credential scenario |
 | `stored_winlogon_credentials` | Credentials / Registry | **Candidate** | Plaintext Winlogon DefaultPassword for a dedicated local administrator |
-| `sebackup_privilege` | User rights | Planned | Assigned privilege scenario |
-| `seimpersonate_privilege` | User rights / Tokens | Planned | Assigned token-impersonation privilege scenario |
+| `sebackup_privilege` | User rights | **Candidate** | `NORTH\\rickon.stark` receives SeBackupPrivilege through a scoped LSA account-right assignment |
+| `seimpersonate_privilege` | User rights / Tokens | **Candidate** | `NORTH\\rickon.stark` receives SeImpersonatePrivilege through a scoped LSA account-right assignment |
 | `writable_program_directory` | Filesystem / Services | **Candidate** | Protected LocalSystem service binary is replaceable through writable Program Files directory rights |
 | `insecure_service_registry` | Registry / Services | **Candidate** | Users can alter a custom registry value consumed by a LocalSystem service as an executable path |
 
@@ -47,34 +47,42 @@ The deterministic core target remains 20 techniques. Patch/build-dependent kerne
 
 The first five service techniques passed the exact current-source live promotion gate on 2026-09-02 with `unreachable=0` and `failed=0`, ending applied/vulnerable for training.
 
-## Current candidate set
+## Current incremental state
 
-Already applied during incremental construction:
+The following nine candidates have now passed their incremental apply + vulnerable-state validation and are intentionally left live on WS01:
 
 ```text
 path_search_order_hijacking
 scheduled_task_binary_permissions
 scheduled_task_directory_permissions
 unattend_credentials
+powershell_history_credentials
 hardcoded_application_credentials
 stored_winlogon_credentials
-```
-
-The next incremental batch adds:
-
-```text
-powershell_history_credentials
 writable_program_directory
 insecure_service_registry
 ```
 
-`powershell_history_credentials` prefers the actual `NORTH\\rickon.stark` profile when that profile already exists. A freshly built WS01 may not yet have a `ProfileList` entry for Rickon, so the candidate now falls back to a dedicated stale profile-shaped artifact under `C:\Users\kingdom.pshistory`. Only that managed fallback history tree is made readable to ordinary users. Reset removes the exact injected line from a real profile, or deletes the marked fallback profile when the fallback path was used, then removes the dedicated training account. It never creates or modifies Rickon's `ProfileList` entry.
+Together with the five implemented service scenarios, that leaves **14 live Windows LPE scenarios** on WS01 before the token-rights batch is applied.
 
-`writable_program_directory` creates a dedicated manual LocalSystem service under `C:\Program Files\Kingdom Agent`. The executable itself is protected and only readable by Users, while the containing directory grants create/delete-child capability. Users can START/STOP the service but cannot reconfigure it, keeping this distinct from the weak-service-DACL and direct-writable-binary scenarios.
+`powershell_history_credentials` prefers the actual `NORTH\\rickon.stark` profile when that profile already exists. A freshly built WS01 may not yet have a `ProfileList` entry for Rickon, so the candidate falls back to a dedicated stale profile-shaped artifact under `C:\Users\kingdom.pshistory`. It never creates or modifies Rickon's `ProfileList` entry.
 
-`insecure_service_registry` creates a dedicated LocalSystem service whose protected binary reads `HelperPath` from `HKLM:\SOFTWARE\GOAD Kingdoms\KingdomConfigSvc`. BUILTIN\\Users receive only `SetValue` on that custom configuration key. The service executable and legitimate helper remain non-writable, separating this from the existing SCM service-registry weakness.
+`insecure_service_registry` uses the native .NET Registry64 view for its dedicated `HelperPath` key so the scenario is deterministic across the WinRM/PowerShell host architecture.
 
-All candidate resets are scoped to their own artifacts/accounts/services and do not reset previously installed scenarios.
+## Next candidate batch — token/user rights
+
+The next incremental batch contains:
+
+```text
+sebackup_privilege
+seimpersonate_privilege
+```
+
+Both use the Windows LSA account-right APIs to add only the exact right to `NORTH\\rickon.stark`. Each scenario records whether that right existed before GOAD Kingdoms touched it. Reset therefore removes the right only when the lab added it and preserves a genuinely pre-existing assignment.
+
+The vulnerable-state gate validates the account-right assignment from the local security policy. A **fresh interactive logon token is required before manual training** because Windows does not retroactively add newly assigned privileges to an already-issued user token.
+
+All candidate resets remain scoped to their own artifacts/accounts/services/rights and do not reset previously installed scenarios.
 
 Candidates remain **Candidate** until their current committed source passes the reversible live gate:
 
@@ -84,22 +92,20 @@ apply -> vulnerable -> reset -> clean -> re-apply -> vulnerable
 
 ## Remaining planned techniques
 
-After this batch the remaining planned set is:
+After the token-rights batch, the remaining planned set is:
 
 ```text
 always_install_elevated
 registry_run_keys
 writable_startup_folder
 stored_runas_credentials
-sebackup_privilege
-seimpersonate_privilege
 ```
 
 Current checkpoint:
 
 - 20-technique catalog committed;
 - five Service Batch 1 techniques are **Implemented**;
-- nine additional source-complete techniques are **Candidate**;
-- six techniques remain Planned;
+- eleven additional source-complete techniques are **Candidate**;
+- four techniques remain Planned;
 - normal profiles remain fail-closed while they include candidate/planned members;
 - Defender, UAC and Windows Firewall are not globally weakened.
