@@ -117,6 +117,9 @@
 - name: Manage PATH search-order hijacking candidate
   ansible.builtin.include_tasks: techniques/path_search_order_hijacking.yml
   when: [windows_lpe_action != 'status', "'path_search_order_hijacking' in windows_lpe_requested_techniques"]
+- name: Manage AlwaysInstallElevated candidate
+  ansible.builtin.include_tasks: techniques/always_install_elevated.yml
+  when: [windows_lpe_action != 'status', "'always_install_elevated' in windows_lpe_requested_techniques"]
 - name: Manage scheduled task binary permissions candidate
   ansible.builtin.include_tasks: techniques/scheduled_task_binary_permissions.yml
   when: [windows_lpe_action != 'status', "'scheduled_task_binary_permissions' in windows_lpe_requested_techniques"]
@@ -132,6 +135,9 @@
 - name: Manage hardcoded application credential candidate
   ansible.builtin.include_tasks: techniques/hardcoded_application_credentials.yml
   when: [windows_lpe_action != 'status', "'hardcoded_application_credentials' in windows_lpe_requested_techniques"]
+- name: Manage stored RunAs credential candidate
+  ansible.builtin.include_tasks: techniques/stored_runas_credentials.yml
+  when: [windows_lpe_action != 'status', "'stored_runas_credentials' in windows_lpe_requested_techniques"]
 - name: Manage stored Winlogon credential candidate
   ansible.builtin.include_tasks: techniques/stored_winlogon_credentials.yml
   when: [windows_lpe_action != 'status', "'stored_winlogon_credentials' in windows_lpe_requested_techniques"]
