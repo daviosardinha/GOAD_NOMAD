@@ -96,28 +96,54 @@ cat > "${TMP_PLAYBOOK}" <<'YAML'
         script: |
           $ErrorActionPreference = 'Stop'
           $start = (Get-Date).AddHours(-12)
-          $events = Get-WinEvent -FilterHashtable @{
+          $events = @(Get-WinEvent -FilterHashtable @{
               LogName='System'
               Id=1074,6006,6008,41
               StartTime=$start
           } -ErrorAction SilentlyContinue |
               Sort-Object TimeCreated -Descending |
-              Select-Object -First 20 TimeCreated, Id, ProviderName, LevelDisplayName, Message
+              Select-Object -First 20 TimeCreated, Id, ProviderName, LevelDisplayName, Message)
 
-          $license = Get-CimInstance SoftwareLicensingProduct -ErrorAction SilentlyContinue |
+          $license = @(Get-CimInstance SoftwareLicensingProduct -ErrorAction SilentlyContinue |
               Where-Object { $_.Name -like 'Windows*' -and $_.PartialProductKey } |
-              Select-Object Name, Description, LicenseStatus, GracePeriodRemaining, PartialProductKey
+              Select-Object Name, Description, LicenseStatus, GracePeriodRemaining, PartialProductKey)
+
+          $latest1074 = $events | Where-Object Id -eq 1074 | Select-Object -First 1
+          $unexpected = $events | Where-Object { $_.Id -in 41,6008 } | Select-Object -First 1
+          $classification = 'UNKNOWN_CLEAN_SHUTDOWN'
+
+          if ($latest1074) {
+              $message = [string]$latest1074.Message
+              if ($message -match '(?i)wlms\.exe|Windows License Monitoring') {
+                  $classification = 'WINDOWS_LICENSING'
+              }
+              elseif ($message -match '(?i)UsoClient|MoUsoCoreWorker|TiWorker|Windows Update|svchost\.exe') {
+                  $classification = 'WINDOWS_UPDATE_OR_SERVICING'
+              }
+              elseif ($message -match '(?i)shutdown\.exe|powershell\.exe|pwsh\.exe|cmd\.exe') {
+                  $classification = 'EXPLICIT_PROCESS_REQUEST'
+              }
+              else {
+                  $classification = 'GUEST_REQUESTED_OTHER'
+              }
+          }
+          elseif ($unexpected) {
+              $classification = 'UNEXPECTED_GUEST_OR_HOST_EVENT'
+          }
 
           $computer = Get-CimInstance Win32_ComputerSystem
           $os = Get-CimInstance Win32_OperatingSystem
 
+          Write-Output "WS01_SHUTDOWN_CLASSIFICATION=$classification"
           [pscustomobject]@{
+              Classification = $classification
               ComputerName = $computer.Name
               Domain = $computer.Domain
               PartOfDomain = $computer.PartOfDomain
               Caption = $os.Caption
               Version = $os.Version
               LastBootUpTime = $os.LastBootUpTime
+              Latest1074 = $latest1074
               ShutdownEvents = @($events)
               Licensing = @($license)
           } | ConvertTo-Json -Depth 6
