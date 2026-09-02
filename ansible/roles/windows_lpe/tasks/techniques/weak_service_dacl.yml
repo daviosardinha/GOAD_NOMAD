@@ -1,0 +1,147 @@
+---
+- name: Apply weak service DACL candidate
+  ansible.windows.win_powershell:
+    script: |
+      $ErrorActionPreference = 'Stop'
+
+      $name = '{{ windows_lpe_weak_service_dacl.service_name }}'
+      $display = '{{ windows_lpe_weak_service_dacl.display_name }}'
+      $root = '{{ windows_lpe_weak_service_dacl.root }}'
+      $exe = '{{ windows_lpe_weak_service_dacl.executable }}'
+
+      $existing = Get-Service -Name $name -ErrorAction SilentlyContinue
+      if ($existing) {
+          Stop-Service -Name $name -Force -ErrorAction SilentlyContinue
+          & sc.exe delete $name | Out-Null
+          Start-Sleep -Milliseconds 750
+      }
+      if (Test-Path -LiteralPath $root) {
+          Remove-Item -LiteralPath $root -Recurse -Force
+      }
+
+      New-Item -ItemType Directory -Path $root -Force | Out-Null
+
+      $source = @"
+      using System;
+      using System.ServiceProcess;
+      public sealed class KingdomControlService : ServiceBase
+      {
+          public KingdomControlService() { ServiceName = "KingdomControlSvc"; }
+          protected override void OnStart(string[] args) { }
+          protected override void OnStop() { }
+          public static void Main() { ServiceBase.Run(new KingdomControlService()); }
+      }
+      "@
+
+      Add-Type `
+          -TypeDefinition $source `
+          -Language CSharp `
+          -ReferencedAssemblies 'System.ServiceProcess.dll' `
+          -OutputAssembly $exe `
+          -OutputType WindowsApplication
+
+      New-Service `
+          -Name $name `
+          -BinaryPathName ('"{0}"' -f $exe) `
+          -DisplayName $display `
+          -StartupType Manual | Out-Null
+
+      # Preserve normal SYSTEM/Admin ownership but intentionally grant BUILTIN\Users
+      # the service CHANGE_CONFIG plus START/STOP rights. This makes the service
+      # reconfigurable without making its executable writable.
+      $sddl = 'D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWLOCRRC;;;IU)(A;;CCLCSWLOCRRC;;;SU)(A;;DCRPWP;;;BU)'
+      $result = & sc.exe sdset $name $sddl 2>&1
+      if ($LASTEXITCODE -ne 0) { throw "sc sdset failed: $result" }
+
+      Write-Output 'WINDOWS_LPE_WEAK_SERVICE_DACL=APPLIED'
+  when: windows_lpe_action == 'apply'
+
+- name: Reset weak service DACL candidate
+  ansible.windows.win_powershell:
+    script: |
+      $ErrorActionPreference = 'Stop'
+      $name = '{{ windows_lpe_weak_service_dacl.service_name }}'
+      $root = '{{ windows_lpe_weak_service_dacl.root }}'
+
+      $existing = Get-Service -Name $name -ErrorAction SilentlyContinue
+      if ($existing) {
+          Stop-Service -Name $name -Force -ErrorAction SilentlyContinue
+          & sc.exe delete $name | Out-Null
+          Start-Sleep -Milliseconds 750
+      }
+      if (Test-Path -LiteralPath $root) {
+          Remove-Item -LiteralPath $root -Recurse -Force
+      }
+      Write-Output 'WINDOWS_LPE_WEAK_SERVICE_DACL=RESET'
+  when: windows_lpe_action == 'reset'
+
+- name: Validate vulnerable weak service DACL state
+  ansible.windows.win_powershell:
+    script: |
+      $ErrorActionPreference = 'Stop'
+      $name = '{{ windows_lpe_weak_service_dacl.service_name }}'
+      $exe = '{{ windows_lpe_weak_service_dacl.executable }}'
+
+      $service = Get-CimInstance Win32_Service -Filter "Name='$name'" -ErrorAction Stop
+      if (-not $service) { throw 'KingdomControlSvc is missing' }
+      if ($service.StartName -ne 'LocalSystem') { throw "service account=$($service.StartName)" }
+      if (-not $service.PathName.TrimStart().StartsWith('"')) { throw 'service path is not quoted' }
+
+      $sd = (& sc.exe sdshow $name 2>&1 | Out-String).Trim()
+      $match = [regex]::Match($sd, '\(A;;([^;]+);;;BU\)')
+      if (-not $match.Success) { throw "BUILTIN\\Users service ACE missing: $sd" }
+      $rights = $match.Groups[1].Value
+      if ($rights -notmatch 'DC') { throw "BUILTIN\\Users lacks SERVICE_CHANGE_CONFIG: rights=$rights" }
+      if ($rights -notmatch 'RP') { throw "BUILTIN\\Users lacks SERVICE_START: rights=$rights" }
+
+      $usersSid = 'S-1-5-32-545'
+      $writeBits = @(
+          [System.Security.AccessControl.FileSystemRights]::WriteData,
+          [System.Security.AccessControl.FileSystemRights]::AppendData,
+          [System.Security.AccessControl.FileSystemRights]::WriteAttributes,
+          [System.Security.AccessControl.FileSystemRights]::WriteExtendedAttributes,
+          [System.Security.AccessControl.FileSystemRights]::Delete,
+          [System.Security.AccessControl.FileSystemRights]::ChangePermissions,
+          [System.Security.AccessControl.FileSystemRights]::TakeOwnership
+      )
+      $binaryAcl = Get-Acl -LiteralPath $exe
+      foreach ($ace in $binaryAcl.Access) {
+          try { $sid = $ace.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value } catch { continue }
+          if ($sid -ne $usersSid -or $ace.AccessControlType -ne 'Allow') { continue }
+          foreach ($bit in $writeBits) {
+              if (($ace.FileSystemRights -band $bit) -eq $bit) {
+                  throw "binary is also writable by BUILTIN\\Users; collision rights=$($ace.FileSystemRights)"
+              }
+          }
+      }
+
+      Write-Output 'WINDOWS_LPE_WEAK_SERVICE_DACL=VULNERABLE'
+  register: windows_lpe_weak_service_dacl_vulnerable
+  when:
+    - windows_lpe_action == 'apply' or (windows_lpe_action == 'validate' and windows_lpe_validate_state == 'vulnerable')
+
+- name: Show vulnerable weak service DACL validation
+  ansible.builtin.debug:
+    var: windows_lpe_weak_service_dacl_vulnerable.output
+  when:
+    - windows_lpe_weak_service_dacl_vulnerable is defined
+    - windows_lpe_weak_service_dacl_vulnerable.output is defined
+
+- name: Validate clean weak service DACL state
+  ansible.windows.win_powershell:
+    script: |
+      $name = '{{ windows_lpe_weak_service_dacl.service_name }}'
+      $root = '{{ windows_lpe_weak_service_dacl.root }}'
+      if (Get-Service -Name $name -ErrorAction SilentlyContinue) { throw 'KingdomControlSvc still exists' }
+      if (Test-Path -LiteralPath $root) { throw 'weak service DACL lab directory still exists' }
+      Write-Output 'WINDOWS_LPE_WEAK_SERVICE_DACL=CLEAN'
+  register: windows_lpe_weak_service_dacl_clean
+  when:
+    - windows_lpe_action == 'reset' or (windows_lpe_action == 'validate' and windows_lpe_validate_state == 'clean')
+
+- name: Show clean weak service DACL validation
+  ansible.builtin.debug:
+    var: windows_lpe_weak_service_dacl_clean.output
+  when:
+    - windows_lpe_weak_service_dacl_clean is defined
+    - windows_lpe_weak_service_dacl_clean.output is defined
