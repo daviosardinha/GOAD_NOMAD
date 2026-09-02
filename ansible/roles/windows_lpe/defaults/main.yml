@@ -8,11 +8,7 @@
 
 windows_lpe_action: status
 windows_lpe_profile: none
-
-# Optional exact technique selection used for development/validation. When this
-# list is empty, the selected profile owns the requested technique set.
 windows_lpe_techniques: []
-
 windows_lpe_validate_state: vulnerable
 windows_lpe_allow_candidate: false
 
@@ -48,24 +44,15 @@ windows_lpe_catalog:
   - writable_program_directory
   - insecure_service_registry
 
-# Candidate techniques have a complete source contract but still require the
-# pinned WS01 live re-apply gate before promotion to implemented.
 windows_lpe_candidate_techniques:
   - weak_service_dacl
   - weak_service_binary_permissions
   - weak_service_registry_permissions
   - service_dll_hijacking
 
-# A technique moves into this list only after apply, vulnerable-state validate,
-# reset, clean-state validate, and re-apply validation all pass on the pinned
-# WS01 build.
 windows_lpe_implemented_techniques:
   - unquoted_service_path
 
-# Profiles describe the intended curriculum. They may reference planned
-# techniques, but normal apply/validate/reset remains fail-closed until every
-# selected technique is implemented. Candidate testing requires both an exact
-# windows_lpe_techniques selection and windows_lpe_allow_candidate=true.
 windows_lpe_profiles:
   none: []
   service-abuse:
@@ -102,8 +89,9 @@ windows_lpe_unquoted_service_path:
   service_name: KingdomUpdaterSvc
   display_name: GOAD Kingdoms Update Service
   root: 'C:\Kingdom LPE'
-  service_directory: 'C:\Kingdom LPE\Unquoted Service'
-  executable: 'C:\Kingdom LPE\Unquoted Service\KingdomUpdater.exe'
+  scenario_directory: 'C:\Kingdom LPE\Unquoted Path'
+  service_directory: 'C:\Kingdom LPE\Unquoted Path\Service'
+  executable: 'C:\Kingdom LPE\Unquoted Path\Service\KingdomUpdater.exe'
   writable_candidate: 'C:\Kingdom LPE\Unquoted.exe'
 
 windows_lpe_weak_service_dacl:
