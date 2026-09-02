@@ -102,7 +102,6 @@ defaults = Path('ansible/roles/windows_lpe/defaults/main.yml').read_text()
 tasks = Path('ansible/roles/windows_lpe/tasks/main.yml').read_text()
 playbook = Path('ansible/windows-lpe.yml').read_text()
 catalog_doc = Path('docs/WINDOWS_LPE_CATALOG.md').read_text()
-milestones = Path('docs/GOAD_KINGDOMS_MILESTONES.md').read_text()
 batch_runtime = Path('scripts/validate-windows-lpe-service-batch-runtime.sh').read_text()
 single_runtime = Path('scripts/validate-windows-lpe-unquoted-service-path-runtime.sh').read_text()
 
@@ -199,10 +198,10 @@ for technique_id in candidates_expected:
     if not re.search(rf'\| `{re.escape(technique_id)}` \|[^\n]*\| \*\*Candidate\*\* \|', catalog_doc):
         fail(f'catalog does not mark {technique_id} as Candidate')
 
-if 'UNQUOTED SERVICE PATH PROMOTED' not in milestones:
-    fail('M2 milestone tracker does not record the first live LPE promotion')
-if 'SERVICE BATCH CANDIDATE' not in milestones:
-    fail('M2 milestone tracker does not record the service batch candidate checkpoint')
+if 'windows_lpe_allow_candidate=true' not in catalog_doc:
+    fail('catalog does not document explicit candidate opt-in')
+if 'service batch live promotion gate' not in catalog_doc.lower():
+    fail('catalog does not document the service batch promotion lifecycle')
 PY
 pass 'promotion, service-batch lifecycle and fail-closed controller contract'
 
