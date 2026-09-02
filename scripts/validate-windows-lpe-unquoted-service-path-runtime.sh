@@ -22,16 +22,58 @@ readonly INSTANCE_INVENTORY="${INSTANCE_DIR}/inventory"
 readonly LAB_INVENTORY="${ROOT}/ad/GOAD/data/inventory"
 readonly GLOBAL_INVENTORY="${ROOT}/globalsettings.ini"
 readonly ANSIBLE_PLAYBOOK="${HOME}/.goad/.venv/bin/ansible-playbook"
+readonly WS01_ID_FILE="${PROVIDER_DIR}/.vagrant/machines/GOAD-WS01/vmware_desktop/id"
 
 [[ -x "${ANSIBLE_PLAYBOOK}" ]] || fail "GOAD Ansible runtime missing: ${ANSIBLE_PLAYBOOK}"
 [[ -f "${INSTANCE_INVENTORY}" ]] || fail "instance inventory missing: ${INSTANCE_INVENTORY}"
 [[ -f "${LAB_INVENTORY}" ]] || fail "lab inventory missing: ${LAB_INVENTORY}"
 [[ -f "${GLOBAL_INVENTORY}" ]] || fail "global inventory missing: ${GLOBAL_INVENTORY}"
+[[ -f "${WS01_ID_FILE}" ]] || fail "WS01 VMware id file missing: ${WS01_ID_FILE}"
+command -v vmrun >/dev/null 2>&1 || fail 'vmrun is required'
+command -v nc >/dev/null 2>&1 || fail 'nc is required'
+
+readonly WS01_VMX="$(cat "${WS01_ID_FILE}")"
+readonly WS01_LOG="$(dirname "${WS01_VMX}")/vmware.log"
 
 bash scripts/verify-test-source.sh
 pass 'Git source-of-truth gate'
 
 export GOAD_PROVIDER_DIR="${PROVIDER_DIR}"
+
+ws01_running() {
+    vmrun -T ws list 2>/dev/null | grep -Fxq "${WS01_VMX}"
+}
+
+dump_ws01_evidence() {
+    echo
+    echo '=== WS01 FAILURE EVIDENCE ==='
+    (
+        cd "${PROVIDER_DIR}" && vagrant status GOAD-WS01
+    ) 2>/dev/null || true
+    vmrun -T ws list 2>/dev/null || true
+    echo '--- recent VMware power events ---'
+    grep -Ei 'softPowerOff|power.?off|shutdown|panic|crash|VMX exit|cleanShutdown' "${WS01_LOG}" 2>/dev/null | tail -n 60 || true
+}
+
+require_ws01_ready() {
+    local phase="$1"
+    ws01_running || {
+        dump_ws01_evidence
+        fail "WS01 powered off before/after phase: ${phase}; run scripts/diagnose-ws01-shutdown.sh before retrying"
+    }
+    nc -z -w 3 10.4.10.31 5986 >/dev/null 2>&1 || {
+        dump_ws01_evidence
+        fail "WS01 WinRM TCP/5986 unavailable before/after phase: ${phase}"
+    }
+    pass "WS01 power + WinRM healthy (${phase})"
+}
+
+on_error() {
+    local rc=$?
+    dump_ws01_evidence
+    exit "${rc}"
+}
+trap on_error ERR
 
 echo
 echo '============================================================'
@@ -41,6 +83,8 @@ echo '============================================================'
 run_lpe() {
     local action="$1"
     local state="${2:-vulnerable}"
+
+    require_ws01_ready "before ${action}/${state}"
 
     echo
     echo "=== WINDOWS LPE: ${action^^}${action:+ / ${state^^}} ==="
@@ -61,11 +105,16 @@ run_lpe() {
 
     ANSIBLE_CONFIG="${ROOT}/ansible/ansible.cfg" \
         "${ANSIBLE_PLAYBOOK}" "${args[@]}"
+
+    require_ws01_ready "after ${action}/${state}"
 }
+
+require_ws01_ready 'promotion-gate start'
 
 echo
 echo '=== 1. CLEAN WS01 BASELINE BEFORE LPE MUTATION ==='
 timeout 20m bash scripts/validate-ws01-runtime.sh
+require_ws01_ready 'baseline-before'
 pass 'WS01 baseline before LPE mutation'
 
 echo
@@ -101,6 +150,7 @@ pass 'final vulnerable-state validation'
 echo
 echo '=== 8. WS01 SECURITY/DOMAIN BASELINE AFTER LPE MUTATION ==='
 timeout 20m bash scripts/validate-ws01-runtime.sh
+require_ws01_ready 'baseline-after'
 pass 'WS01 baseline remains healthy after candidate re-apply'
 
 echo
