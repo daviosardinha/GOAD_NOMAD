@@ -19,8 +19,8 @@ Every advertised technique must provide all of the following before it is marked
 Technique state is explicit:
 
 - **Planned** — catalog entry only; lifecycle operations fail closed.
-- **Candidate** — source apply/validate/reset logic exists, but the live reversible gate is still pending.
-- **Implemented** — the complete live gate passed on the pinned WS01 build.
+- **Candidate** — source apply/validate/reset logic exists, but the live reversible gate is still pending for the current committed implementation.
+- **Implemented** — the complete live gate passed on the exact current source.
 
 Candidate techniques require an exact `windows_lpe_techniques` selection plus `windows_lpe_allow_candidate=true`. Profiles remain fail-closed while they contain planned or candidate-only members.
 
@@ -28,7 +28,7 @@ Candidate techniques require an exact `windows_lpe_techniques` selection plus `w
 
 | ID | Family | Status | Notes |
 | --- | --- | --- | --- |
-| `unquoted_service_path` | Services | **Implemented** | Live apply → vulnerable → reset → clean → reapply → vulnerable gate passed on WS01 |
+| `unquoted_service_path` | Services | **Candidate** | Original engine proof passed; current batch-safe reset refactor requires revalidation |
 | `weak_service_dacl` | Services | **Candidate** | Dedicated LocalSystem service with low-privilege CHANGE_CONFIG/START/STOP rights |
 | `weak_service_binary_permissions` | Services | **Candidate** | Dedicated quoted-path LocalSystem service with writable executable only |
 | `weak_service_registry_permissions` | Services / Registry | **Candidate** | Dedicated quoted-path LocalSystem service with Users `SetValue` on its service key |
@@ -51,75 +51,76 @@ Candidate techniques require an exact `windows_lpe_techniques` selection plus `w
 
 The deterministic core target is approximately **18–22** techniques. Patch/build-dependent kernel CVEs are optional and are not part of the core catalog.
 
-## First implemented technique — unquoted service path
+## Engine proof and current-source revalidation
 
-The implemented technique uses an automatic LocalSystem service named `KingdomUpdaterSvc` with the deliberately unquoted image path:
+The original `unquoted_service_path` implementation successfully proved the framework engine on 2026-09-02:
+
+```text
+apply -> vulnerable -> reset -> clean -> re-apply -> vulnerable
+```
+
+That proof established that the lifecycle controller, live validation, reset model, WS01 health guard, and Mayfly evaluation handling work.
+
+After that proof, the technique was deliberately refactored to become **batch-safe**. The current unquoted service path is:
 
 ```text
 C:\Kingdom LPE\Unquoted Path\Service\KingdomUpdater.exe
 ```
 
-The intended ambiguous writable candidate is:
+with the intended ambiguous candidate:
 
 ```text
 C:\Kingdom LPE\Unquoted.exe
 ```
 
-`BUILTIN\\Users` receives a create/write ACE on the shared `C:\Kingdom LPE` parent **for that folder only**. The ACE does not inherit into the scenario/service directory, and validation rejects the scenario if the legitimate service executable becomes writable by Users.
+`BUILTIN\\Users` receives a create/write ACE on the shared `C:\Kingdom LPE` parent for that folder only. Reset removes only the unquoted service, its `Unquoted Path` subtree, its candidate file, and its exact ACL entry. It does not delete the shared parent or another scenario's files.
 
-For batch safety, reset removes only the unquoted-path service, its own `Unquoted Path` subtree, its candidate executable, and its exact parent-directory ACE. It never recursively deletes the shared `C:\Kingdom LPE` parent, so other LPE scenarios remain independently resettable.
-
-The live promotion gate passed on 2026-09-02 using the pinned Mayfly Windows 10 WS01 image. The gate proved:
-
-```text
-apply
-  -> vulnerable
-  -> reset
-  -> clean
-  -> re-apply
-  -> vulnerable
-  -> WS01 domain/UAC/Firewall/Defender/evaluation baseline still healthy
-```
+Because this is a material source change after the original live proof, `unquoted_service_path` is correctly back in **Candidate** state until the current code passes the service batch live promotion gate.
 
 ## Service Batch 1 candidate
 
-The first accelerated batch deliberately groups five related service scenarios:
+The accelerated service batch contains:
 
 ```text
-unquoted_service_path              implemented
-weak_service_dacl                  candidate
-weak_service_binary_permissions    candidate
-weak_service_registry_permissions  candidate
-service_dll_hijacking              candidate
+unquoted_service_path
+weak_service_dacl
+weak_service_binary_permissions
+weak_service_registry_permissions
+service_dll_hijacking
 ```
 
-The four new candidates are intentionally isolated from one another:
+The scenarios are designed not to collapse into one another:
 
+- unquoted service path keeps its real service executable non-writable;
 - weak DACL does not make its binary writable;
-- weak binary permissions uses a quoted ImagePath and keeps the service DACL at its normal default;
-- weak service registry permissions uses a quoted ImagePath and keeps the service binary non-writable;
-- DLL hijacking gives Users write/create capability only on the missing-DLL parent path, not on the legitimate service executable.
+- weak binary permissions uses a quoted ImagePath and default service DACL;
+- weak service registry permissions uses a quoted ImagePath and non-writable binary;
+- DLL hijacking permits creation of the missing DLL only in a dedicated writable parent location while the legitimate service executable stays non-writable.
 
 The **service batch live promotion gate** executes all five in one lifecycle:
 
 ```text
 clean WS01 baseline
-  -> apply batch
-  -> validate all vulnerable
-  -> reset batch
-  -> validate all clean
-  -> re-apply batch
-  -> validate all vulnerable
-  -> clean WS01 security/domain baseline
+  -> apply all five
+  -> validate all five vulnerable
+  -> reset all five
+  -> validate all five clean
+  -> re-apply all five
+  -> validate all five vulnerable
+  -> validate WS01 domain/UAC/Firewall/Defender/evaluation baseline
 ```
 
-Candidates remain development-only until that complete batch gate passes. Development testing therefore uses an exact list plus:
+Only after this passes do all five current implementations become **Implemented**.
+
+Development testing uses an exact list plus:
 
 ```text
 windows_lpe_allow_candidate=true
 ```
 
-## Planned profiles
+## Remaining planned profiles and techniques
+
+Profiles remain:
 
 - `service-abuse`
 - `credential-hunting`
@@ -130,16 +131,13 @@ windows_lpe_allow_candidate=true
 
 `full-lpe` is intentionally a kitchen-sink profile. Normal learning paths should expose smaller focused sets so enumeration does not simply report every possible weakness at once.
 
-## Current checkpoint
+Current checkpoint:
 
-At the Service Batch 1 candidate checkpoint:
-
-- the 20-technique catalog remains committed;
-- `unquoted_service_path` is **Implemented** after its complete live reversible gate;
-- four additional service techniques are **Candidate**;
-- all other techniques remain Planned and unavailable;
+- 20-technique catalog committed;
+- five Service Batch 1 techniques are Candidate;
+- all other techniques are Planned;
+- no current implementation is advertised as Implemented until the batch-safe source passes live validation;
 - normal profiles remain fail-closed while they include candidate/planned members;
 - candidate testing requires exact selection and explicit opt-in;
 - the batch runner checks WS01 power and WinRM around every phase;
-- the Mayfly Windows evaluation rearm is part of the reproducible WS01 baseline;
-- Defender, UAC and Windows Firewall are not globally weakened by the LPE framework.
+- Defender, UAC and Windows Firewall are not globally weakened.
