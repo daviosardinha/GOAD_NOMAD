@@ -23,7 +23,8 @@ for file in \
     ansible/roles/windows_lpe/tasks/techniques/unquoted_service_path.yml \
     docs/WINDOWS_LPE_CATALOG.md \
     docs/GOAD_KINGDOMS_MILESTONES.md \
-    scripts/validate-windows-lpe-unquoted-service-path-runtime.sh
+    scripts/validate-windows-lpe-unquoted-service-path-runtime.sh \
+    scripts/diagnose-ws01-shutdown.sh
 do
     [[ -f "${file}" ]] || fail "missing Windows LPE framework file: ${file}"
 done
@@ -31,7 +32,8 @@ pass "required Windows LPE framework files"
 
 bash -n scripts/validate-windows-lpe-framework-source.sh
 bash -n scripts/validate-windows-lpe-unquoted-service-path-runtime.sh
-pass "framework/runtime validator shell syntax"
+bash -n scripts/diagnose-ws01-shutdown.sh
+pass "framework/runtime/diagnostic shell syntax"
 
 python3 - <<'PY'
 from pathlib import Path
@@ -61,6 +63,7 @@ tasks = Path('ansible/roles/windows_lpe/tasks/main.yml').read_text()
 technique = Path('ansible/roles/windows_lpe/tasks/techniques/unquoted_service_path.yml').read_text()
 playbook = Path('ansible/windows-lpe.yml').read_text()
 runtime_gate = Path('scripts/validate-windows-lpe-unquoted-service-path-runtime.sh').read_text()
+shutdown_diag = Path('scripts/diagnose-ws01-shutdown.sh').read_text()
 catalog_doc = Path('docs/WINDOWS_LPE_CATALOG.md').read_text()
 milestones = Path('docs/GOAD_KINGDOMS_MILESTONES.md').read_text()
 
@@ -105,10 +108,7 @@ for profile in (
     if not re.search(rf'(?m)^  {re.escape(profile)}:', defaults):
         fail(f'missing Windows LPE profile: {profile}')
 
-for token in (
-    'hosts: ws01',
-    'role: windows_lpe',
-):
+for token in ('hosts: ws01', 'role: windows_lpe'):
     if token not in playbook:
         fail(f'Windows LPE playbook missing: {token}')
 
@@ -149,9 +149,6 @@ for token in (
     if token not in technique:
         fail(f'unquoted service path lifecycle contract missing: {token}')
 
-# The candidate must not silently turn into the later weak-binary-permissions
-# exercise. Its special Users ACE is this-folder-only, and runtime validation
-# must reject a Users-writable legitimate service executable.
 if technique.count('S-1-5-32-545') < 2:
     fail('unquoted service path source does not validate BUILTIN\\Users by SID')
 if 'Set-MpPreference' in technique or 'Set-NetFirewallProfile' in technique:
@@ -166,10 +163,23 @@ for token in (
     'run_lpe validate vulnerable',
     'run_lpe reset',
     'run_lpe validate clean',
+    'require_ws01_ready',
+    'dump_ws01_evidence',
+    'diagnose-ws01-shutdown.sh',
     '[READY] unquoted_service_path live promotion gate passed.',
 ):
     if token not in runtime_gate:
         fail(f'unquoted service path runtime promotion gate missing: {token}')
+
+for token in (
+    'Id=1074,6006,6008,41',
+    'SoftwareLicensingProduct',
+    'GracePeriodRemaining',
+    'starting only WS01 without provisioning',
+    'vmrun -T ws start',
+):
+    if token not in shutdown_diag:
+        fail(f'WS01 shutdown diagnostic contract missing: {token}')
 
 for forbidden in (
     'Set-MpPreference -DisableRealtimeMonitoring',
@@ -198,7 +208,7 @@ if 'windows_lpe_allow_candidate=true' not in catalog_doc:
     fail('catalog does not document explicit candidate opt-in')
 
 PY
-pass "catalog, candidate lifecycle and fail-closed controller contract"
+pass "catalog, candidate lifecycle, power-loss diagnostics and fail-closed controller contract"
 
 git diff --check
 pass "Git whitespace check"
