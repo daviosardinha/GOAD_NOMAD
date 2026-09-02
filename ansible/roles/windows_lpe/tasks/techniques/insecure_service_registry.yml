@@ -13,6 +13,7 @@
       $regPath = '{{ windows_lpe_insecure_service_registry.registry_key }}'
       $regSubkey = '{{ windows_lpe_insecure_service_registry.registry_subkey }}'
       $valueName = '{{ windows_lpe_insecure_service_registry.registry_value }}'
+      if ($valueName -ne 'HelperPath') { throw "unexpected insecure-service registry value contract=$valueName" }
 
       $existing = Get-Service -Name $name -ErrorAction SilentlyContinue
       if ($existing) {
