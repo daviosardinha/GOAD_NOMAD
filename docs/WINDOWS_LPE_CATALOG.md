@@ -16,13 +16,19 @@ Every advertised technique must provide all of the following before it is marked
 6. Windows-build compatibility evidence for the pinned WS01 image;
 7. no accidental weakening of unrelated scenarios or global security controls.
 
-The framework is fail-closed. Profiles may describe the planned curriculum before every member is implemented, but `apply` and `reset` must refuse to continue if a selected technique lacks the complete contract above.
+Technique state is explicit:
+
+- **Planned** — catalog entry only; lifecycle operations fail closed.
+- **Candidate** — source apply/validate/reset logic exists, but live re-apply validation is still pending.
+- **Implemented** — the complete live gate passed on the pinned WS01 build.
+
+Candidate techniques require an exact `windows_lpe_techniques` selection plus `windows_lpe_allow_candidate=true`. Profiles remain fail-closed while they contain planned or candidate-only members.
 
 ## Target catalog
 
 | ID | Family | Status | Notes |
 | --- | --- | --- | --- |
-| `unquoted_service_path` | Services | Planned | Deterministic service-path misconfiguration |
+| `unquoted_service_path` | Services | **Candidate** | Source apply/vulnerable/reset/clean contract committed; live re-apply gate pending |
 | `weak_service_dacl` | Services | Planned | Low-privilege service-control permission abuse |
 | `weak_service_binary_permissions` | Services | Planned | Writable privileged service executable |
 | `weak_service_registry_permissions` | Services / Registry | Planned | Writable service registry configuration |
@@ -45,6 +51,52 @@ The framework is fail-closed. Profiles may describe the planned curriculum befor
 
 The initial target is approximately **18–22** deterministic techniques. Additional techniques may be added only after compatibility testing; patch/build-dependent kernel CVEs are optional and are not part of the deterministic core.
 
+## Unquoted service path candidate contract
+
+The first candidate uses a dedicated automatic LocalSystem service named `KingdomUpdaterSvc` with the deliberately unquoted image path:
+
+```text
+C:\Kingdom LPE\Unquoted Service\KingdomUpdater.exe
+```
+
+The intended ambiguous writable candidate is:
+
+```text
+C:\Kingdom LPE\Unquoted.exe
+```
+
+`BUILTIN\\Users` receives create/write permission on `C:\Kingdom LPE` **for that directory only**. The ACE does not inherit into `Unquoted Service`, and validation explicitly rejects the scenario if the legitimate service executable becomes writable by Users. That keeps this technique distinct from the later weak-service-binary-permissions exercise.
+
+The service runs as LocalSystem and is automatic so the exercise can be triggered through a normal workstation restart rather than granting Rickon an unrelated weak service DACL.
+
+During development, only this exact candidate may be exercised:
+
+```bash
+cd ~/Documents/GOAD_NOMAD/ansible
+
+ansible-playbook \
+  -i ../ad/GOAD/data/inventory \
+  -i ../workspace/<instance-id>/inventory \
+  -i ../globalsettings.ini \
+  windows-lpe.yml \
+  -e windows_lpe_action=apply \
+  -e windows_lpe_allow_candidate=true \
+  -e '{"windows_lpe_techniques":["unquoted_service_path"]}'
+```
+
+The promotion gate is:
+
+```text
+apply
+  -> automatic vulnerable-state validation
+reset
+  -> automatic clean-state validation
+re-apply
+  -> automatic vulnerable-state validation
+```
+
+Only after that sequence passes on the pinned WS01 image does `unquoted_service_path` move from candidate to implemented.
+
 ## Planned profiles
 
 - `service-abuse`
@@ -58,10 +110,12 @@ The initial target is approximately **18–22** deterministic techniques. Additi
 
 ## Current checkpoint
 
-At the initial framework checkpoint:
+At the first technique-candidate checkpoint:
 
-- the catalog and profile names are committed;
-- `windows_lpe_implemented_techniques` is empty;
-- no LPE vulnerability is planted on WS01;
-- `status` is allowed;
-- `apply` and `reset` fail closed until the first technique gains the full apply/validate/reset contract.
+- the 20-technique catalog and profile names are committed;
+- `unquoted_service_path` is the only candidate technique;
+- `windows_lpe_implemented_techniques` remains empty until the live re-apply gate passes;
+- all other LPE techniques remain planned and unavailable;
+- normal profile apply/validate/reset remains fail-closed;
+- candidate testing requires an exact selection and explicit opt-in;
+- Defender, UAC and Windows Firewall are not globally weakened by the LPE framework.
