@@ -53,10 +53,10 @@ The deterministic core target is approximately **18–22** techniques. Patch/bui
 
 ## First implemented technique — unquoted service path
 
-The first technique uses an automatic LocalSystem service named `KingdomUpdaterSvc` with the deliberately unquoted image path:
+The implemented technique uses an automatic LocalSystem service named `KingdomUpdaterSvc` with the deliberately unquoted image path:
 
 ```text
-C:\Kingdom LPE\Unquoted Service\KingdomUpdater.exe
+C:\Kingdom LPE\Unquoted Path\Service\KingdomUpdater.exe
 ```
 
 The intended ambiguous writable candidate is:
@@ -65,7 +65,9 @@ The intended ambiguous writable candidate is:
 C:\Kingdom LPE\Unquoted.exe
 ```
 
-`BUILTIN\\Users` receives create/write permission on `C:\Kingdom LPE` for that directory only. The ACE does not inherit into `Unquoted Service`, and validation rejects the scenario if the legitimate service executable becomes writable by Users. That keeps this technique distinct from `weak_service_binary_permissions`.
+`BUILTIN\\Users` receives a create/write ACE on the shared `C:\Kingdom LPE` parent **for that folder only**. The ACE does not inherit into the scenario/service directory, and validation rejects the scenario if the legitimate service executable becomes writable by Users.
+
+For batch safety, reset removes only the unquoted-path service, its own `Unquoted Path` subtree, its candidate executable, and its exact parent-directory ACE. It never recursively deletes the shared `C:\Kingdom LPE` parent, so other LPE scenarios remain independently resettable.
 
 The live promotion gate passed on 2026-09-02 using the pinned Mayfly Windows 10 WS01 image. The gate proved:
 
