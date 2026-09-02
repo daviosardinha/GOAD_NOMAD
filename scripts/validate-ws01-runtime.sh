@@ -6,6 +6,8 @@ readonly LOG_DIR="${GOAD_KINGDOMS_WS01_LOG_DIR:-/tmp/goad-kingdoms-ws01-$(date +
 readonly INVENTORY_DATA="${ROOT}/ad/GOAD/data/inventory"
 readonly INVENTORY_PROVIDER="${ROOT}/ad/GOAD/providers/vmware/inventory"
 readonly ANSIBLE_CFG="${ROOT}/ansible/ansible.cfg"
+readonly WS01_IP="10.4.10.31"
+readonly WS01_READINESS_TIMEOUT="${GOAD_KINGDOMS_WS01_READINESS_TIMEOUT:-300}"
 
 fail() {
     printf '[FAIL] %s\n' "$*" >&2
@@ -52,6 +54,30 @@ resolve_provider() {
     PROVIDER="${ids[0]%%/.vagrant/*}"
 }
 
+wait_for_tcp() {
+    local host="$1"
+    local port="$2"
+    local label="$3"
+    local deadline=$((SECONDS + WS01_READINESS_TIMEOUT))
+    local next_notice=$SECONDS
+
+    while (( SECONDS < deadline )); do
+        if timeout 3 nc -zw2 "${host}" "${port}" >/dev/null 2>&1; then
+            pass "${label} ready at ${host}:${port}"
+            return 0
+        fi
+
+        if (( SECONDS >= next_notice )); then
+            printf '[WAIT] %s not ready yet at %s:%s (%ss remaining)\n' \
+                "${label}" "${host}" "${port}" "$((deadline - SECONDS))"
+            next_notice=$((SECONDS + 30))
+        fi
+        sleep 5
+    done
+
+    return 1
+}
+
 mkdir -p "${LOG_DIR}"
 cd "${ROOT}"
 
@@ -74,12 +100,13 @@ grep -Eiq '^ethernet1\.connectiontype[[:space:]]*=[[:space:]]*"custom"' "${VMX}"
 grep -Eiq '^ethernet1\.vnet[[:space:]]*=[[:space:]]*"vmnet10"' "${VMX}" || fail 'WS01 exercise NIC is not attached to vmnet10'
 pass "WS01 persistent two-NIC exercise layout"
 
-# Windows Firewall remains enabled on the clean WS01 baseline, so ICMP echo is
-# not a valid reachability contract. Prove NORTH connectivity using the actual
-# services required by the exercise and management paths instead.
+# Exercise finalization may have just restarted WS01 to persist ethernet0 as
+# disconnected. Do not race Windows boot with a one-shot TCP probe. Wait a
+# bounded amount of time for the services that define the actual training and
+# management paths while Windows Firewall remains enabled.
 command -v nc >/dev/null 2>&1 || fail 'nc is required for WS01 TCP reachability validation'
-timeout 3 nc -zw2 10.4.10.31 3389 >/dev/null 2>&1 || fail 'WS01 RDP is not reachable from NORTH'
-timeout 3 nc -zw2 10.4.10.31 5986 >/dev/null 2>&1 || fail 'WS01 WinRM HTTPS is not reachable from NORTH'
+wait_for_tcp "${WS01_IP}" 3389 'WS01 RDP' || fail "WS01 RDP did not become ready within ${WS01_READINESS_TIMEOUT}s"
+wait_for_tcp "${WS01_IP}" 5986 'WS01 WinRM HTTPS' || fail "WS01 WinRM HTTPS did not become ready within ${WS01_READINESS_TIMEOUT}s"
 pass "WS01 NORTH TCP reachability, RDP foothold and WinRM management services"
 
 ANSIBLE_PLAYBOOK="$(find_ansible_playbook || true)"
