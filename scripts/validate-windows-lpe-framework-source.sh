@@ -19,6 +19,9 @@ readonly TECHNIQUE_FILES=(
     ansible/roles/windows_lpe/tasks/techniques/path_search_order_hijacking.yml
     ansible/roles/windows_lpe/tasks/techniques/scheduled_task_binary_permissions.yml
     ansible/roles/windows_lpe/tasks/techniques/scheduled_task_directory_permissions.yml
+    ansible/roles/windows_lpe/tasks/techniques/unattend_credentials.yml
+    ansible/roles/windows_lpe/tasks/techniques/hardcoded_application_credentials.yml
+    ansible/roles/windows_lpe/tasks/techniques/stored_winlogon_credentials.yml
 )
 
 for file in \
@@ -82,6 +85,9 @@ candidates = [
     'path_search_order_hijacking',
     'scheduled_task_binary_permissions',
     'scheduled_task_directory_permissions',
+    'unattend_credentials',
+    'hardcoded_application_credentials',
+    'stored_winlogon_credentials',
 ]
 
 markers = {
@@ -93,9 +99,12 @@ markers = {
     'path_search_order_hijacking': 'WINDOWS_LPE_PATH_SEARCH_ORDER_HIJACKING',
     'scheduled_task_binary_permissions': 'WINDOWS_LPE_SCHEDULED_TASK_BINARY_PERMISSIONS',
     'scheduled_task_directory_permissions': 'WINDOWS_LPE_SCHEDULED_TASK_DIRECTORY_PERMISSIONS',
+    'unattend_credentials': 'WINDOWS_LPE_UNATTEND_CREDENTIALS',
+    'hardcoded_application_credentials': 'WINDOWS_LPE_HARDCODED_APPLICATION_CREDENTIALS',
+    'stored_winlogon_credentials': 'WINDOWS_LPE_STORED_WINLOGON_CREDENTIALS',
 }
 
-identity_tokens = {
+privilege_evidence_tokens = {
     'unquoted_service_path': 'LocalSystem',
     'weak_service_dacl': 'LocalSystem',
     'weak_service_binary_permissions': 'LocalSystem',
@@ -104,6 +113,9 @@ identity_tokens = {
     'path_search_order_hijacking': 'LocalSystem',
     'scheduled_task_binary_permissions': "UserId 'SYSTEM'",
     'scheduled_task_directory_permissions': "UserId 'SYSTEM'",
+    'unattend_credentials': "Group 'Administrators'",
+    'hardcoded_application_credentials': "Group 'Administrators'",
+    'stored_winlogon_credentials': "Group 'Administrators'",
 }
 
 defaults = Path('ansible/roles/windows_lpe/defaults/main.yml').read_text()
@@ -138,8 +150,8 @@ for technique_id, marker in markers.items():
     for state in ('APPLIED', 'VULNERABLE', 'RESET', 'CLEAN'):
         if f'{marker}={state}' not in source:
             fail(f'{technique_id} lifecycle marker missing: {state}')
-    if identity_tokens[technique_id] not in source:
-        fail(f'{technique_id} does not define/validate its privileged execution identity')
+    if privilege_evidence_tokens[technique_id] not in source:
+        fail(f'{technique_id} does not define/validate privileged impact')
     for forbidden in ('Set-MpPreference', 'Set-NetFirewallProfile', 'DisableAntiSpyware', 'EnableLUA = 0'):
         if forbidden.lower() in source.lower():
             fail(f'{technique_id} weakens unrelated security controls: {forbidden}')
@@ -158,6 +170,17 @@ directory_task = Path('ansible/roles/windows_lpe/tasks/techniques/scheduled_task
 for token in ('DeleteSubdirectoriesAndFiles', 'SetAccessRuleProtection($true, $true)'):
     if token not in directory_task:
         fail(f'scheduled-task directory candidate contract missing: {token}')
+
+credential_contracts = {
+    'unattend_credentials': ('<PlainText>true</PlainText>', 'New-LocalUser'),
+    'hardcoded_application_credentials': ('service_password=', 'New-LocalUser'),
+    'stored_winlogon_credentials': ('DefaultPassword', 'AutoAdminLogon'),
+}
+for technique_id, tokens in credential_contracts.items():
+    source = Path(f'ansible/roles/windows_lpe/tasks/techniques/{technique_id}.yml').read_text()
+    for token in tokens:
+        if token not in source:
+            fail(f'{technique_id} credential contract missing: {token}')
 
 for token in ('windows_lpe_candidate_techniques', 'windows_lpe_implemented_techniques', 'windows_lpe_allow_candidate | bool', "windows_lpe_action in ['apply', 'validate', 'reset']"):
     if token not in tasks:

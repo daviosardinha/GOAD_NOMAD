@@ -39,11 +39,11 @@ Candidate techniques require an exact `windows_lpe_techniques` selection plus `w
 | `writable_startup_folder` | Startup | Planned | Writable startup execution path |
 | `scheduled_task_binary_permissions` | Scheduled tasks | **Candidate** | SYSTEM startup task whose executable is directly modifiable by BUILTIN\\Users |
 | `scheduled_task_directory_permissions` | Scheduled tasks | **Candidate** | SYSTEM startup task whose protected executable sits in a directory where Users can delete/create children |
-| `unattend_credentials` | Credentials | Planned | Training-only answer-file credential artifact |
+| `unattend_credentials` | Credentials | **Candidate** | Readable Panther answer-file artifact containing credentials for a dedicated local administrator |
 | `powershell_history_credentials` | Credentials | Planned | Training-only history artifact |
-| `hardcoded_application_credentials` | Credentials | Planned | Training-only application/config secret |
+| `hardcoded_application_credentials` | Credentials | **Candidate** | Readable ProgramData application config containing credentials for a dedicated local administrator |
 | `stored_runas_credentials` | Credentials | Planned | Stored RunAs credential scenario |
-| `stored_winlogon_credentials` | Credentials / Registry | Planned | Training-only Winlogon credential artifact |
+| `stored_winlogon_credentials` | Credentials / Registry | **Candidate** | Plaintext Winlogon DefaultPassword for a dedicated local administrator; AutoAdminLogon remains disabled |
 | `sebackup_privilege` | User rights | Planned | Assigned privilege scenario |
 | `seimpersonate_privilege` | User rights / Tokens | Planned | Assigned token-impersonation privilege scenario |
 | `writable_program_directory` | Filesystem | Planned | Writable privileged application directory |
@@ -62,14 +62,6 @@ weak_service_binary_permissions
 weak_service_registry_permissions
 service_dll_hijacking
 ```
-
-The scenarios are designed not to collapse into one another:
-
-- unquoted service path keeps its real service executable non-writable;
-- weak DACL does not make its binary writable;
-- weak binary permissions uses a quoted ImagePath and default service DACL;
-- weak service registry permissions uses a quoted ImagePath and non-writable binary;
-- DLL hijacking permits creation of the missing DLL only in a dedicated writable parent location while the legitimate service executable stays non-writable.
 
 The **service batch live promotion gate** executed all five in one lifecycle:
 
@@ -90,43 +82,38 @@ On 2026-09-02 the exact origin-synced source at commit `dc1b82fee451a921b53ebae1
 
 ### PATH search-order hijacking
 
-`path_search_order_hijacking` completes the planned `service-abuse` family without weakening the five already-live scenarios.
-
-The candidate creates a dedicated manual LocalSystem service, `KingdomPathSvc`, whose protected service binary launches a uniquely named helper by filename rather than by absolute path. The machine PATH is scoped so that:
-
-```text
-C:\Kingdom LPE\Path Search\UserBin
-```
-
-appears before the protected fallback directory:
-
-```text
-C:\Kingdom LPE\Path Search\SystemBin
-```
-
-`BUILTIN\\Users` can write only to `UserBin`. The privileged service binary and the legitimate fallback `KingdomPathHelper.exe` remain non-writable. Users can START/STOP the dedicated service but are not granted `SERVICE_CHANGE_CONFIG`, keeping this distinct from `weak_service_dacl`.
-
-Reset removes only `KingdomPathSvc`, the `Path Search` subtree, and those two exact lab PATH entries. Every unrelated machine PATH entry and every previously implemented LPE scenario is preserved.
+`path_search_order_hijacking` completes the planned `service-abuse` family without weakening the five already-live scenarios. A dedicated manual LocalSystem service launches a uniquely named helper by filename. A Users-writable PATH directory precedes a protected fallback directory, while the service binary and fallback helper remain non-writable.
 
 ### Scheduled-task permissions batch
 
-The next two candidates use independent SYSTEM tasks triggered at startup:
+`scheduled_task_binary_permissions` grants BUILTIN\\Users Modify on only the executable referenced by a SYSTEM startup task.
+
+`scheduled_task_directory_permissions` keeps its SYSTEM task executable non-writable but grants Users create/delete-child capability on the containing directory, modeling path replacement without collapsing into the direct writable-binary case.
+
+### Credential-discovery batch
+
+The next credential batch contains:
 
 ```text
-scheduled_task_binary_permissions
-scheduled_task_directory_permissions
+unattend_credentials
+hardcoded_application_credentials
+stored_winlogon_credentials
 ```
 
-`scheduled_task_binary_permissions` grants BUILTIN\\Users Modify on only the executable referenced by `KingdomTaskBinary`. Its containing directory remains otherwise normal.
+Each artifact maps to its own dedicated local administrator so discovering one scenario does not automatically solve the others.
 
-`scheduled_task_directory_permissions` keeps `KingdomTaskDirectory.exe` itself non-writable but grants Users create/delete-child capability on its containing `Bin` directory. This models path replacement through directory permissions without collapsing into the direct writable-binary case.
+`unattend_credentials` places a readable `Kingdom-Unattend.xml` under `C:\Windows\Panther` with a plaintext deployment credential.
 
-Both task resets remove only their dedicated task and dedicated `C:\Kingdom LPE\Scheduled Task ...` subtree. They do not touch the existing service/PATH scenarios or global Task Scheduler configuration.
+`hardcoded_application_credentials` places a readable `monitoring.ini` under `C:\ProgramData\KingdomMonitor` with a local-admin service credential.
+
+`stored_winlogon_credentials` stores a dedicated local-admin username/password in the normal Winlogon `DefaultUserName` / `DefaultPassword` values. It deliberately does **not** enable `AutoAdminLogon`; the vulnerability is credential disclosure, not forced automatic sign-in. The apply path preserves the pre-existing Winlogon values so reset can restore them.
+
+All candidate resets are scoped to their own artifacts/accounts and do not reset the service, PATH, or scheduled-task scenarios already installed.
 
 Candidate testing remains exact and explicit, for example:
 
 ```text
-windows_lpe_techniques=['scheduled_task_binary_permissions','scheduled_task_directory_permissions']
+windows_lpe_techniques=['unattend_credentials','hardcoded_application_credentials','stored_winlogon_credentials']
 windows_lpe_allow_candidate=true
 ```
 
@@ -153,8 +140,8 @@ Current checkpoint:
 
 - 20-technique catalog committed;
 - five Service Batch 1 techniques are **Implemented** and live on the validated training WS01;
-- `path_search_order_hijacking` plus both scheduled-task permissions scenarios are **Candidate**;
-- 12 techniques remain Planned;
+- six additional source-complete techniques are **Candidate**;
+- nine techniques remain Planned;
 - normal profiles remain fail-closed while they include candidate/planned members;
 - candidate testing requires exact selection and explicit opt-in;
 - Defender, UAC and Windows Firewall are not globally weakened.

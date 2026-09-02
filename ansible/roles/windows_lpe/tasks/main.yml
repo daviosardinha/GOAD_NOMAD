@@ -146,3 +146,21 @@
   when:
     - windows_lpe_action != 'status'
     - "'scheduled_task_directory_permissions' in windows_lpe_requested_techniques"
+
+- name: Manage unattend credential artifact candidate
+  ansible.builtin.include_tasks: techniques/unattend_credentials.yml
+  when:
+    - windows_lpe_action != 'status'
+    - "'unattend_credentials' in windows_lpe_requested_techniques"
+
+- name: Manage hardcoded application credential candidate
+  ansible.builtin.include_tasks: techniques/hardcoded_application_credentials.yml
+  when:
+    - windows_lpe_action != 'status'
+    - "'hardcoded_application_credentials' in windows_lpe_requested_techniques"
+
+- name: Manage stored Winlogon credential candidate
+  ansible.builtin.include_tasks: techniques/stored_winlogon_credentials.yml
+  when:
+    - windows_lpe_action != 'status'
+    - "'stored_winlogon_credentials' in windows_lpe_requested_techniques"

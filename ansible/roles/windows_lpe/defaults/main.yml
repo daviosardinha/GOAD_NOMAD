@@ -52,6 +52,9 @@ windows_lpe_candidate_techniques:
   - path_search_order_hijacking
   - scheduled_task_binary_permissions
   - scheduled_task_directory_permissions
+  - unattend_credentials
+  - hardcoded_application_credentials
+  - stored_winlogon_credentials
 
 windows_lpe_implemented_techniques:
   - unquoted_service_path
@@ -148,3 +151,20 @@ windows_lpe_scheduled_task_directory_permissions:
   root: 'C:\Kingdom LPE\Scheduled Task Directory'
   directory: 'C:\Kingdom LPE\Scheduled Task Directory\Bin'
   executable: 'C:\Kingdom LPE\Scheduled Task Directory\Bin\KingdomTaskDirectory.exe'
+
+windows_lpe_unattend_credentials:
+  user_name: kingdom.deploy
+  password: 'RedKeep-Deploy-2026!'
+  artifact: 'C:\Windows\Panther\Kingdom-Unattend.xml'
+
+windows_lpe_hardcoded_application_credentials:
+  user_name: kingdom.appsvc
+  password: 'Kingdom-AppSvc-2026!'
+  root: 'C:\ProgramData\KingdomMonitor'
+  config: 'C:\ProgramData\KingdomMonitor\monitoring.ini'
+
+windows_lpe_stored_winlogon_credentials:
+  user_name: kingdom.autologon
+  password: 'Kingdom-Autologon-2026!'
+  root: 'C:\Kingdom LPE\Winlogon Credentials'
+  backup_file: 'C:\Kingdom LPE\Winlogon Credentials\winlogon-backup.json'
