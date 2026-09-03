@@ -1,7 +1,8 @@
 <div align="center">
 
 # GOAD Kingdoms
-<img width="2048" height="1448" alt="Logo Nomad-04" src="https://github.com/user-attachments/assets/b4e13d9e-6790-4d5a-9eeb-7bfe9fcf11e9" />
+<img width="1672" height="941" alt="GOAD_Kingdoms" src="https://github.com/user-attachments/assets/4497a82d-dda1-44b2-bdab-13c1a97dbbe2" />
+
 
 ### Segmented Active Directory Red Team Training Range
 
