@@ -8,7 +8,7 @@ readonly INVENTORY_DATA="${ROOT}/ad/GOAD/data/inventory"
 readonly INVENTORY_PROVIDER="${ROOT}/ad/GOAD/providers/vmware/inventory"
 readonly ANSIBLE_CFG="${ROOT}/ansible/ansible.cfg"
 
-readonly WINDOWS_VMS=(GOAD-DC01 GOAD-DC02 GOAD-DC03 GOAD-SRV02 GOAD-SRV03)
+readonly WINDOWS_VMS=(GOAD-DC01 GOAD-DC02 GOAD-DC03 GOAD-SRV02 GOAD-SRV03 GOAD-WS01)
 
 declare -A EXPECTED_NAME=(
     [GOAD-DC01]=KINGSLANDING
@@ -16,6 +16,7 @@ declare -A EXPECTED_NAME=(
     [GOAD-DC03]=MEEREEN
     [GOAD-SRV02]=CASTELBLACK
     [GOAD-SRV03]=BRAAVOS
+    [GOAD-WS01]=WS01
 )
 
 declare -A NAT_IP=()
@@ -191,6 +192,14 @@ cleanup() {
             echo "[CLEANUP] WARNING: automatic exercise-mode recovery failed" >&2
     fi
 
+    # set -e can terminate the validator on an unexpected command error before
+    # one of the explicit fatal() paths has a chance to increment FAIL_COUNT.
+    # Never print the contradictory FAIL: 0 / [FAILED] combination.
+    if [[ "${rc}" -ne 0 && "${FAIL_COUNT}" -eq 0 ]]; then
+        FAIL_COUNT=1
+        echo "[FAIL] validator aborted on an unexpected command error (rc=${rc}); inspect the last emitted command/log" >&2
+    fi
+
     echo
     echo "============================================================"
     echo "GOAD_NOMAD RUNTIME VALIDATION SUMMARY"
@@ -261,14 +270,32 @@ pass "provisioning-only host routes"
 section "3. VAGRANT MANAGEMENT / NAT ADDRESS DISCOVERY"
 
 for vm in "${WINDOWS_VMS[@]}"; do
-    out="$(vagrant_ps "${vm}" <<'PS'
+    if ! out="$(vagrant_ps "${vm}" <<'PS'
+$ErrorActionPreference = 'Stop'
 Write-Output "COMPUTERNAME=$env:COMPUTERNAME"
-$ip = Get-NetIPAddress -AddressFamily IPv4 -InterfaceAlias 'Ethernet0' -ErrorAction Stop |
-    Where-Object { $_.IPAddress -notlike '169.254.*' } |
+
+# Do not key management discovery to a Windows display alias. The Server boxes
+# currently expose the provisioning NIC as Ethernet0, while the Windows 10
+# workstation exposes that same VMware NAT adapter as "Ethernet0 2". Discover
+# it by network identity instead: a usable non-loopback/non-APIPA IPv4 address
+# outside the deterministic 10.4.0.0/16 exercise networks.
+$ip = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction Stop |
+    Where-Object {
+        $_.IPAddress -ne '127.0.0.1' -and
+        $_.IPAddress -notlike '169.254.*' -and
+        $_.IPAddress -notmatch '^10\.4\.'
+    } |
+    Sort-Object InterfaceIndex |
     Select-Object -First 1 -ExpandProperty IPAddress
+
+if (-not $ip) {
+    throw 'Provisioning NAT IPv4 address was not discovered by network identity'
+}
 Write-Output "NATIP=$ip"
 PS
-)"
+)"; then
+        fatal "${vm} Vagrant management query failed during NAT address discovery"
+    fi
     printf '%s\n' "${out}" | tee "${LOG_DIR}/${vm}-management.log"
 
     printf '%s\n' "${out}" | grep -Fq "COMPUTERNAME=${EXPECTED_NAME[$vm]}" || fatal "${vm} Vagrant management returned unexpected computer name"
@@ -279,9 +306,66 @@ PS
 
     printf '%-12s %-15s %s\n' "${vm}" "${nat}" "${EXPECTED_NAME[$vm]}"
 done
-pass "all five Vagrant management paths"
+pass "all six Vagrant management paths"
 
-section "4. REPLAY COMMITTED CHILD-DOMAIN / DNS SOURCE"
+section "4. WS01 CLEAN FOUNDATION CONTRACT"
+
+out="$(vagrant_ps GOAD-WS01 <<'PS'
+$ErrorActionPreference = 'Stop'
+
+$computer = Get-CimInstance Win32_ComputerSystem
+if (-not $computer.PartOfDomain) { throw 'WS01 is not joined to a domain' }
+if ($computer.Domain -ne 'north.sevenkingdoms.local') { throw "unexpected WS01 domain: $($computer.Domain)" }
+if (-not (Test-ComputerSecureChannel)) { throw 'WS01 domain secure channel is unhealthy' }
+
+$rdpUsers = @(
+    Get-LocalGroupMember -Group 'Remote Desktop Users' |
+        ForEach-Object { $_.Name.ToLowerInvariant() }
+)
+if ($rdpUsers -notcontains 'north\rickon.stark') {
+    throw "Rickon missing from Remote Desktop Users: $($rdpUsers -join ',')"
+}
+
+$admins = @(
+    Get-LocalGroupMember -Group 'Administrators' |
+        ForEach-Object { $_.Name.ToLowerInvariant() }
+)
+if ($admins -contains 'north\rickon.stark') { throw 'Rickon is unexpectedly a local administrator' }
+
+$uac = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System').EnableLUA
+if ($uac -ne 1) { throw "UAC EnableLUA=$uac" }
+
+$disabledProfiles = @(Get-NetFirewallProfile | Where-Object { -not $_.Enabled })
+if ($disabledProfiles.Count -ne 0) {
+    throw "disabled firewall profiles: $($disabledProfiles.Name -join ',')"
+}
+
+$defender = Get-MpComputerStatus
+if (-not $defender.AntivirusEnabled) { throw 'Microsoft Defender antivirus is disabled' }
+if (-not $defender.RealTimeProtectionEnabled) { throw 'Microsoft Defender real-time protection is disabled' }
+
+Write-Output 'WS01_DOMAIN=PASS'
+Write-Output 'WS01_RICKON_RDP=PASS'
+Write-Output 'WS01_RICKON_LOW_PRIV=PASS'
+Write-Output 'WS01_UAC=PASS'
+Write-Output 'WS01_FIREWALL=PASS'
+Write-Output 'WS01_DEFENDER=PASS'
+PS
+)"
+printf '%s\n' "${out}" | tee "${LOG_DIR}/ws01-foundation.log"
+for check in \
+    WS01_DOMAIN \
+    WS01_RICKON_RDP \
+    WS01_RICKON_LOW_PRIV \
+    WS01_UAC \
+    WS01_FIREWALL \
+    WS01_DEFENDER
+do
+    printf '%s\n' "${out}" | grep -Fq "${check}=PASS" || fatal "${check} validation failed"
+done
+pass "WS01 domain, foothold, low-privilege and native security baseline"
+
+section "5. REPLAY COMMITTED CHILD-DOMAIN / DNS SOURCE"
 
 run_playbook ad-child_domain.yml "${LOG_DIR}/ad-child-domain-pass1.log" || fatal "first ad-child_domain.yml replay failed"
 pass "child-domain/DNS source replay #1"
@@ -300,7 +384,7 @@ pass "child-domain promotion idempotency"
 run_playbook ad-trusts.yml "${LOG_DIR}/ad-trusts.log" || fatal "ad-trusts.yml replay failed"
 pass "trust/DNS source replay"
 
-section "5. POST-REPLAY DNS STATE"
+section "6. POST-REPLAY DNS STATE"
 
 out="$(vagrant_ps GOAD-DC02 <<'PS'
 $ErrorActionPreference = 'Stop'
@@ -313,11 +397,16 @@ if ($binding.Enabled) { throw 'IPv6 is still enabled on Ethernet0 provisioning N
 $zone = Get-DnsServerZone -Name 'north.sevenkingdoms.local'
 if (-not $zone.IsDsIntegrated) { throw 'north.sevenkingdoms.local is not AD integrated' }
 
-$parent = Get-DnsServerConditionalForwarderZone -Name 'sevenkingdoms.local'
+# Conditional forwarders are exposed by Get-DnsServerZone with
+# ZoneType=Forwarder. Validate the forwarding relationship itself rather than
+# assuming a particular AD-integration/replication scope.
+$parent = Get-DnsServerZone -Name 'sevenkingdoms.local' -ErrorAction Stop
+if ($parent.ZoneType.ToString() -ne 'Forwarder') { throw "sevenkingdoms.local is not a forwarder: $($parent.ZoneType)" }
 $parentMasters = @($parent.MasterServers | ForEach-Object { $_.ToString() })
 if ($parentMasters -notcontains '10.4.20.10') { throw "parent forwarder incorrect: $($parentMasters -join ',')" }
 
-$essos = Get-DnsServerConditionalForwarderZone -Name 'essos.local'
+$essos = Get-DnsServerZone -Name 'essos.local' -ErrorAction Stop
+if ($essos.ZoneType.ToString() -ne 'Forwarder') { throw "essos.local is not a forwarder: $($essos.ZoneType)" }
 $essosMasters = @($essos.MasterServers | ForEach-Object { $_.ToString() })
 if ($essosMasters -notcontains '10.4.30.12') { throw "ESSOS forwarder incorrect: $($essosMasters -join ',')" }
 
@@ -337,7 +426,8 @@ pass "Winterfell DNS hardening / forwarders"
 
 out="$(vagrant_ps GOAD-DC01 <<'PS'
 $ErrorActionPreference = 'Stop'
-$essos = Get-DnsServerConditionalForwarderZone -Name 'essos.local'
+$essos = Get-DnsServerZone -Name 'essos.local' -ErrorAction Stop
+if ($essos.ZoneType.ToString() -ne 'Forwarder') { throw "essos.local is not a forwarder on Kingslanding: $($essos.ZoneType)" }
 $masters = @($essos.MasterServers | ForEach-Object { $_.ToString() })
 if ($masters -notcontains '10.4.30.12') { throw "Kingslanding ESSOS forwarder incorrect: $($masters -join ',')" }
 Write-Output 'KINGSLANDING_ESSOS_FORWARDER=PASS'
@@ -347,7 +437,7 @@ printf '%s\n' "${out}" | tee "${LOG_DIR}/kingslanding-forwarder.log"
 printf '%s\n' "${out}" | grep -Fq 'KINGSLANDING_ESSOS_FORWARDER=PASS' || fatal "Kingslanding ESSOS forwarder validation failed"
 pass "forest-replicated ESSOS forwarder"
 
-section "6. TRUST / BOT / LINKED-SQL HEALTH IN PROVISIONING MODE"
+section "7. TRUST / BOT / LINKED-SQL HEALTH IN PROVISIONING MODE"
 
 out="$(vagrant_ps GOAD-DC02 <<'PS'
 $ErrorActionPreference = 'Stop'
@@ -444,7 +534,7 @@ printf '%s\n' "${out}" | tee "${LOG_DIR}/sql-braavos-castelblack.log"
 printf '%s\n' "${out}" | grep -Fq 'BRAAVOS_TO_CASTELBLACK=PASS' || fatal "Braavos -> Castelblack linked SQL failed"
 pass "Braavos -> Castelblack linked SQL"
 
-section "7. RETURN TO EXERCISE MODE"
+section "8. RETURN TO EXERCISE MODE"
 
 GOAD_PROVIDER_DIR="${PROVIDER}" bash "${ROOT}/scripts/lab-mode.sh" exercise | tee "${LOG_DIR}/exercise-transition.log"
 FINAL_EXERCISE=1
@@ -455,7 +545,7 @@ grep -Fq 'Recorded mode: exercise' "${LOG_DIR}/exercise-status.log" || fatal "re
 grep -Fq 'policy drop;' "${LOG_DIR}/exercise-status.log" || fatal "router is not deny-by-default"
 pass "exercise mode / deny-by-default router"
 
-section "8. FINAL PERSISTENT NAT ISOLATION"
+section "9. FINAL PERSISTENT NAT ISOLATION"
 
 for vm in "${WINDOWS_VMS[@]}"; do
     vmx="$(vmx_for "${vm}")"
@@ -468,19 +558,71 @@ for vm in "${WINDOWS_VMS[@]}"; do
     fi
     echo '[PASS] isolated'
 done
-pass "all five Windows NAT paths persistently isolated"
+pass "all six Windows NAT paths persistently isolated"
 
 [[ -z "$(ip route show 10.4.20.0/24)" ]] || fatal "SevenKingdoms provisioning route remains in exercise mode"
 [[ -z "$(ip route show 10.4.30.0/24)" ]] || fatal "ESSOS provisioning route remains in exercise mode"
 pass "protected-zone host routes removed"
 
-section "9. STUDENT-SIDE NETWORK BOUNDARY"
+section "10. STUDENT-SIDE NETWORK BOUNDARY"
 
-ping -c 2 -W 2 10.4.10.11 >/dev/null || fatal "Winterfell unreachable from NORTH"
-ping -c 2 -W 2 10.4.10.22 >/dev/null || fatal "Castelblack unreachable from NORTH"
-timeout 3 nc -zw2 10.4.10.11 445 || fatal "Winterfell SMB unreachable from NORTH"
-timeout 3 nc -zw2 10.4.10.22 445 || fatal "Castelblack SMB unreachable from NORTH"
-pass "NORTH remains directly reachable"
+# lab-mode exercise may stop/start Windows guests when persisting the NAT NIC
+# as disconnected. VMware reporting power=running only means the VM process is
+# running; it does not guarantee that Windows networking/services are ready.
+# Wait on the actual NORTH-side services required by the exercise instead of
+# racing guest boot or depending on Windows ICMP firewall behavior.
+wait_north_service() {
+    local label="$1"
+    local host="$2"
+    local port="$3"
+    local timeout_s="${4:-300}"
+    local start now elapsed next_notice
+
+    start="$(date +%s)"
+    next_notice=30
+
+    while true; do
+        if timeout 3 nc -zw2 "$host" "$port" >/dev/null 2>&1; then
+            now="$(date +%s)"
+            elapsed=$((now - start))
+            echo "[READY] ${label} (${host}:${port}) after ${elapsed}s"
+            return 0
+        fi
+
+        now="$(date +%s)"
+        elapsed=$((now - start))
+
+        if (( elapsed >= timeout_s )); then
+            echo "[TIMEOUT] ${label} (${host}:${port}) not ready after ${elapsed}s" >&2
+            return 1
+        fi
+
+        if (( elapsed >= next_notice )); then
+            echo "[WAIT] ${label} (${host}:${port}) still starting after ${elapsed}s"
+            next_notice=$((next_notice + 30))
+        fi
+
+        sleep 5
+    done
+}
+
+wait_north_service "Winterfell SMB"   10.4.10.11 445  300 || fatal "Winterfell SMB did not recover after exercise transition"
+wait_north_service "Castelblack SMB"  10.4.10.22 445  300 || fatal "Castelblack SMB did not recover after exercise transition"
+wait_north_service "WS01 RDP"         10.4.10.31 3389 300 || fatal "WS01 RDP did not recover after exercise transition"
+
+# The next section executes Ansible directly over the isolated NORTH network,
+# so also wait for WinRM rather than allowing another post-reboot race.
+wait_north_service "Winterfell WinRM"  10.4.10.11 5986 300 || fatal "Winterfell WinRM did not recover after exercise transition"
+
+# WinRM can become available before the domain controller is operational.
+# The ActiveDirectory PowerShell provider requires Active Directory Web
+# Services, so wait for ADWS TCP/9389 before executing the exercise trust gate.
+wait_north_service "Winterfell ADWS"   10.4.10.11 9389 300 || fatal "Winterfell ADWS did not recover after exercise transition"
+
+wait_north_service "Castelblack WinRM" 10.4.10.22 5986 300 || fatal "Castelblack WinRM did not recover after exercise transition"
+wait_north_service "WS01 WinRM"        10.4.10.31 5986 300 || fatal "WS01 WinRM did not recover after exercise transition"
+
+pass "NORTH services stabilized and remain directly reachable"
 
 if timeout 3 nc -zw2 10.4.20.10 445 2>/dev/null; then
     fatal "SevenKingdoms is directly reachable from student/host side"
@@ -490,22 +632,58 @@ if timeout 3 nc -zw2 10.4.30.12 445 2>/dev/null; then
 fi
 pass "direct SevenKingdoms / ESSOS access blocked"
 
-section "10. EXERCISE-PATH DNS / TRUST / SQL FROM NORTH"
+section "11. EXERCISE-PATH DNS / TRUST / SQL FROM NORTH"
 
 ansible_ps_north dc02 exercise-dns-trust <<'PS'
 $ErrorActionPreference = 'Stop'
-Import-Module ActiveDirectory
+
+# Importing the ActiveDirectory module normally creates an implicit AD: drive.
+# That provider initialization performs its own default-server discovery and
+# can fail during post-boot convergence even after TCP/9389 starts listening.
+# This validator never uses AD:, so suppress that side effect and probe the
+# exact directory server and trust cmdlet path that section 11 requires.
+$Env:ADPS_LoadDefaultDrive = '0'
+Import-Module ActiveDirectory -ErrorAction Stop
+
 Clear-DnsClientCache
 try { Clear-DnsServerCache -Force -ErrorAction Stop } catch { }
 
+$localDc = 'winterfell.north.sevenkingdoms.local'
+$deadline = (Get-Date).AddMinutes(5)
+$lastAdError = 'no functional Active Directory probe completed'
+$t = $null
+
+while ((Get-Date) -lt $deadline) {
+    try {
+        $rootDse = Get-ADRootDSE -Server $localDc -ErrorAction Stop
+        if ($rootDse.defaultNamingContext -ne 'DC=north,DC=sevenkingdoms,DC=local') {
+            throw "unexpected Winterfell naming context: $($rootDse.defaultNamingContext)"
+        }
+
+        $t = Get-ADTrust -Identity 'sevenkingdoms.local' -Server $localDc -ErrorAction Stop
+        if ($t.Direction.ToString() -ne 'BiDirectional') {
+            throw "parent/child trust direction: $($t.Direction)"
+        }
+
+        $lastAdError = $null
+        break
+    } catch {
+        $lastAdError = $_.Exception.Message
+        Start-Sleep -Seconds 5
+    }
+}
+
+if ($null -ne $lastAdError) {
+    throw "Winterfell AD cmdlets were not functional within 300 seconds: $lastAdError"
+}
+
 $parent = nltest /dsgetdc:sevenkingdoms.local /force | Out-String
 if ($parent -notmatch '10\.4\.20\.10') { throw 'parent DC discovery failed in exercise mode' }
-$t = Get-ADTrust -Identity sevenkingdoms.local
-if ($t.Direction.ToString() -ne 'BiDirectional') { throw 'parent/child trust is not bidirectional' }
 
 $essos = Resolve-DnsName '_ldap._tcp.dc._msdcs.essos.local' -Type SRV -ErrorAction Stop
 if (($essos | Where-Object NameTarget -match '^meereen\.essos\.local\.?$').Count -lt 1) { throw 'ESSOS SRV resolution did not return Meereen' }
 
+Write-Output 'EXERCISE_AD_FUNCTIONAL_READY=PASS'
 Write-Output 'EXERCISE_PARENT_CHILD=PASS'
 Write-Output 'EXERCISE_ESSOS_DNS=PASS'
 PS
@@ -533,7 +711,7 @@ REVERT;
 PS
 pass "exercise-mode Castelblack -> Braavos linked SQL"
 
-section "11. FINAL FIREWALL EVIDENCE"
+section "12. FINAL FIREWALL EVIDENCE"
 
 router_cmd 'sudo nft list chain inet goad_nomad forward' | tee "${LOG_DIR}/final-firewall.log"
 
@@ -553,7 +731,7 @@ p_sql="$(packets_for_rule 'ip saddr 10.4.10.22 ip daddr 10.4.30.23 tcp dport 143
 [[ "${p_sql:-0}" -gt 0 ]] || fatal "Castelblack -> Braavos SQL firewall rule did not record traffic"
 pass "required exercise firewall paths recorded traffic"
 
-section "12. FINAL STATE"
+section "13. FINAL STATE"
 
 GOAD_PROVIDER_DIR="${PROVIDER}" bash "${ROOT}/scripts/lab-mode.sh" status | tee "${LOG_DIR}/final-status.log"
 grep -Fq 'Recorded mode: exercise' "${LOG_DIR}/final-status.log" || fatal "final mode is not exercise"

@@ -1,0 +1,200 @@
+---
+- name: Apply AlwaysInstallElevated candidate
+  ansible.windows.win_powershell:
+    script: |
+      $ErrorActionPreference = 'Stop'
+      $target = '{{ windows_lpe_always_install_elevated.target_account }}'
+      $targetPassword = '{{ windows_lpe_always_install_elevated.target_password }}'
+      $root = '{{ windows_lpe_always_install_elevated.root }}'
+      $stateFile = '{{ windows_lpe_always_install_elevated.state_file }}'
+      $sid = (New-Object System.Security.Principal.NTAccount($target)).Translate([System.Security.Principal.SecurityIdentifier]).Value
+      $machinePath = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Installer'
+
+      New-Item -ItemType Directory -Path $root -Force | Out-Null
+
+      $profileKey = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$sid"
+      if (-not (Test-Path -LiteralPath $profileKey)) {
+          $secure = ConvertTo-SecureString $targetPassword -AsPlainText -Force
+          $cred = New-Object System.Management.Automation.PSCredential($target, $secure)
+          Start-Process -FilePath "$env:SystemRoot\System32\cmd.exe" -ArgumentList '/c','exit 0' -Credential $cred -LoadUserProfile -Wait -WindowStyle Hidden
+          Start-Sleep -Milliseconds 500
+      }
+      if (-not (Test-Path -LiteralPath $profileKey)) { throw "ProfileList entry was not created for $target" }
+      $profile = [Environment]::ExpandEnvironmentVariables((Get-ItemProperty -LiteralPath $profileKey -ErrorAction Stop).ProfileImagePath)
+      $ntuser = Join-Path $profile 'NTUSER.DAT'
+      if (-not (Test-Path -LiteralPath $ntuser -PathType Leaf)) { throw "NTUSER.DAT missing for $target at $ntuser" }
+
+      function Invoke-WithUserHive([scriptblock] $Body) {
+          $loaded = Test-Path -LiteralPath "Registry::HKEY_USERS\$sid"
+          $mount = $sid
+          if (-not $loaded) {
+              $mount = 'KingdomAIE'
+              & reg.exe load "HKU\$mount" "$ntuser" | Out-Null
+              if ($LASTEXITCODE -ne 0) { throw "reg load failed for $ntuser" }
+          }
+          try { & $Body $mount }
+          finally {
+              if (-not $loaded) {
+                  [gc]::Collect(); [gc]::WaitForPendingFinalizers()
+                  & reg.exe unload "HKU\$mount" | Out-Null
+                  if ($LASTEXITCODE -ne 0) { throw 'reg unload failed for temporary Rickon hive' }
+              }
+          }
+      }
+
+      if (-not (Test-Path -LiteralPath $stateFile)) {
+          $machineExists = Test-Path -LiteralPath $machinePath
+          $machineValueExists = $false
+          $machineValue = $null
+          if ($machineExists) {
+              $m = Get-ItemProperty -LiteralPath $machinePath -Name AlwaysInstallElevated -ErrorAction SilentlyContinue
+              if ($null -ne $m) { $machineValueExists = $true; $machineValue = [int]$m.AlwaysInstallElevated }
+          }
+
+          $userSnapshot = Invoke-WithUserHive {
+              param($mount)
+              $userPath = "Registry::HKEY_USERS\$mount\Software\Policies\Microsoft\Windows\Installer"
+              $exists = Test-Path -LiteralPath $userPath
+              $valueExists = $false
+              $value = $null
+              if ($exists) {
+                  $u = Get-ItemProperty -LiteralPath $userPath -Name AlwaysInstallElevated -ErrorAction SilentlyContinue
+                  if ($null -ne $u) { $valueExists = $true; $value = [int]$u.AlwaysInstallElevated }
+              }
+              [pscustomobject]@{ key_exists=$exists; value_exists=$valueExists; value=$value }
+          }
+
+          if ($machineValueExists -and $machineValue -eq 1 -and $userSnapshot.value_exists -and [int]$userSnapshot.value -eq 1) {
+              throw 'AlwaysInstallElevated was already fully enabled before this candidate; refusing collision'
+          }
+
+          [pscustomobject]@{
+              sid = $sid
+              profile = $profile
+              machine_key_exists = $machineExists
+              machine_value_exists = $machineValueExists
+              machine_value = $machineValue
+              user_key_exists = [bool]$userSnapshot.key_exists
+              user_value_exists = [bool]$userSnapshot.value_exists
+              user_value = $userSnapshot.value
+          } | ConvertTo-Json | Set-Content -LiteralPath $stateFile -Encoding UTF8
+      }
+
+      New-Item -Path $machinePath -Force | Out-Null
+      New-ItemProperty -LiteralPath $machinePath -Name AlwaysInstallElevated -Value 1 -PropertyType DWord -Force | Out-Null
+      Invoke-WithUserHive {
+          param($mount)
+          $userPath = "Registry::HKEY_USERS\$mount\Software\Policies\Microsoft\Windows\Installer"
+          New-Item -Path $userPath -Force | Out-Null
+          New-ItemProperty -LiteralPath $userPath -Name AlwaysInstallElevated -Value 1 -PropertyType DWord -Force | Out-Null
+      }
+
+      Write-Output 'WINDOWS_LPE_ALWAYS_INSTALL_ELEVATED=APPLIED'
+  when: windows_lpe_action == 'apply'
+
+- name: Reset AlwaysInstallElevated candidate
+  ansible.windows.win_powershell:
+    script: |
+      $ErrorActionPreference = 'Stop'
+      $root = '{{ windows_lpe_always_install_elevated.root }}'
+      $stateFile = '{{ windows_lpe_always_install_elevated.state_file }}'
+      $machinePath = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Installer'
+      if (-not (Test-Path -LiteralPath $stateFile -PathType Leaf)) {
+          Write-Output 'WINDOWS_LPE_ALWAYS_INSTALL_ELEVATED=RESET'
+          return
+      }
+      $state = Get-Content -LiteralPath $stateFile -Raw | ConvertFrom-Json
+      $sid = [string]$state.sid
+      $profile = [string]$state.profile
+      $ntuser = Join-Path $profile 'NTUSER.DAT'
+
+      if ([bool]$state.machine_value_exists) {
+          New-Item -Path $machinePath -Force | Out-Null
+          New-ItemProperty -LiteralPath $machinePath -Name AlwaysInstallElevated -Value ([int]$state.machine_value) -PropertyType DWord -Force | Out-Null
+      } else {
+          Remove-ItemProperty -LiteralPath $machinePath -Name AlwaysInstallElevated -ErrorAction SilentlyContinue
+          if (-not [bool]$state.machine_key_exists -and (Test-Path -LiteralPath $machinePath)) {
+              $item = Get-Item -LiteralPath $machinePath
+              if ($item.Property.Count -eq 0 -and $item.SubKeyCount -eq 0) { Remove-Item -LiteralPath $machinePath -Force }
+          }
+      }
+
+      $loaded = Test-Path -LiteralPath "Registry::HKEY_USERS\$sid"
+      $mount = $sid
+      if (-not $loaded) {
+          $mount = 'KingdomAIE'
+          & reg.exe load "HKU\$mount" "$ntuser" | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw 'reg load failed during AlwaysInstallElevated reset' }
+      }
+      try {
+          $userPath = "Registry::HKEY_USERS\$mount\Software\Policies\Microsoft\Windows\Installer"
+          if ([bool]$state.user_value_exists) {
+              New-Item -Path $userPath -Force | Out-Null
+              New-ItemProperty -LiteralPath $userPath -Name AlwaysInstallElevated -Value ([int]$state.user_value) -PropertyType DWord -Force | Out-Null
+          } else {
+              Remove-ItemProperty -LiteralPath $userPath -Name AlwaysInstallElevated -ErrorAction SilentlyContinue
+              if (-not [bool]$state.user_key_exists -and (Test-Path -LiteralPath $userPath)) {
+                  $item = Get-Item -LiteralPath $userPath
+                  if ($item.Property.Count -eq 0 -and $item.SubKeyCount -eq 0) { Remove-Item -LiteralPath $userPath -Force }
+              }
+          }
+      } finally {
+          if (-not $loaded) {
+              [gc]::Collect(); [gc]::WaitForPendingFinalizers()
+              & reg.exe unload "HKU\$mount" | Out-Null
+              if ($LASTEXITCODE -ne 0) { throw 'reg unload failed during AlwaysInstallElevated reset' }
+          }
+      }
+
+      Remove-Item -LiteralPath $root -Recurse -Force
+      Write-Output 'WINDOWS_LPE_ALWAYS_INSTALL_ELEVATED=RESET'
+  when: windows_lpe_action == 'reset'
+
+- name: Validate vulnerable AlwaysInstallElevated state
+  ansible.windows.win_powershell:
+    script: |
+      $ErrorActionPreference = 'Stop'
+      $target = '{{ windows_lpe_always_install_elevated.target_account }}'
+      $sid = (New-Object System.Security.Principal.NTAccount($target)).Translate([System.Security.Principal.SecurityIdentifier]).Value
+      $machinePath = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Installer'
+      if ((Get-ItemProperty -LiteralPath $machinePath -Name AlwaysInstallElevated -ErrorAction Stop).AlwaysInstallElevated -ne 1) { throw 'HKLM AlwaysInstallElevated is not enabled' }
+      $profileKey = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$sid"
+      $profile = [Environment]::ExpandEnvironmentVariables((Get-ItemProperty -LiteralPath $profileKey -ErrorAction Stop).ProfileImagePath)
+      $ntuser = Join-Path $profile 'NTUSER.DAT'
+      $loaded = Test-Path -LiteralPath "Registry::HKEY_USERS\$sid"
+      $mount = $sid
+      if (-not $loaded) { $mount='KingdomAIE'; & reg.exe load "HKU\$mount" "$ntuser" | Out-Null; if ($LASTEXITCODE -ne 0) { throw 'reg load failed during validation' } }
+      try {
+          $userPath = "Registry::HKEY_USERS\$mount\Software\Policies\Microsoft\Windows\Installer"
+          if ((Get-ItemProperty -LiteralPath $userPath -Name AlwaysInstallElevated -ErrorAction Stop).AlwaysInstallElevated -ne 1) { throw 'Rickon HKCU AlwaysInstallElevated is not enabled' }
+      } finally {
+          if (-not $loaded) { [gc]::Collect(); [gc]::WaitForPendingFinalizers(); & reg.exe unload "HKU\$mount" | Out-Null }
+      }
+      Write-Output 'WINDOWS_LPE_ALWAYS_INSTALL_ELEVATED=VULNERABLE'
+  register: windows_lpe_always_install_elevated_vulnerable
+  when:
+    - windows_lpe_action == 'apply' or (windows_lpe_action == 'validate' and windows_lpe_validate_state == 'vulnerable')
+
+- name: Show vulnerable AlwaysInstallElevated validation
+  ansible.builtin.debug:
+    var: windows_lpe_always_install_elevated_vulnerable.output
+  when:
+    - windows_lpe_always_install_elevated_vulnerable is defined
+    - windows_lpe_always_install_elevated_vulnerable.output is defined
+
+- name: Validate clean AlwaysInstallElevated state
+  ansible.windows.win_powershell:
+    script: |
+      $root = '{{ windows_lpe_always_install_elevated.root }}'
+      if (Test-Path -LiteralPath $root) { throw 'AlwaysInstallElevated state directory still exists' }
+      Write-Output 'WINDOWS_LPE_ALWAYS_INSTALL_ELEVATED=CLEAN'
+  register: windows_lpe_always_install_elevated_clean
+  when:
+    - windows_lpe_action == 'reset' or (windows_lpe_action == 'validate' and windows_lpe_validate_state == 'clean')
+
+- name: Show clean AlwaysInstallElevated validation
+  ansible.builtin.debug:
+    var: windows_lpe_always_install_elevated_clean.output
+  when:
+    - windows_lpe_always_install_elevated_clean is defined
+    - windows_lpe_always_install_elevated_clean.output is defined

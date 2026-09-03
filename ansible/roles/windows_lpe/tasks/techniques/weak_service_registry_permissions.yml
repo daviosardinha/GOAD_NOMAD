@@ -1,0 +1,131 @@
+---
+- name: Apply weak service registry permissions candidate
+  ansible.windows.win_powershell:
+    script: |
+      $ErrorActionPreference = 'Stop'
+      $name = '{{ windows_lpe_weak_service_registry_permissions.service_name }}'
+      $display = '{{ windows_lpe_weak_service_registry_permissions.display_name }}'
+      $root = '{{ windows_lpe_weak_service_registry_permissions.root }}'
+      $exe = '{{ windows_lpe_weak_service_registry_permissions.executable }}'
+      $regPath = "Registry::HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\$name"
+
+      $existing = Get-Service -Name $name -ErrorAction SilentlyContinue
+      if ($existing) {
+          Stop-Service -Name $name -Force -ErrorAction SilentlyContinue
+          & sc.exe delete $name | Out-Null
+          Start-Sleep -Milliseconds 750
+      }
+      if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }
+      New-Item -ItemType Directory -Path $root -Force | Out-Null
+
+      $source = @"
+      using System;
+      using System.ServiceProcess;
+      public sealed class KingdomRegistryService : ServiceBase
+      {
+          public KingdomRegistryService() { ServiceName = "KingdomRegistrySvc"; }
+          protected override void OnStart(string[] args) { }
+          protected override void OnStop() { }
+          public static void Main() { ServiceBase.Run(new KingdomRegistryService()); }
+      }
+      "@
+      Add-Type -TypeDefinition $source -Language CSharp -ReferencedAssemblies 'System.ServiceProcess.dll' -OutputAssembly $exe -OutputType WindowsApplication
+      New-Service -Name $name -BinaryPathName ('"{0}"' -f $exe) -DisplayName $display -StartupType Manual | Out-Null
+
+      $acl = Get-Acl -Path $regPath
+      $usersSid = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-32-545')
+      $rule = New-Object System.Security.AccessControl.RegistryAccessRule(
+          $usersSid,
+          [System.Security.AccessControl.RegistryRights]::SetValue,
+          [System.Security.AccessControl.InheritanceFlags]::None,
+          [System.Security.AccessControl.PropagationFlags]::None,
+          [System.Security.AccessControl.AccessControlType]::Allow
+      )
+      $acl.AddAccessRule($rule) | Out-Null
+      Set-Acl -Path $regPath -AclObject $acl
+
+      Write-Output 'WINDOWS_LPE_WEAK_SERVICE_REGISTRY_PERMISSIONS=APPLIED'
+  when: windows_lpe_action == 'apply'
+
+- name: Reset weak service registry permissions candidate
+  ansible.windows.win_powershell:
+    script: |
+      $name = '{{ windows_lpe_weak_service_registry_permissions.service_name }}'
+      $root = '{{ windows_lpe_weak_service_registry_permissions.root }}'
+      $existing = Get-Service -Name $name -ErrorAction SilentlyContinue
+      if ($existing) {
+          Stop-Service -Name $name -Force -ErrorAction SilentlyContinue
+          & sc.exe delete $name | Out-Null
+          Start-Sleep -Milliseconds 750
+      }
+      if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }
+      Write-Output 'WINDOWS_LPE_WEAK_SERVICE_REGISTRY_PERMISSIONS=RESET'
+  when: windows_lpe_action == 'reset'
+
+- name: Validate vulnerable weak service registry permissions state
+  ansible.windows.win_powershell:
+    script: |
+      $ErrorActionPreference = 'Stop'
+      $name = '{{ windows_lpe_weak_service_registry_permissions.service_name }}'
+      $exe = '{{ windows_lpe_weak_service_registry_permissions.executable }}'
+      $regPath = "Registry::HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\$name"
+      $usersSid = 'S-1-5-32-545'
+
+      $service = Get-CimInstance Win32_Service -Filter "Name='$name'" -ErrorAction Stop
+      if (-not $service) { throw 'KingdomRegistrySvc is missing' }
+      if ($service.StartName -ne 'LocalSystem') { throw "service account=$($service.StartName)" }
+      if (-not $service.PathName.TrimStart().StartsWith('"')) { throw 'service ImagePath is not quoted' }
+      if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw 'service executable missing' }
+
+      $setValue = $false
+      foreach ($ace in (Get-Acl -Path $regPath).Access) {
+          try { $sid = $ace.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value } catch { continue }
+          if ($sid -eq $usersSid -and $ace.AccessControlType -eq 'Allow' -and
+              (($ace.RegistryRights -band [System.Security.AccessControl.RegistryRights]::SetValue) -ne 0)) {
+              $setValue = $true
+          }
+      }
+      if (-not $setValue) { throw 'BUILTIN\Users lacks SetValue on the privileged service registry key' }
+
+      $binaryWritable = $false
+      foreach ($ace in (Get-Acl -LiteralPath $exe).Access) {
+          try { $sid = $ace.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value } catch { continue }
+          if ($sid -eq $usersSid -and $ace.AccessControlType -eq 'Allow' -and
+              (($ace.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::WriteData) -ne 0)) {
+              $binaryWritable = $true
+          }
+      }
+      if ($binaryWritable) { throw 'service executable is also writable by Users; technique collision detected' }
+
+      Write-Output 'WINDOWS_LPE_WEAK_SERVICE_REGISTRY_PERMISSIONS=VULNERABLE'
+  register: windows_lpe_weak_service_registry_permissions_vulnerable
+  when:
+    - windows_lpe_action == 'apply' or (windows_lpe_action == 'validate' and windows_lpe_validate_state == 'vulnerable')
+
+- name: Show vulnerable weak service registry permissions validation
+  ansible.builtin.debug:
+    var: windows_lpe_weak_service_registry_permissions_vulnerable.output
+  when:
+    - windows_lpe_weak_service_registry_permissions_vulnerable is defined
+    - windows_lpe_weak_service_registry_permissions_vulnerable.output is defined
+
+- name: Validate clean weak service registry permissions state
+  ansible.windows.win_powershell:
+    script: |
+      $name = '{{ windows_lpe_weak_service_registry_permissions.service_name }}'
+      $root = '{{ windows_lpe_weak_service_registry_permissions.root }}'
+      $regPath = "Registry::HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\$name"
+      if (Get-Service -Name $name -ErrorAction SilentlyContinue) { throw 'KingdomRegistrySvc still exists' }
+      if (Test-Path -Path $regPath) { throw 'service registry key still exists' }
+      if (Test-Path -LiteralPath $root) { throw 'weak registry lab directory still exists' }
+      Write-Output 'WINDOWS_LPE_WEAK_SERVICE_REGISTRY_PERMISSIONS=CLEAN'
+  register: windows_lpe_weak_service_registry_permissions_clean
+  when:
+    - windows_lpe_action == 'reset' or (windows_lpe_action == 'validate' and windows_lpe_validate_state == 'clean')
+
+- name: Show clean weak service registry permissions validation
+  ansible.builtin.debug:
+    var: windows_lpe_weak_service_registry_permissions_clean.output
+  when:
+    - windows_lpe_weak_service_registry_permissions_clean is defined
+    - windows_lpe_weak_service_registry_permissions_clean.output is defined

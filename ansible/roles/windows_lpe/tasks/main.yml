@@ -1,0 +1,161 @@
+---
+- name: Validate Windows LPE action
+  ansible.builtin.assert:
+    that:
+      - windows_lpe_action in windows_lpe_supported_actions
+    fail_msg: >-
+      windows_lpe_action must be one of {{ windows_lpe_supported_actions | join(', ') }};
+      got {{ windows_lpe_action }}
+
+- name: Validate Windows LPE profile
+  ansible.builtin.assert:
+    that:
+      - windows_lpe_profile in windows_lpe_profiles
+    fail_msg: >-
+      windows_lpe_profile must be one of {{ windows_lpe_profiles.keys() | list | join(', ') }};
+      got {{ windows_lpe_profile }}
+
+- name: Validate Windows LPE validation state
+  ansible.builtin.assert:
+    that:
+      - windows_lpe_validate_state in windows_lpe_supported_validate_states
+    fail_msg: >-
+      windows_lpe_validate_state must be one of
+      {{ windows_lpe_supported_validate_states | join(', ') }};
+      got {{ windows_lpe_validate_state }}
+  when: windows_lpe_action == 'validate'
+
+- name: Validate exact Windows LPE technique selection
+  ansible.builtin.assert:
+    that:
+      - (windows_lpe_techniques | difference(windows_lpe_catalog) | length) == 0
+    fail_msg: >-
+      windows_lpe_techniques contains unknown techniques:
+      {{ windows_lpe_techniques | difference(windows_lpe_catalog) | join(', ') }}
+
+- name: Resolve requested Windows LPE techniques
+  ansible.builtin.set_fact:
+    windows_lpe_requested_techniques: >-
+      {{ (windows_lpe_techniques | list)
+         if (windows_lpe_techniques | length > 0)
+         else (windows_lpe_profiles[windows_lpe_profile] | list) }}
+
+- name: Validate Windows LPE profile catalog references
+  ansible.builtin.assert:
+    that:
+      - (windows_lpe_requested_techniques | difference(windows_lpe_catalog) | length) == 0
+    fail_msg: >-
+      requested Windows LPE set references unknown techniques:
+      {{ windows_lpe_requested_techniques | difference(windows_lpe_catalog) | join(', ') }}
+
+- name: Resolve available and selected candidate techniques
+  ansible.builtin.set_fact:
+    windows_lpe_available_techniques: >-
+      {{ (windows_lpe_implemented_techniques + windows_lpe_candidate_techniques) | unique | list }}
+    windows_lpe_selected_candidates: >-
+      {{ windows_lpe_requested_techniques | intersect(windows_lpe_candidate_techniques) | list }}
+
+- name: Show Windows LPE framework status
+  ansible.builtin.debug:
+    msg:
+      - "GOAD Kingdoms Windows LPE framework"
+      - "action={{ windows_lpe_action }}"
+      - "profile={{ windows_lpe_profile }}"
+      - "catalog={{ windows_lpe_catalog | length }} techniques"
+      - "candidates={{ windows_lpe_candidate_techniques | length }} techniques"
+      - "implemented={{ windows_lpe_implemented_techniques | length }} techniques"
+      - "requested={{ windows_lpe_requested_techniques | join(', ') if windows_lpe_requested_techniques else 'none' }}"
+  when: windows_lpe_action == 'status'
+
+- name: Require a non-empty Windows LPE selection for lifecycle actions
+  ansible.builtin.assert:
+    that:
+      - windows_lpe_requested_techniques | length > 0
+    fail_msg: >-
+      Windows LPE {{ windows_lpe_action }} requires a non-empty profile or an exact
+      windows_lpe_techniques selection.
+  when: windows_lpe_action in ['apply', 'validate', 'reset']
+
+- name: Refuse Windows LPE techniques with no source implementation
+  ansible.builtin.assert:
+    that:
+      - (windows_lpe_requested_techniques | difference(windows_lpe_available_techniques) | length) == 0
+    fail_msg: >-
+      GOAD Kingdoms Windows LPE {{ windows_lpe_action }} is fail-closed. The selected
+      set contains techniques with no source apply/validate/reset implementation:
+      {{ windows_lpe_requested_techniques | difference(windows_lpe_available_techniques) | join(', ') }}
+  when: windows_lpe_action in ['apply', 'validate', 'reset']
+
+- name: Require explicit opt-in for candidate Windows LPE testing
+  ansible.builtin.assert:
+    that:
+      - windows_lpe_allow_candidate | bool
+      - windows_lpe_techniques | length > 0
+    fail_msg: >-
+      Candidate techniques are not advertised as implemented yet. Test them only with
+      an exact windows_lpe_techniques selection and windows_lpe_allow_candidate=true.
+      Selected candidates: {{ windows_lpe_selected_candidates | join(', ') }}
+  when:
+    - windows_lpe_action in ['apply', 'validate', 'reset']
+    - windows_lpe_selected_candidates | length > 0
+
+- name: Manage unquoted service path technique
+  ansible.builtin.include_tasks: techniques/unquoted_service_path.yml
+  when: [windows_lpe_action != 'status', "'unquoted_service_path' in windows_lpe_requested_techniques"]
+- name: Manage weak service DACL technique
+  ansible.builtin.include_tasks: techniques/weak_service_dacl.yml
+  when: [windows_lpe_action != 'status', "'weak_service_dacl' in windows_lpe_requested_techniques"]
+- name: Manage weak service binary permissions technique
+  ansible.builtin.include_tasks: techniques/weak_service_binary_permissions.yml
+  when: [windows_lpe_action != 'status', "'weak_service_binary_permissions' in windows_lpe_requested_techniques"]
+- name: Manage weak service registry permissions technique
+  ansible.builtin.include_tasks: techniques/weak_service_registry_permissions.yml
+  when: [windows_lpe_action != 'status', "'weak_service_registry_permissions' in windows_lpe_requested_techniques"]
+- name: Manage service DLL hijacking technique
+  ansible.builtin.include_tasks: techniques/service_dll_hijacking.yml
+  when: [windows_lpe_action != 'status', "'service_dll_hijacking' in windows_lpe_requested_techniques"]
+- name: Manage PATH search-order hijacking candidate
+  ansible.builtin.include_tasks: techniques/path_search_order_hijacking.yml
+  when: [windows_lpe_action != 'status', "'path_search_order_hijacking' in windows_lpe_requested_techniques"]
+- name: Manage AlwaysInstallElevated candidate
+  ansible.builtin.include_tasks: techniques/always_install_elevated.yml
+  when: [windows_lpe_action != 'status', "'always_install_elevated' in windows_lpe_requested_techniques"]
+- name: Manage registry Run keys candidate
+  ansible.builtin.include_tasks: techniques/registry_run_keys.yml
+  when: [windows_lpe_action != 'status', "'registry_run_keys' in windows_lpe_requested_techniques"]
+- name: Manage writable Startup folder candidate
+  ansible.builtin.include_tasks: techniques/writable_startup_folder.yml
+  when: [windows_lpe_action != 'status', "'writable_startup_folder' in windows_lpe_requested_techniques"]
+- name: Manage scheduled task binary permissions candidate
+  ansible.builtin.include_tasks: techniques/scheduled_task_binary_permissions.yml
+  when: [windows_lpe_action != 'status', "'scheduled_task_binary_permissions' in windows_lpe_requested_techniques"]
+- name: Manage scheduled task directory permissions candidate
+  ansible.builtin.include_tasks: techniques/scheduled_task_directory_permissions.yml
+  when: [windows_lpe_action != 'status', "'scheduled_task_directory_permissions' in windows_lpe_requested_techniques"]
+- name: Manage unattend credential artifact candidate
+  ansible.builtin.include_tasks: techniques/unattend_credentials.yml
+  when: [windows_lpe_action != 'status', "'unattend_credentials' in windows_lpe_requested_techniques"]
+- name: Manage PowerShell history credential candidate
+  ansible.builtin.include_tasks: techniques/powershell_history_credentials.yml
+  when: [windows_lpe_action != 'status', "'powershell_history_credentials' in windows_lpe_requested_techniques"]
+- name: Manage hardcoded application credential candidate
+  ansible.builtin.include_tasks: techniques/hardcoded_application_credentials.yml
+  when: [windows_lpe_action != 'status', "'hardcoded_application_credentials' in windows_lpe_requested_techniques"]
+- name: Manage stored RunAs credential candidate
+  ansible.builtin.include_tasks: techniques/stored_runas_credentials.yml
+  when: [windows_lpe_action != 'status', "'stored_runas_credentials' in windows_lpe_requested_techniques"]
+- name: Manage stored Winlogon credential candidate
+  ansible.builtin.include_tasks: techniques/stored_winlogon_credentials.yml
+  when: [windows_lpe_action != 'status', "'stored_winlogon_credentials' in windows_lpe_requested_techniques"]
+- name: Manage SeBackupPrivilege candidate
+  ansible.builtin.include_tasks: techniques/sebackup_privilege.yml
+  when: [windows_lpe_action != 'status', "'sebackup_privilege' in windows_lpe_requested_techniques"]
+- name: Manage SeImpersonatePrivilege candidate
+  ansible.builtin.include_tasks: techniques/seimpersonate_privilege.yml
+  when: [windows_lpe_action != 'status', "'seimpersonate_privilege' in windows_lpe_requested_techniques"]
+- name: Manage writable program directory candidate
+  ansible.builtin.include_tasks: techniques/writable_program_directory.yml
+  when: [windows_lpe_action != 'status', "'writable_program_directory' in windows_lpe_requested_techniques"]
+- name: Manage insecure service registry candidate
+  ansible.builtin.include_tasks: techniques/insecure_service_registry.yml
+  when: [windows_lpe_action != 'status', "'insecure_service_registry' in windows_lpe_requested_techniques"]

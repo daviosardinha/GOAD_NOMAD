@@ -1,0 +1,93 @@
+---
+# The mayfly/windows10 base box used by GOAD is Windows 10 Enterprise
+# Evaluation. Upstream GOAD documents that the box may need `slmgr -rearm`
+# followed by a reboot once its evaluation grace period expires.
+#
+# Keep this idempotent: only consume a rearm when Windows reports a
+# TIMEBASED_EVAL channel with no remaining grace period.
+
+- name: Detect and rearm an expired Windows evaluation
+  ansible.windows.win_powershell:
+    script: |
+      $ErrorActionPreference = 'Stop'
+
+      $license = Get-CimInstance SoftwareLicensingProduct -ErrorAction SilentlyContinue |
+          Where-Object {
+              $_.Name -like 'Windows*' -and
+              $_.PartialProductKey -and
+              $_.Description -match 'TIMEBASED_EVAL'
+          } |
+          Select-Object -First 1
+
+      if (-not $license) {
+          Write-Output 'WINDOWS_EVAL=NOT_TIMEBASED_EVAL'
+          return
+      }
+
+      Write-Output "WINDOWS_EVAL_GRACE_BEFORE=$($license.GracePeriodRemaining)"
+      Write-Output "WINDOWS_EVAL_STATUS_BEFORE=$($license.LicenseStatus)"
+
+      if ([int64]$license.GracePeriodRemaining -gt 0) {
+          Write-Output 'WINDOWS_EVAL=READY'
+          return
+      }
+
+      $stdout = Join-Path $env:TEMP 'goad-kingdoms-slmgr-rearm.out'
+      $stderr = Join-Path $env:TEMP 'goad-kingdoms-slmgr-rearm.err'
+      Remove-Item -LiteralPath $stdout,$stderr -Force -ErrorAction SilentlyContinue
+
+      $startProcess = @{
+          FilePath = "$env:SystemRoot\System32\cscript.exe"
+          ArgumentList = @('//NoLogo', "$env:SystemRoot\System32\slmgr.vbs", '/rearm')
+          Wait = $true
+          PassThru = $true
+          RedirectStandardOutput = $stdout
+          RedirectStandardError = $stderr
+      }
+      $process = Start-Process @startProcess
+
+      $out = if (Test-Path -LiteralPath $stdout) { Get-Content -LiteralPath $stdout -Raw } else { '' }
+      $err = if (Test-Path -LiteralPath $stderr) { Get-Content -LiteralPath $stderr -Raw } else { '' }
+
+      if ($process.ExitCode -ne 0) {
+          throw "Windows evaluation rearm failed with exit code $($process.ExitCode): $out $err"
+      }
+
+      if (($out + $err) -notmatch '(?i)success|restart|rearm') {
+          throw "Windows evaluation rearm returned unexpected output: $out $err"
+      }
+
+      Write-Output 'WINDOWS_EVAL=REARMED'
+  register: windows_eval_rearm
+  changed_when: "'WINDOWS_EVAL=REARMED' in (windows_eval_rearm.output | default([]))"
+
+- name: Reboot after Windows evaluation rearm
+  ansible.windows.win_reboot:
+    reboot_timeout: 1500
+    post_reboot_delay: 60
+  when: "'WINDOWS_EVAL=REARMED' in (windows_eval_rearm.output | default([]))"
+
+- name: Validate Windows evaluation state after rearm
+  ansible.windows.win_powershell:
+    script: |
+      $ErrorActionPreference = 'Stop'
+
+      $license = Get-CimInstance SoftwareLicensingProduct -ErrorAction SilentlyContinue |
+          Where-Object {
+              $_.Name -like 'Windows*' -and
+              $_.PartialProductKey -and
+              $_.Description -match 'TIMEBASED_EVAL'
+          } |
+          Select-Object -First 1
+
+      if (-not $license) {
+          Write-Output 'WINDOWS_EVAL_READY=NON_EVAL'
+          return
+      }
+
+      if ([int64]$license.GracePeriodRemaining -le 0) {
+          throw "Windows evaluation remains expired after rearm; status=$($license.LicenseStatus) grace=$($license.GracePeriodRemaining)"
+      }
+
+      Write-Output "WINDOWS_EVAL_GRACE_MINUTES=$($license.GracePeriodRemaining)"
+      Write-Output 'WINDOWS_EVAL_READY=PASS'

@@ -1,0 +1,15 @@
+---
+# GOAD Kingdoms clean-install Windows LPE seeding stage.
+#
+# All current catalog members are promoted/Implemented. A normal GOAD install
+# therefore seeds the validated full-lpe profile without candidate opt-in and
+# deliberately leaves WS01 in the APPLIED / VULNERABLE training state.
+
+- name: Seed the GOAD Kingdoms WS01 Windows LPE training profile
+  hosts: ws01
+  gather_facts: false
+  roles:
+    - role: windows_lpe
+      vars:
+        windows_lpe_action: apply
+        windows_lpe_profile: full-lpe

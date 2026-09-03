@@ -53,7 +53,7 @@ The controller invokes `sudo` itself only for host routing changes.
 
 Provisioning mode is intended for Vagrant, Ansible, maintenance, and lab updates. It:
 
-- sets the five Windows VMware NAT adapters to `ethernet0.startConnected = "TRUE"`;
+- sets the six Windows VMware NAT adapters to `ethernet0.startConnected = "TRUE"`;
 - connects those NAT adapters at runtime;
 - installs temporary host routes to `10.4.20.0/24` and `10.4.30.0/24` through `10.4.10.1`;
 - installs the permissive `nftables/provisioning.nft` router policy.
@@ -66,7 +66,7 @@ Exercise mode is the normal training state. It:
 
 - installs the persistent deny-by-default `nftables/exercise.nft` router policy;
 - removes the temporary host routes to SEVENKINGDOMS and ESSOS;
-- sets all five Windows provisioning adapters to `ethernet0.startConnected = "FALSE"`;
+- sets all six Windows provisioning adapters to `ethernet0.startConnected = "FALSE"`;
 - disconnects those NAT adapters immediately at the VMware hypervisor layer.
 
 The persistent `startConnected` setting prevents a Windows provisioning adapter from silently returning after a VM power cycle.
@@ -106,7 +106,7 @@ The completed segmented topology was validated end-to-end with:
 - healthy `connect_bot`, `ntlm_bot`, and `responder_bot` scheduled tasks, including the legitimate Task Scheduler `Running` status used by the repeating responder task;
 - direct NORTH access from the student side;
 - direct SevenKingdoms and ESSOS access denied from the student/host side;
-- isolation of all five Windows provisioning NAT adapters;
+- isolation of all five Milestone 1 Windows provisioning NAT adapters;
 - NAT isolation surviving repeated Windows VM power cycles;
 - reversible provisioning → exercise → provisioning → exercise transitions;
 - persistent deny-by-default `nftables` enforcement;
@@ -160,6 +160,6 @@ In exercise mode, the expected high-level state is:
 
 - router forward policy: `drop`;
 - host routes to `10.4.20.0/24` and `10.4.30.0/24`: absent;
-- all five Windows `ethernet0.startConnected`: `FALSE`;
+- all six Windows `ethernet0.startConnected`: `FALSE`;
 - NORTH remains directly reachable from the student host;
 - SevenKingdoms and ESSOS are not directly reachable from the student host.

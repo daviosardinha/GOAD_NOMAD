@@ -41,13 +41,13 @@ A compromised credential should not automatically mean every system is directly 
 
 ## Current segmented architecture
 
-GOAD Kingdoms currently places the five original GOAD Windows systems behind a dedicated Debian routing plane.
+GOAD Kingdoms places the five original GOAD Windows systems and the M2 WS01 workstation behind a dedicated Debian routing plane.
 
 <img width="1448" height="1086" alt="Topology" src="https://github.com/user-attachments/assets/6e2a98d7-54bc-4d3b-9bf2-69e7105ae4ae" />
 
 | Zone | VMware network | Subnet | Systems |
 | --- | --- | --- | --- |
-| NORTH | `vmnet10` | `10.4.10.0/24` | Winterfell `10.4.10.11`, Castelblack `10.4.10.22` |
+| NORTH | `vmnet10` | `10.4.10.0/24` | Winterfell `10.4.10.11`, Castelblack `10.4.10.22`, WS01 `10.4.10.31` |
 | SEVENKINGDOMS | `vmnet20` | `10.4.20.0/24` | Kingslanding `10.4.20.10` |
 | ESSOS | `vmnet30` | `10.4.30.0/24` | Meereen `10.4.30.12`, Braavos `10.4.30.23` |
 | MANAGEMENT | `vmnet99` | `10.4.99.0/24` | GOAD-ROUTER management plane |
@@ -161,20 +161,20 @@ The historical detailed record remains in [`docs/GOAD_NOMAD_MILESTONES.md`](./do
 
 ### Milestone 2 — NORTH Workstation & Windows Local Privilege Escalation
 
-**Status: ACTIVE DESIGN / IMPLEMENTATION NEXT**
+**Status: COMPLETE — RELEASED AS v1.1.0**
 
-The current plan adds a first-class NORTH workstation (`GOAD-WS01` / `WS01`, target `10.4.10.31`) and extends the GOAD journey from an existing low-privilege NORTH identity through local Windows privilege escalation into the existing GOAD Active Directory attack surface.
+GOAD Kingdoms v1.1.0 adds a first-class NORTH workstation (`GOAD-WS01` / `WS01`, `10.4.10.31`) using the pinned `mayfly/windows10` `2024.01.06` box. `NORTH\\rickon.stark` receives Remote Desktop access but no local-administrator membership. WS01 participates in domain enrollment, VMware lifecycle control, management readiness and persistent provisioning-NAT isolation while Defender, UAC and Windows Firewall remain enabled.
 
-The target catalog is approximately **18–22 deterministic Windows local-privesc techniques**, delivered through resettable Ansible-native scenario profiles rather than a globally weakened Windows host.
+The release ships exactly **20 deterministic Windows local-privilege-escalation techniques** through resettable Ansible-native profiles: `service-abuse`, `credential-hunting`, `registry-abuse`, `token-abuse`, `mixed`, and `full-lpe`. Every technique passed the complete apply → vulnerable → reset → clean → reapply → vulnerable lifecycle.
 
-The current canonical roadmap and completion gates live in [`docs/GOAD_KINGDOMS_MILESTONES.md`](./docs/GOAD_KINGDOMS_MILESTONES.md).
+Final origin-synced acceptance at `6285838af4dca55704092e2a6c0cc6a131be798f` completed with the inherited segmentation, DNS, trusts, linked SQL, WS01 security baseline, all 20 LPE scenarios and final exercise isolation intact. The canonical record lives in [`docs/GOAD_KINGDOMS_MILESTONES.md`](./docs/GOAD_KINGDOMS_MILESTONES.md).
 
 ### Planned progression
 
 | Milestone | Scope | Status |
 | --- | --- | --- |
 | 1 | Network segmentation and lifecycle | Complete / v1.0.0 |
-| 2 | NORTH workstation foothold + Windows local privilege escalation | Active |
+| 2 | NORTH workstation foothold + Windows local privilege escalation | Complete / v1.1.0 |
 | 3 | NORTH domain escalation + persistence | Planned |
 | 4 | NORTH → SevenKingdoms cross-domain progression | Planned |
 | 5 | SevenKingdoms / NORTH → ESSOS cross-forest progression | Planned |
@@ -216,11 +216,32 @@ Source-only segmentation preflight:
 bash scripts/validate-network-segmentation-source.sh
 ```
 
+WS01 source-contract validation:
+
+```bash
+bash scripts/validate-ws01-source.sh
+```
+
+Install or update the clean WS01 foundation in an existing GOAD/VMware instance:
+
+```bash
+./goad.sh -t ws01 -i <instance-id>
+```
+
+The command materializes WS01 from committed source, provisions only the workstation baseline, validates all six management endpoints and restores exercise isolation before returning.
+
+Focused WS01 runtime validation:
+
+```bash
+export GOAD_PROVIDER_DIR="$HOME/Documents/GOAD_Kingdoms/workspace/<instance>/provider"
+bash scripts/validate-ws01-runtime.sh
+```
+
 Complete runtime validation against a deployed provider:
 
 ```bash
 export GOAD_PROVIDER_DIR="$HOME/Documents/GOAD_Kingdoms/workspace/<instance>/provider"
-bash scripts/validate-network-segmentation.sh
+bash scripts/validate-goad-kingdoms-clean-install-runtime.sh
 ```
 
 > [!IMPORTANT]

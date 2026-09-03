@@ -11,6 +11,7 @@ readonly WINDOWS_VMS=(
     GOAD-DC03
     GOAD-SRV02
     GOAD-SRV03
+    GOAD-WS01
 )
 
 fail() {

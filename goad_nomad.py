@@ -9,6 +9,7 @@ without making future upstream merges unnecessarily invasive.
 import argparse
 from pathlib import Path
 import runpy
+import subprocess
 import sys
 import threading
 import time
@@ -41,12 +42,86 @@ class GoadNomad(BaseGoad):
             return f'{minutes}m {secs:02d}s'
         return f'{secs}s'
 
+    def _start_install_sudo_keepalive(self, stop_event):
+        """Prime sudo once and keep the ticket alive for a long Kingdoms install.
+
+        Full clean installations routinely take around two hours. Authentication
+        must therefore happen before any lifecycle state changes, not halfway
+        through final isolation while the operator may be away. The keepalive is
+        deliberately non-interactive after the initial ``sudo -v``; if the ticket
+        becomes invalid, the existing provider fail-closed sudo gates remain the
+        authority and refuse the next privileged transition instead of prompting.
+        """
+        if self._nomad_provider() is None:
+            return True, None, None
+
+        Log.info(
+            'GOAD Kingdoms: refreshing sudo credentials once for the unattended install lifecycle'
+        )
+        try:
+            subprocess.run(
+                ['sudo', '-k'],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+            prime = subprocess.run(['sudo', '-v'], check=False)
+        except OSError as exc:
+            Log.error(f'GOAD Kingdoms: unable to initialize sudo credentials: {exc}')
+            return False, None, None
+
+        if prime.returncode != 0:
+            Log.error(
+                'GOAD Kingdoms: sudo authentication failed before install state changes; aborting'
+            )
+            return False, None, None
+
+        lost_event = threading.Event()
+
+        def keepalive():
+            while not stop_event.wait(60):
+                try:
+                    refresh = subprocess.run(
+                        ['sudo', '-n', '-v'],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        check=False,
+                    )
+                except OSError as exc:
+                    lost_event.set()
+                    Log.error(f'GOAD Kingdoms: sudo keepalive failed: {exc}')
+                    return
+
+                if refresh.returncode != 0:
+                    lost_event.set()
+                    detail = refresh.stderr.strip()
+                    suffix = f': {detail}' if detail else ''
+                    Log.error(
+                        'GOAD Kingdoms: sudo keepalive lost its authenticated ticket; '
+                        f'future privileged transitions will fail closed{suffix}'
+                    )
+                    return
+
+        keepalive_thread = threading.Thread(
+            target=keepalive,
+            name='goad-kingdoms-sudo-keepalive',
+            daemon=True,
+        )
+        keepalive_thread.start()
+        Log.success(
+            'GOAD Kingdoms: sudo credentials primed; non-interactive keepalive active every 60s'
+        )
+        return True, lost_event, keepalive_thread
+
     def _run_with_install_timer(self, operation):
-        """Run an install operation with a visible one-minute heartbeat.
+        """Run an install operation with visible timer and sudo heartbeats.
 
         Vagrant/WinRM can legitimately spend many minutes booting older Windows
         guests. A periodic elapsed-time line keeps that wait observable without
-        changing Vagrant's own output or timeout semantics.
+        changing Vagrant's own output or timeout semantics. Segmented Kingdoms
+        installs also keep the explicitly primed sudo ticket alive for the whole
+        lifecycle so a two-hour unattended build cannot stop for a late password.
         """
         if getattr(self, '_install_timer_active', False):
             return operation()
@@ -55,6 +130,14 @@ class GoadNomad(BaseGoad):
         self._install_phase = 'starting'
         started = time.monotonic()
         stop_event = threading.Event()
+
+        sudo_ok, sudo_lost_event, sudo_thread = self._start_install_sudo_keepalive(
+            stop_event
+        )
+        if not sudo_ok:
+            self._install_phase = 'idle'
+            self._install_timer_active = False
+            return False
 
         def heartbeat():
             while not stop_event.wait(60):
@@ -71,10 +154,19 @@ class GoadNomad(BaseGoad):
         Log.info('GOAD_NOMAD TIMER: install timer started (heartbeat every 60s)')
 
         try:
-            return operation()
+            result = operation()
+            if sudo_lost_event is not None and sudo_lost_event.is_set():
+                Log.error(
+                    'GOAD Kingdoms: sudo keepalive was lost during the lifecycle; '
+                    'refusing to report the install as successful'
+                )
+                return False
+            return result
         finally:
             stop_event.set()
             timer_thread.join(timeout=1)
+            if sudo_thread is not None:
+                sudo_thread.join(timeout=1)
             elapsed = self._format_elapsed(time.monotonic() - started)
             Log.info(f'GOAD_NOMAD TIMER: install command finished after {elapsed}')
             self._install_phase = 'idle'
@@ -210,6 +302,55 @@ class GoadNomad(BaseGoad):
         )
         return True
 
+    def do_ws01(self, arg=''):
+        """Materialize and provision only the clean M2 WS01 foundation."""
+        return self._run_with_install_timer(self._do_ws01)
+
+    def _do_ws01(self):
+        provider = self._nomad_provider(require_instance=True)
+        if provider is None:
+            Log.error('Load a GOAD/VMware instance before installing GOAD-WS01')
+            return False
+
+        provider_result = False
+        provision_result = False
+        isolation_result = False
+        try:
+            self._install_phase = 'GOAD-WS01 VM materialization + management readiness'
+            provider_result = provider.install()
+            if provider_result:
+                self._install_phase = 'GOAD-WS01 clean workstation provisioning'
+                provision_result = (
+                    self.lab_manager.get_current_instance_provisioner().run('ws01.yml')
+                )
+        finally:
+            self._install_phase = 'GOAD-WS01 final exercise isolation'
+            isolation_result = provider.finalize_install()
+
+        if not provider_result:
+            if isolation_result:
+                Log.error(
+                    'GOAD Kingdoms: GOAD-WS01 provider bring-up failed; '
+                    'exercise isolation was restored'
+                )
+            else:
+                Log.error(
+                    'GOAD Kingdoms: GOAD-WS01 provider bring-up failed and '
+                    'exercise isolation restoration also failed'
+                )
+            return False
+        if not provision_result:
+            Log.error('GOAD Kingdoms: GOAD-WS01 Ansible provisioning failed')
+            return False
+        if not isolation_result:
+            Log.error('GOAD Kingdoms: GOAD-WS01 provisioned but exercise isolation failed')
+            return False
+
+        Log.success(
+            'GOAD Kingdoms: GOAD-WS01 clean foundation installed and exercise isolation restored'
+        )
+        return True
+
     def do_help(self, arg):
         super().do_help(arg)
         if self._nomad_provider() is not None:
@@ -218,6 +359,7 @@ class GoadNomad(BaseGoad):
             if self.lab_manager.get_current_instance() is not None:
                 print_menu_entry('mode [status|provisioning|exercise]', 'show or change the lab network mode')
                 print_menu_entry('validate', 'run the complete Milestone 1 network validation')
+                print_menu_entry('ws01', 'install the clean Milestone 2 WS01 foundation')
 
     def do_network(self, arg=''):
         provider = self._nomad_provider()
@@ -290,7 +432,7 @@ class GoadNomad(BaseGoad):
 
 
 def parse_args():
-    task_help = 'tasks available: install/check/start/stop/restart/destroy/status/snapshot/reset/validate'
+    task_help = 'tasks available: install/check/start/stop/restart/destroy/status/snapshot/reset/validate/ws01'
     parser = argparse.ArgumentParser(
         prog='goad_nomad.py',
         description='GOAD_NOMAD lab management console.',
@@ -354,6 +496,9 @@ def _dispatch_task(goad, args):
         goad.do_reset()
     elif args.task == 'validate':
         goad.do_validate()
+    elif args.task == 'ws01':
+        if not goad.do_ws01():
+            return 1
     elif args.task == 'mode':
         goad.do_mode('status')
     elif args.task == 'show':

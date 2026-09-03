@@ -199,6 +199,20 @@
                 }
             }
         },
+        "ws01" : {
+            "hostname" : "ws01",
+            "type" : "workstation",
+            "domain" : "north.sevenkingdoms.local",
+            "path" : "DC=north,DC=sevenkingdoms,DC=local",
+            "local_groups" : {
+                "Remote Desktop Users" : [
+                    "north\\rickon.stark"
+                ]
+            },
+            "scripts" : [],
+            "vulns" : [],
+            "security" : []
+        },
         "srv03" : {
             "hostname" : "braavos",
             "type" : "server",

@@ -1,11 +1,15 @@
 # WS01 extension (Workstation 01)
 
 - Extension Name: ws01
-- Description: Add a Windows 10 workstation to the lab GOAD or GOAD Light in the domain sevenkingdoms.local
+- Description: Add a Windows 10 workstation to GOAD-Light or GOAD-Mini in the domain sevenkingdoms.local
 - Machine name : {{lab_name}}-WS01
 - Compatible with labs :
-  - GOAD
   - GOAD-Light
+  - GOAD-Mini
+
+The main GOAD lab now includes `GOAD-WS01` as a first-class NORTH workstation.
+This legacy hardened-workstation extension is intentionally unavailable for
+GOAD so it cannot create a second machine with the same Vagrant identity.
 
 - Lab infos:
   - hostname: casterlyrock 

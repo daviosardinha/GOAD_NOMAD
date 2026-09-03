@@ -1,0 +1,120 @@
+---
+- name: Apply writable Startup folder candidate
+  ansible.windows.win_powershell:
+    script: |
+      $ErrorActionPreference = 'Stop'
+      $root = '{{ windows_lpe_writable_startup_folder.root }}'
+      $stateFile = '{{ windows_lpe_writable_startup_folder.state_file }}'
+      $startup = '{{ windows_lpe_writable_startup_folder.startup_directory }}'
+      $marker = Join-Path $startup '{{ windows_lpe_writable_startup_folder.marker_name }}'
+
+      New-Item -ItemType Directory -Path $root -Force | Out-Null
+      if (-not (Test-Path -LiteralPath $startup -PathType Container)) { throw "common Startup folder missing: $startup" }
+
+      if (-not (Test-Path -LiteralPath $stateFile -PathType Leaf)) {
+          $acl = Get-Acl -LiteralPath $startup
+          [pscustomobject]@{
+              acl_sddl = $acl.Sddl
+              marker_existed = (Test-Path -LiteralPath $marker -PathType Leaf)
+              marker_content = if (Test-Path -LiteralPath $marker -PathType Leaf) { Get-Content -LiteralPath $marker -Raw } else { $null }
+          } | ConvertTo-Json | Set-Content -LiteralPath $stateFile -Encoding UTF8
+      }
+
+      @('@echo off','rem GOAD Kingdoms writable Startup folder training marker','exit /b 0') |
+          Set-Content -LiteralPath $marker -Encoding ascii
+
+      $acl = Get-Acl -LiteralPath $startup
+      $users = New-Object System.Security.Principal.NTAccount('BUILTIN','Users')
+      $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+          $users,
+          [System.Security.AccessControl.FileSystemRights]::Modify,
+          [System.Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit',
+          [System.Security.AccessControl.PropagationFlags]::None,
+          [System.Security.AccessControl.AccessControlType]::Allow
+      )
+      $acl.AddAccessRule($rule) | Out-Null
+      Set-Acl -LiteralPath $startup -AclObject $acl
+
+      Write-Output 'WINDOWS_LPE_WRITABLE_STARTUP_FOLDER=APPLIED'
+  when: windows_lpe_action == 'apply'
+
+- name: Reset writable Startup folder candidate
+  ansible.windows.win_powershell:
+    script: |
+      $ErrorActionPreference = 'Stop'
+      $root = '{{ windows_lpe_writable_startup_folder.root }}'
+      $stateFile = '{{ windows_lpe_writable_startup_folder.state_file }}'
+      $startup = '{{ windows_lpe_writable_startup_folder.startup_directory }}'
+      $marker = Join-Path $startup '{{ windows_lpe_writable_startup_folder.marker_name }}'
+
+      if (-not (Test-Path -LiteralPath $stateFile -PathType Leaf)) {
+          Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue
+          Write-Output 'WINDOWS_LPE_WRITABLE_STARTUP_FOLDER=RESET'
+          return
+      }
+
+      $state = Get-Content -LiteralPath $stateFile -Raw | ConvertFrom-Json
+      $acl = New-Object System.Security.AccessControl.DirectorySecurity
+      $acl.SetSecurityDescriptorSddlForm([string]$state.acl_sddl)
+      Set-Acl -LiteralPath $startup -AclObject $acl
+
+      if ([bool]$state.marker_existed) {
+          Set-Content -LiteralPath $marker -Value ([string]$state.marker_content) -Encoding UTF8
+      }
+      else {
+          Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue
+      }
+
+      Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+      Write-Output 'WINDOWS_LPE_WRITABLE_STARTUP_FOLDER=RESET'
+  when: windows_lpe_action == 'reset'
+
+- name: Validate vulnerable writable Startup folder state
+  ansible.windows.win_powershell:
+    script: |
+      $ErrorActionPreference = 'Stop'
+      $startup = '{{ windows_lpe_writable_startup_folder.startup_directory }}'
+      $marker = Join-Path $startup '{{ windows_lpe_writable_startup_folder.marker_name }}'
+      if (-not (Test-Path -LiteralPath $marker -PathType Leaf)) { throw 'Startup training marker is missing' }
+
+      $usersSid = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-32-545')
+      $writable = $false
+      foreach ($rule in (Get-Acl -LiteralPath $startup).Access) {
+          try { $sid = $rule.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]) } catch { continue }
+          if ($sid -eq $usersSid -and $rule.AccessControlType -eq 'Allow' -and (($rule.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::Modify) -ne 0)) {
+              $writable = $true
+              break
+          }
+      }
+      if (-not $writable) { throw 'BUILTIN\Users do not have Modify on the common Startup folder' }
+      Write-Output 'WINDOWS_LPE_WRITABLE_STARTUP_FOLDER=VULNERABLE'
+  register: windows_lpe_writable_startup_folder_vulnerable
+  when:
+    - windows_lpe_action == 'apply' or (windows_lpe_action == 'validate' and windows_lpe_validate_state == 'vulnerable')
+
+- name: Show vulnerable writable Startup folder validation
+  ansible.builtin.debug:
+    var: windows_lpe_writable_startup_folder_vulnerable.output
+  when:
+    - windows_lpe_writable_startup_folder_vulnerable is defined
+    - windows_lpe_writable_startup_folder_vulnerable.output is defined
+
+- name: Validate clean writable Startup folder state
+  ansible.windows.win_powershell:
+    script: |
+      $root = '{{ windows_lpe_writable_startup_folder.root }}'
+      $startup = '{{ windows_lpe_writable_startup_folder.startup_directory }}'
+      $marker = Join-Path $startup '{{ windows_lpe_writable_startup_folder.marker_name }}'
+      if (Test-Path -LiteralPath $root) { throw 'writable Startup folder scenario directory still exists' }
+      if (Test-Path -LiteralPath $marker -PathType Leaf) { throw 'writable Startup folder marker still exists' }
+      Write-Output 'WINDOWS_LPE_WRITABLE_STARTUP_FOLDER=CLEAN'
+  register: windows_lpe_writable_startup_folder_clean
+  when:
+    - windows_lpe_action == 'reset' or (windows_lpe_action == 'validate' and windows_lpe_validate_state == 'clean')
+
+- name: Show clean writable Startup folder validation
+  ansible.builtin.debug:
+    var: windows_lpe_writable_startup_folder_clean.output
+  when:
+    - windows_lpe_writable_startup_folder_clean is defined
+    - windows_lpe_writable_startup_folder_clean.output is defined

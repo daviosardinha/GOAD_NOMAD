@@ -1,0 +1,125 @@
+---
+- name: Apply weak service binary permissions candidate
+  ansible.windows.win_powershell:
+    script: |
+      $ErrorActionPreference = 'Stop'
+      $name = '{{ windows_lpe_weak_service_binary_permissions.service_name }}'
+      $display = '{{ windows_lpe_weak_service_binary_permissions.display_name }}'
+      $root = '{{ windows_lpe_weak_service_binary_permissions.root }}'
+      $exe = '{{ windows_lpe_weak_service_binary_permissions.executable }}'
+
+      $existing = Get-Service -Name $name -ErrorAction SilentlyContinue
+      if ($existing) {
+          Stop-Service -Name $name -Force -ErrorAction SilentlyContinue
+          & sc.exe delete $name | Out-Null
+          Start-Sleep -Milliseconds 750
+      }
+      if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }
+      New-Item -ItemType Directory -Path $root -Force | Out-Null
+
+      $source = @"
+      using System;
+      using System.ServiceProcess;
+      public sealed class KingdomBinaryService : ServiceBase
+      {
+          public KingdomBinaryService() { ServiceName = "KingdomBinarySvc"; }
+          protected override void OnStart(string[] args) { }
+          protected override void OnStop() { }
+          public static void Main() { ServiceBase.Run(new KingdomBinaryService()); }
+      }
+      "@
+      Add-Type -TypeDefinition $source -Language CSharp -ReferencedAssemblies 'System.ServiceProcess.dll' -OutputAssembly $exe -OutputType WindowsApplication
+
+      New-Service -Name $name -BinaryPathName ('"{0}"' -f $exe) -DisplayName $display -StartupType Manual | Out-Null
+
+      $acl = Get-Acl -LiteralPath $exe
+      $usersSid = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-32-545')
+      $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+          $usersSid,
+          [System.Security.AccessControl.FileSystemRights]::Modify,
+          [System.Security.AccessControl.AccessControlType]::Allow
+      )
+      $acl.AddAccessRule($rule) | Out-Null
+      Set-Acl -LiteralPath $exe -AclObject $acl
+
+      Write-Output 'WINDOWS_LPE_WEAK_SERVICE_BINARY_PERMISSIONS=APPLIED'
+  when: windows_lpe_action == 'apply'
+
+- name: Reset weak service binary permissions candidate
+  ansible.windows.win_powershell:
+    script: |
+      $name = '{{ windows_lpe_weak_service_binary_permissions.service_name }}'
+      $root = '{{ windows_lpe_weak_service_binary_permissions.root }}'
+      $existing = Get-Service -Name $name -ErrorAction SilentlyContinue
+      if ($existing) {
+          Stop-Service -Name $name -Force -ErrorAction SilentlyContinue
+          & sc.exe delete $name | Out-Null
+          Start-Sleep -Milliseconds 750
+      }
+      if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }
+      Write-Output 'WINDOWS_LPE_WEAK_SERVICE_BINARY_PERMISSIONS=RESET'
+  when: windows_lpe_action == 'reset'
+
+- name: Validate vulnerable weak service binary permissions state
+  ansible.windows.win_powershell:
+    script: |
+      $ErrorActionPreference = 'Stop'
+      $name = '{{ windows_lpe_weak_service_binary_permissions.service_name }}'
+      $exe = '{{ windows_lpe_weak_service_binary_permissions.executable }}'
+      $usersSid = 'S-1-5-32-545'
+
+      $service = Get-CimInstance Win32_Service -Filter "Name='$name'" -ErrorAction Stop
+      if (-not $service) { throw 'KingdomBinarySvc is missing' }
+      if ($service.StartName -ne 'LocalSystem') { throw "service account=$($service.StartName)" }
+      if (-not $service.PathName.TrimStart().StartsWith('"')) { throw 'service ImagePath is not quoted' }
+      if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw 'service executable missing' }
+
+      $writeFound = $false
+      foreach ($ace in (Get-Acl -LiteralPath $exe).Access) {
+          try { $sid = $ace.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value } catch { continue }
+          if ($sid -eq $usersSid -and $ace.AccessControlType -eq 'Allow') {
+              if (($ace.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::WriteData) -ne 0 -or
+                  ($ace.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::Delete) -ne 0 -or
+                  ($ace.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::ChangePermissions) -ne 0) {
+                  $writeFound = $true
+              }
+          }
+      }
+      if (-not $writeFound) { throw 'BUILTIN\Users does not have write-capable access to the privileged service binary' }
+
+      $sd = (& sc.exe sdshow $name 2>&1 | Out-String).Trim()
+      $bu = [regex]::Match($sd, '\(A;;([^;]+);;;BU\)')
+      if ($bu.Success -and $bu.Groups[1].Value -match 'DC') {
+          throw "service DACL also grants CHANGE_CONFIG to Users; collision rights=$($bu.Groups[1].Value)"
+      }
+
+      Write-Output 'WINDOWS_LPE_WEAK_SERVICE_BINARY_PERMISSIONS=VULNERABLE'
+  register: windows_lpe_weak_service_binary_permissions_vulnerable
+  when:
+    - windows_lpe_action == 'apply' or (windows_lpe_action == 'validate' and windows_lpe_validate_state == 'vulnerable')
+
+- name: Show vulnerable weak service binary permissions validation
+  ansible.builtin.debug:
+    var: windows_lpe_weak_service_binary_permissions_vulnerable.output
+  when:
+    - windows_lpe_weak_service_binary_permissions_vulnerable is defined
+    - windows_lpe_weak_service_binary_permissions_vulnerable.output is defined
+
+- name: Validate clean weak service binary permissions state
+  ansible.windows.win_powershell:
+    script: |
+      $name = '{{ windows_lpe_weak_service_binary_permissions.service_name }}'
+      $root = '{{ windows_lpe_weak_service_binary_permissions.root }}'
+      if (Get-Service -Name $name -ErrorAction SilentlyContinue) { throw 'KingdomBinarySvc still exists' }
+      if (Test-Path -LiteralPath $root) { throw 'weak binary lab directory still exists' }
+      Write-Output 'WINDOWS_LPE_WEAK_SERVICE_BINARY_PERMISSIONS=CLEAN'
+  register: windows_lpe_weak_service_binary_permissions_clean
+  when:
+    - windows_lpe_action == 'reset' or (windows_lpe_action == 'validate' and windows_lpe_validate_state == 'clean')
+
+- name: Show clean weak service binary permissions validation
+  ansible.builtin.debug:
+    var: windows_lpe_weak_service_binary_permissions_clean.output
+  when:
+    - windows_lpe_weak_service_binary_permissions_clean is defined
+    - windows_lpe_weak_service_binary_permissions_clean.output is defined

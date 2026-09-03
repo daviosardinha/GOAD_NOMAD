@@ -41,7 +41,7 @@ class VagrantProvider(Provider):
         # GOAD_NOMAD's segmented VMware provider needs more than a bare
         # ``vagrant up``.  Protected-zone routing may need to be opened
         # temporarily, older Windows guests may require VMware Tools recovery,
-        # and all five Ansible/WinRM endpoints must be proven healthy before the
+        # and all six Ansible/WinRM endpoints must be proven healthy before the
         # lifecycle command can report success.  Reuse that provider's hardened
         # install/bring-up path, then restore the mode that was recorded before
         # start.  All other Vagrant providers retain the upstream behaviour.

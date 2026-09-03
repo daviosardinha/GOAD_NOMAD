@@ -163,7 +163,7 @@ pass "protected-zone host routes absent"
 
 GOAD_PROVIDER_DIR="${SOURCE_INSTANCE}/provider" bash scripts/lab-mode.sh status 2>&1 | tee "${LOG_DIR}/lab-mode-final.log"
 grep -Fq 'Recorded mode: exercise' "${LOG_DIR}/lab-mode-final.log" || fail "lab-mode final state is not exercise"
-for vm in GOAD-DC01 GOAD-DC02 GOAD-DC03 GOAD-SRV02 GOAD-SRV03; do
+for vm in GOAD-DC01 GOAD-DC02 GOAD-DC03 GOAD-SRV02 GOAD-SRV03 GOAD-WS01; do
     awk -v vm="--- ${vm} ---" '
         $0 == vm {inside=1; next}
         inside && /^--- / {exit}
@@ -182,7 +182,7 @@ echo "[PASS] legacy flat set_ip_range is blocked for GOAD/VMware"
 echo "[PASS] complete Milestone 1 validator runs through ./goad.sh"
 echo "[PASS] final state is installed + exercise"
 echo "[PASS] no protected-zone host-route bypass remains"
-echo "[PASS] all five Windows provisioning NAT adapters are isolated"
+echo "[PASS] all six Windows provisioning NAT adapters are isolated"
 echo
 echo "Logs: ${LOG_DIR}"
 echo
