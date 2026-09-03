@@ -18,9 +18,7 @@ if ($Action -eq 'apply') {
         "`$CSharp = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('$CredentialInteropB64'))"
         'Add-Type -TypeDefinition $CSharp -Language CSharp'
         # The target belongs exclusively to this lab scenario. Purge any residue
-        # from previous failed candidate revisions before attempting CredWriteW;
-        # Microsoft documents ERROR_INVALID_PARAMETER for protected-field
-        # mismatches when replacing an existing credential.
+        # from previous failed candidate revisions before attempting CredWriteW.
         "`$Target = '$TargetEscaped'"
         '[KingdomInteractiveCredential]::DeleteInteractive($Target)'
         '& $env:SystemRoot\System32\cmdkey.exe ("/delete:" + $Target) 2>&1 | Out-Null'
@@ -59,6 +57,7 @@ if ($Action -eq 'apply') {
         type = 'Interactive Logon'
         flags = 8196
         blob = 'UTF-16LE'
+        interactive_proof = 'required-from-real-user-session'
     } | ConvertTo-Json | Set-Content -LiteralPath $StateFile -Encoding UTF8
 
     Write-Output 'WINDOWS_LPE_STORED_RUNAS_CREDENTIALS=APPLIED'
