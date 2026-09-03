@@ -21,6 +21,7 @@ readonly REQUIRED_FILES=(
     docs/WINDOWS_LPE_CATALOG.md
     docs/GOAD_KINGDOMS_MILESTONES.md
     scripts/apply-windows-lpe-candidates.sh
+    scripts/validate-powershell-parser.ps1
     scripts/validate-windows-lpe-unquoted-service-path-runtime.sh
     scripts/validate-windows-lpe-service-batch-runtime.sh
     scripts/diagnose-ws01-shutdown.sh
@@ -137,7 +138,6 @@ for technique_id in available:
     source = source_path.read_text()
     marker = 'WINDOWS_LPE_' + technique_id.upper()
     for state in ('APPLIED', 'VULNERABLE', 'RESET', 'CLEAN'):
-        # stored_runas markers live in its external PowerShell runtime.
         if technique_id == 'stored_runas_credentials':
             continue
         if f'{marker}={state}' not in source:
@@ -222,9 +222,16 @@ if command -v pwsh >/dev/null 2>&1; then
     cat ansible/roles/windows_lpe/files/stored_runas/10_core.ps1 \
         ansible/roles/windows_lpe/files/stored_runas/20_validation.ps1 \
         ansible/roles/windows_lpe/files/stored_runas/30_lifecycle.ps1 >"${runas_combined}"
-    pwsh -NoProfile -NonInteractive -Command \
-        '$errors=$null; [void][System.Management.Automation.Language.Parser]::ParseFile($args[0],[ref]$null,[ref]$errors); if ($errors.Count) { $errors | ForEach-Object { Write-Error $_ }; exit 1 }' \
-        "${runas_combined}" >/dev/null
+
+    if ! pwsh -NoProfile -NonInteractive -File scripts/validate-powershell-parser.ps1 \
+        ansible/roles/windows_lpe/files/stored_runas/10_core.ps1 \
+        ansible/roles/windows_lpe/files/stored_runas/20_validation.ps1 \
+        ansible/roles/windows_lpe/files/stored_runas/30_lifecycle.ps1 \
+        "${runas_combined}"; then
+        rm -f "${runas_combined}"
+        fail 'stored RunAs PowerShell parser check failed'
+    fi
+
     rm -f "${runas_combined}"
     pass 'stored RunAs PowerShell parser check'
 else
