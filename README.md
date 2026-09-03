@@ -1,7 +1,7 @@
 <div align="center">
 
 # GOAD Kingdoms
-<img width="1672" height="941" alt="GOAD_Kingdoms" src="https://github.com/user-attachments/assets/4497a82d-dda1-44b2-bdab-13c1a97dbbe2" />
+<img width="1122" height="1402" alt="goad" src="https://github.com/user-attachments/assets/f4f90c84-e145-4904-94ff-2167c91f33f3" />
 
 
 ### Segmented Active Directory Red Team Training Range
