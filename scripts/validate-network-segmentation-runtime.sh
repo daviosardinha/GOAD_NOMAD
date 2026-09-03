@@ -192,6 +192,14 @@ cleanup() {
             echo "[CLEANUP] WARNING: automatic exercise-mode recovery failed" >&2
     fi
 
+    # set -e can terminate the validator on an unexpected command error before
+    # one of the explicit fatal() paths has a chance to increment FAIL_COUNT.
+    # Never print the contradictory FAIL: 0 / [FAILED] combination.
+    if [[ "${rc}" -ne 0 && "${FAIL_COUNT}" -eq 0 ]]; then
+        FAIL_COUNT=1
+        echo "[FAIL] validator aborted on an unexpected command error (rc=${rc}); inspect the last emitted command/log" >&2
+    fi
+
     echo
     echo "============================================================"
     echo "GOAD_NOMAD RUNTIME VALIDATION SUMMARY"
@@ -262,14 +270,32 @@ pass "provisioning-only host routes"
 section "3. VAGRANT MANAGEMENT / NAT ADDRESS DISCOVERY"
 
 for vm in "${WINDOWS_VMS[@]}"; do
-    out="$(vagrant_ps "${vm}" <<'PS'
+    if ! out="$(vagrant_ps "${vm}" <<'PS'
+$ErrorActionPreference = 'Stop'
 Write-Output "COMPUTERNAME=$env:COMPUTERNAME"
-$ip = Get-NetIPAddress -AddressFamily IPv4 -InterfaceAlias 'Ethernet0' -ErrorAction Stop |
-    Where-Object { $_.IPAddress -notlike '169.254.*' } |
+
+# Do not key management discovery to a Windows display alias. The Server boxes
+# currently expose the provisioning NIC as Ethernet0, while the Windows 10
+# workstation exposes that same VMware NAT adapter as "Ethernet0 2". Discover
+# it by network identity instead: a usable non-loopback/non-APIPA IPv4 address
+# outside the deterministic 10.4.0.0/16 exercise networks.
+$ip = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction Stop |
+    Where-Object {
+        $_.IPAddress -ne '127.0.0.1' -and
+        $_.IPAddress -notlike '169.254.*' -and
+        $_.IPAddress -notmatch '^10\.4\.'
+    } |
+    Sort-Object InterfaceIndex |
     Select-Object -First 1 -ExpandProperty IPAddress
+
+if (-not $ip) {
+    throw 'Provisioning NAT IPv4 address was not discovered by network identity'
+}
 Write-Output "NATIP=$ip"
 PS
-)"
+)"; then
+        fatal "${vm} Vagrant management query failed during NAT address discovery"
+    fi
     printf '%s\n' "${out}" | tee "${LOG_DIR}/${vm}-management.log"
 
     printf '%s\n' "${out}" | grep -Fq "COMPUTERNAME=${EXPECTED_NAME[$vm]}" || fatal "${vm} Vagrant management returned unexpected computer name"
