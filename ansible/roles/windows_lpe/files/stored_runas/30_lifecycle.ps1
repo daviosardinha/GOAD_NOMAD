@@ -17,6 +17,14 @@ if ($Action -eq 'apply') {
     $SeedPayload = @(
         "`$CSharp = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('$CredentialInteropB64'))"
         'Add-Type -TypeDefinition $CSharp -Language CSharp'
+        # The target belongs exclusively to this lab scenario. Purge any residue
+        # from previous failed candidate revisions before attempting CredWriteW;
+        # Microsoft documents ERROR_INVALID_PARAMETER for protected-field
+        # mismatches when replacing an existing credential.
+        "`$Target = '$TargetEscaped'"
+        '[KingdomInteractiveCredential]::DeleteInteractive($Target)'
+        '& $env:SystemRoot\System32\cmdkey.exe ("/delete:" + $Target) 2>&1 | Out-Null'
+        '& $env:SystemRoot\System32\cmdkey.exe ("/delete:Domain:interactive=" + $Target) 2>&1 | Out-Null'
         'try {'
         "    [KingdomInteractiveCredential]::WriteInteractive('$TargetEscaped', '$TargetEscaped', '$PasswordEscaped')"
         '}'
@@ -50,7 +58,7 @@ if ($Action -eq 'apply') {
         user = $RunAsUser
         type = 'Interactive Logon'
         flags = 8196
-        blob = 'ANSI'
+        blob = 'ANSI-even-byte'
     } | ConvertTo-Json | Set-Content -LiteralPath $StateFile -Encoding UTF8
 
     Write-Output 'WINDOWS_LPE_STORED_RUNAS_CREDENTIALS=APPLIED'
@@ -65,6 +73,7 @@ elseif ($Action -eq 'reset') {
         "`$Target = '$TargetEscaped'"
         '[KingdomInteractiveCredential]::DeleteInteractive($Target)'
         '& $env:SystemRoot\System32\cmdkey.exe ("/delete:Domain:interactive=" + $Target) 2>&1 | Out-Null'
+        '& $env:SystemRoot\System32\cmdkey.exe ("/delete:" + $Target) 2>&1 | Out-Null'
     ) -join [Environment]::NewLine
 
     Invoke-OwnerPayload 'Reset' $DeletePayload | Out-Null
