@@ -1,5 +1,6 @@
 import os
 import subprocess
+import time
 
 from goad.goadpath import GoadPath
 from goad.log import Log
@@ -70,35 +71,119 @@ class GoadKingdomsVmwareProvider(GoadNomadVmwareProvider):
         Log.success('GOAD Kingdoms: segmented VMware instance collision preflight passed')
         return True
 
+    def _wait_machine_stopped(self, machine, timeout=120):
+        """Wait until VMware no longer reports ``machine`` as running."""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            running = self._running_instance_vms()
+            if running is None:
+                return False
+            if machine not in running:
+                return True
+            time.sleep(3)
+        return False
+
+    def _stop_failed_windows_guest_cleanly(self, machine):
+        """Stop a recoverable Windows guest without hard-powering it off first.
+
+        Older StefanScherer Windows Server 2016 boxes can reach the desktop while
+        VMware Tools/WSMan becomes unhealthy after an unconditional ``halt -f``.
+        At this point ``_ensure_vmware_tools`` has already proved WinRM/Tools
+        readiness, so prefer an in-guest Windows shutdown. If the transport tears
+        down before returning, VMware power state remains authoritative. A VMware
+        Tools soft stop is the second graceful path; forced Vagrant halt is only
+        the final bounded fallback.
+        """
+        port = self._winrm_forwarded_port(machine)
+        if port and self._wait_winrm_ready(port, 30):
+            Log.info(f'GOAD Kingdoms: requesting graceful in-guest shutdown for {machine}')
+            try:
+                self._winrm_session(port).run_ps(
+                    "shutdown.exe /s /t 0 /f | Out-Null"
+                )
+            except Exception as exc:
+                # A successful shutdown normally destroys WinRM before pywinrm
+                # receives a response. Power state below decides success.
+                Log.warning(
+                    f'GOAD Kingdoms: {machine} shutdown command interrupted WinRM: {exc}'
+                )
+
+            if self._wait_machine_stopped(machine, 120):
+                Log.success(f'GOAD Kingdoms: {machine} completed graceful Windows shutdown')
+                return True
+
+        vmx = self._vmx_path(machine)
+        if vmx:
+            Log.warning(
+                f'GOAD Kingdoms: {machine} did not stop through WinRM; '
+                'trying VMware Tools soft shutdown'
+            )
+            try:
+                soft = subprocess.run(
+                    ['vmrun', '-T', 'ws', 'stop', vmx, 'soft'],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    check=False,
+                    timeout=45,
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                Log.warning(f'GOAD Kingdoms: VMware soft stop failed for {machine}: {exc}')
+            else:
+                if soft.returncode == 0 and self._wait_machine_stopped(machine, 120):
+                    Log.success(f'GOAD Kingdoms: {machine} completed VMware soft shutdown')
+                    return True
+                detail = soft.stderr.strip() or soft.stdout.strip()
+                if detail:
+                    Log.warning(f'GOAD Kingdoms: VMware soft stop for {machine}: {detail}')
+
+        Log.warning(
+            f'GOAD Kingdoms: graceful shutdown paths did not stop {machine}; '
+            'using bounded forced halt as final fallback'
+        )
+        if not self._run_vagrant_bounded(['halt', machine, '-f'], timeout=45):
+            Log.error(f'GOAD Kingdoms: forced halt failed for {machine}')
+            return False
+        if not self._wait_machine_stopped(machine, 60):
+            Log.error(f'GOAD Kingdoms: {machine} is still running after forced halt')
+            return False
+        return True
+
     def _recover_failed_windows_vagrant_up(self, machine):
         """Recover a failed fresh Windows ``vagrant up`` deterministically.
 
         A failed first bring-up does not necessarily mean VMware Tools are
         absent. Fresh StefanScherer guests can already have healthy Tools and a
         working forwarded WinRM endpoint while Vagrant's VMware guest channel
-        still fails during adapter/provisioner setup. Retrying ``vagrant up`` on
-        the running VM is unreliable and may either skip provisioning or fail
-        again in the first shell provisioner.
+        still fails during adapter/provisioner setup.
 
-        After the common Tools/readiness gate has succeeded, every failed first
-        bring-up therefore receives the same recovery treatment: force the VM
-        off, boot it through a clean Vagrant communicator lifecycle, and rerun
-        all shell provisioners explicitly.
+        Recovery therefore preserves the now-proven guest state: shut Windows
+        down gracefully first, verify VMware reports it stopped, then execute one
+        bounded ``vagrant up --provision`` cycle. Finally re-prove VMware Tools
+        and authenticated WinRM readiness before allowing installation to move to
+        the next machine.
         """
         Log.warning(
             f'GOAD Kingdoms: {machine} first Vagrant bring-up failed despite '
             'recoverable guest readiness; forcing a clean provision cycle'
         )
 
-        if not self._run_vagrant_bounded(['halt', machine, '-f'], timeout=60):
+        if not self._stop_failed_windows_guest_cleanly(machine):
             Log.error(
-                f'GOAD Kingdoms: could not power-cycle {machine} after failed Vagrant bring-up'
+                f'GOAD Kingdoms: could not stop {machine} safely after failed Vagrant bring-up'
             )
             return False
 
-        if not self.command.run_vagrant(['up', machine, '--provision'], self.path):
+        if not self._run_vagrant_bounded(['up', machine, '--provision'], timeout=600):
             Log.error(
-                f'GOAD Kingdoms: {machine} failed the clean Vagrant --provision recovery cycle'
+                f'GOAD Kingdoms: {machine} failed the bounded Vagrant --provision recovery cycle'
+            )
+            return False
+
+        if not self._ensure_vmware_tools(machine):
+            Log.error(
+                f'GOAD Kingdoms: {machine} completed Vagrant recovery but VMware Tools/WinRM '
+                'did not return healthy'
             )
             return False
 
@@ -130,7 +215,7 @@ class GoadKingdomsVmwareProvider(GoadNomadVmwareProvider):
         # already be healthy while Vagrant's guest-communication/provisioner
         # transition is still unstable. _ensure_vmware_tools() covers the first
         # case and proves baseline guest readiness for both. Any failed first
-        # vagrant up then gets one clean halt -> up --provision recovery cycle.
+        # vagrant up then gets one clean graceful-stop -> up --provision recovery.
         for machine in self.goad_nomad_windows:
             Log.info(f'GOAD_NOMAD: bringing up {machine}')
             first_up = self.command.run_vagrant(['up', machine], self.path)
