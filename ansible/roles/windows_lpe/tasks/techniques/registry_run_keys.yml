@@ -10,18 +10,33 @@
       $command = '{{ windows_lpe_registry_run_keys.command }}'
 
       New-Item -ItemType Directory -Path $root -Force | Out-Null
-      if (-not (Test-Path -LiteralPath $runPath)) { throw "HKLM Run key missing: $runPath" }
 
       if (-not (Test-Path -LiteralPath $stateFile -PathType Leaf)) {
-          $existing = Get-ItemProperty -LiteralPath $runPath -Name $valueName -ErrorAction SilentlyContinue
-          $valueExists = $null -ne $existing
-          $value = if ($valueExists) { [string]$existing.$valueName } else { $null }
-          $acl = Get-Acl -LiteralPath $runPath
+          $keyExisted = Test-Path -LiteralPath $runPath
+          $aclSddl = $null
+          $valueExists = $false
+          $value = $null
+
+          if ($keyExisted) {
+              $aclSddl = (Get-Acl -LiteralPath $runPath).Sddl
+              $existing = Get-ItemProperty -LiteralPath $runPath -Name $valueName -ErrorAction SilentlyContinue
+              $valueExists = $null -ne $existing
+              if ($valueExists) {
+                  $value = [string]$existing.$valueName
+                  throw "registry Run value $valueName already exists; refusing collision"
+              }
+          }
+
           [pscustomobject]@{
-              acl_sddl = $acl.Sddl
+              key_existed = $keyExisted
+              acl_sddl = $aclSddl
               value_exists = $valueExists
               value = $value
           } | ConvertTo-Json | Set-Content -LiteralPath $stateFile -Encoding UTF8
+      }
+
+      if (-not (Test-Path -LiteralPath $runPath)) {
+          New-Item -Path $runPath -Force | Out-Null
       }
 
       New-ItemProperty -LiteralPath $runPath -Name $valueName -Value $command -PropertyType String -Force | Out-Null
@@ -51,22 +66,41 @@
       $valueName = '{{ windows_lpe_registry_run_keys.value_name }}'
 
       if (-not (Test-Path -LiteralPath $stateFile -PathType Leaf)) {
-          Remove-ItemProperty -LiteralPath $runPath -Name $valueName -ErrorAction SilentlyContinue
+          if (Test-Path -LiteralPath $runPath) {
+              Remove-ItemProperty -LiteralPath $runPath -Name $valueName -ErrorAction SilentlyContinue
+          }
           Write-Output 'WINDOWS_LPE_REGISTRY_RUN_KEYS=RESET'
           return
       }
 
       $state = Get-Content -LiteralPath $stateFile -Raw | ConvertFrom-Json
-      if ([bool]$state.value_exists) {
-          New-ItemProperty -LiteralPath $runPath -Name $valueName -Value ([string]$state.value) -PropertyType String -Force | Out-Null
-      }
-      else {
-          Remove-ItemProperty -LiteralPath $runPath -Name $valueName -ErrorAction SilentlyContinue
-      }
 
-      $acl = New-Object System.Security.AccessControl.RegistrySecurity
-      $acl.SetSecurityDescriptorSddlForm([string]$state.acl_sddl)
-      Set-Acl -LiteralPath $runPath -AclObject $acl
+      if (Test-Path -LiteralPath $runPath) {
+          if ([bool]$state.value_exists) {
+              New-ItemProperty -LiteralPath $runPath -Name $valueName -Value ([string]$state.value) -PropertyType String -Force | Out-Null
+          }
+          else {
+              Remove-ItemProperty -LiteralPath $runPath -Name $valueName -ErrorAction SilentlyContinue
+          }
+
+          if ([bool]$state.key_existed) {
+              $acl = New-Object System.Security.AccessControl.RegistrySecurity
+              $acl.SetSecurityDescriptorSddlForm([string]$state.acl_sddl)
+              Set-Acl -LiteralPath $runPath -AclObject $acl
+          }
+          else {
+              $key = Get-Item -LiteralPath $runPath
+              if ($key.Property.Count -eq 0 -and $key.SubKeyCount -eq 0) {
+                  Remove-Item -LiteralPath $runPath -Force
+              }
+              else {
+                  throw 'candidate-created HKLM Run key is no longer empty after removing scenario value; refusing destructive reset'
+              }
+          }
+      }
+      elseif ([bool]$state.key_existed) {
+          throw 'pre-existing HKLM Run key disappeared; refusing to fabricate original state'
+      }
 
       Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
       Write-Output 'WINDOWS_LPE_REGISTRY_RUN_KEYS=RESET'
@@ -79,6 +113,7 @@
       $runPath = 'Registry::HKEY_LOCAL_MACHINE\{{ windows_lpe_registry_run_keys.registry_subkey }}'
       $valueName = '{{ windows_lpe_registry_run_keys.value_name }}'
       $command = '{{ windows_lpe_registry_run_keys.command }}'
+      if (-not (Test-Path -LiteralPath $runPath)) { throw 'HKLM Run key is missing after apply' }
       $value = [string](Get-ItemProperty -LiteralPath $runPath -Name $valueName -ErrorAction Stop).$valueName
       if ($value -cne $command) { throw "registry Run value mismatch: $value" }
 
@@ -111,8 +146,10 @@
       $runPath = 'Registry::HKEY_LOCAL_MACHINE\{{ windows_lpe_registry_run_keys.registry_subkey }}'
       $valueName = '{{ windows_lpe_registry_run_keys.value_name }}'
       if (Test-Path -LiteralPath $root) { throw 'registry Run keys scenario directory still exists' }
-      if ($null -ne (Get-ItemProperty -LiteralPath $runPath -Name $valueName -ErrorAction SilentlyContinue)) {
-          throw 'registry Run keys scenario value still exists'
+      if (Test-Path -LiteralPath $runPath) {
+          if ($null -ne (Get-ItemProperty -LiteralPath $runPath -Name $valueName -ErrorAction SilentlyContinue)) {
+              throw 'registry Run keys scenario value still exists'
+          }
       }
       Write-Output 'WINDOWS_LPE_REGISTRY_RUN_KEYS=CLEAN'
   register: windows_lpe_registry_run_keys_clean
