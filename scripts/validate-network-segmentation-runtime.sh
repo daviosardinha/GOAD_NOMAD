@@ -397,17 +397,16 @@ if ($binding.Enabled) { throw 'IPv6 is still enabled on Ethernet0 provisioning N
 $zone = Get-DnsServerZone -Name 'north.sevenkingdoms.local'
 if (-not $zone.IsDsIntegrated) { throw 'north.sevenkingdoms.local is not AD integrated' }
 
-# Windows exposes Add/Set/Remove-DnsServerConditionalForwarderZone but no
-# Get-DnsServerConditionalForwarderZone cmdlet. Conditional forwarders are
-# stored as DNS zones, and their full configuration is exposed by the
-# DnsServerConditionalForwarderZone CIM class.
-$parent = Get-CimInstance -Namespace 'Root\Microsoft\Windows\Dns' -ClassName 'DnsServerConditionalForwarderZone' -Filter "ZoneName='sevenkingdoms.local'"
-if (-not $parent) { throw 'sevenkingdoms.local conditional forwarder is missing' }
+# Conditional forwarders are exposed by Get-DnsServerZone with
+# ZoneType=Forwarder. Validate the forwarding relationship itself rather than
+# assuming a particular AD-integration/replication scope.
+$parent = Get-DnsServerZone -Name 'sevenkingdoms.local' -ErrorAction Stop
+if ($parent.ZoneType.ToString() -ne 'Forwarder') { throw "sevenkingdoms.local is not a forwarder: $($parent.ZoneType)" }
 $parentMasters = @($parent.MasterServers | ForEach-Object { $_.ToString() })
 if ($parentMasters -notcontains '10.4.20.10') { throw "parent forwarder incorrect: $($parentMasters -join ',')" }
 
-$essos = Get-CimInstance -Namespace 'Root\Microsoft\Windows\Dns' -ClassName 'DnsServerConditionalForwarderZone' -Filter "ZoneName='essos.local'"
-if (-not $essos) { throw 'essos.local conditional forwarder is missing' }
+$essos = Get-DnsServerZone -Name 'essos.local' -ErrorAction Stop
+if ($essos.ZoneType.ToString() -ne 'Forwarder') { throw "essos.local is not a forwarder: $($essos.ZoneType)" }
 $essosMasters = @($essos.MasterServers | ForEach-Object { $_.ToString() })
 if ($essosMasters -notcontains '10.4.30.12') { throw "ESSOS forwarder incorrect: $($essosMasters -join ',')" }
 
@@ -427,8 +426,8 @@ pass "Winterfell DNS hardening / forwarders"
 
 out="$(vagrant_ps GOAD-DC01 <<'PS'
 $ErrorActionPreference = 'Stop'
-$essos = Get-CimInstance -Namespace 'Root\Microsoft\Windows\Dns' -ClassName 'DnsServerConditionalForwarderZone' -Filter "ZoneName='essos.local'"
-if (-not $essos) { throw 'essos.local conditional forwarder is missing on Kingslanding' }
+$essos = Get-DnsServerZone -Name 'essos.local' -ErrorAction Stop
+if ($essos.ZoneType.ToString() -ne 'Forwarder') { throw "essos.local is not a forwarder on Kingslanding: $($essos.ZoneType)" }
 $masters = @($essos.MasterServers | ForEach-Object { $_.ToString() })
 if ($masters -notcontains '10.4.30.12') { throw "Kingslanding ESSOS forwarder incorrect: $($masters -join ',')" }
 Write-Output 'KINGSLANDING_ESSOS_FORWARDER=PASS'
