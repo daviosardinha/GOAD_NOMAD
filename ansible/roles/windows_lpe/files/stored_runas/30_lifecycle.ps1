@@ -43,7 +43,7 @@ if ($Action -eq 'apply') {
     Assert-VulnerableState
     Write-Output 'WINDOWS_LPE_STORED_RUNAS_CREDENTIALS=VULNERABLE'
 }
-elif ($Action -eq 'reset') {
+elseif ($Action -eq 'reset') {
     $TargetEscaped = $CredentialTarget.Replace("'", "''")
     $DeletePayload = @(
         "`$CSharp = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('$CredentialInteropB64'))"
@@ -63,11 +63,11 @@ elif ($Action -eq 'reset') {
     Assert-CleanState
     Write-Output 'WINDOWS_LPE_STORED_RUNAS_CREDENTIALS=CLEAN'
 }
-elif ($Action -eq 'validate' -and $ValidateState -eq 'vulnerable') {
+elseif ($Action -eq 'validate' -and $ValidateState -eq 'vulnerable') {
     Assert-VulnerableState
     Write-Output 'WINDOWS_LPE_STORED_RUNAS_CREDENTIALS=VULNERABLE'
 }
-elif ($Action -eq 'validate' -and $ValidateState -eq 'clean') {
+elseif ($Action -eq 'validate' -and $ValidateState -eq 'clean') {
     Assert-CleanState
     Write-Output 'WINDOWS_LPE_STORED_RUNAS_CREDENTIALS=CLEAN'
 }
