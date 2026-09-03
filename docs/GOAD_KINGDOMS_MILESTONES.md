@@ -83,7 +83,9 @@ The detailed historical M1 record remains at [`GOAD_NOMAD_MILESTONES.md`](./GOAD
 
 ## Milestone 2 — NORTH Workstation Foothold & Windows Local Privilege Escalation
 
-**Status: IMPLEMENTATION IN PROGRESS — WS01 FOUNDATION VALIDATED**
+**Status: IMPLEMENTATION IN PROGRESS — WS01 FOUNDATION + 20/20 LPE CATALOG VALIDATED**
+
+### Validated checkpoints
 
 WS01 clean-foundation checkpoint validated on **2026-09-02** from origin-synced source:
 
@@ -97,6 +99,18 @@ WS01 clean-foundation checkpoint validated on **2026-09-02** from origin-synced 
 - RDP (`3389/tcp`) and WinRM HTTPS (`5986/tcp`) are reachable from NORTH;
 - UAC, Windows Firewall, and Defender remain enabled;
 - focused runtime result: `WS01_FOUNDATION=PASS` with Ansible `unreachable=0` and `failed=0`.
+
+The complete deterministic Windows LPE catalog passed its full reversible runtime gate on **2026-09-03** from origin-synced source with technique implementation HEAD `0f02199fdf07d425b89346664bcde67f7ba0033c`:
+
+- all **20/20** techniques validated vulnerable together;
+- all 20 reset successfully and validated clean;
+- all 20 re-applied together and validated vulnerable again;
+- final vulnerable-state Ansible recap completed with `unreachable=0` and `failed=0`;
+- WS01 remained powered and WinRM healthy throughout the gate;
+- post-cycle baseline passed for domain membership/secure channel, Rickon rights, RDP/WinRM reachability, UAC, Windows Firewall, Defender, and Windows evaluation grace;
+- final runtime state intentionally remains **20 techniques APPLIED / VULNERABLE** for training.
+
+The 20 techniques are now promoted from Candidate to **Implemented** in the framework metadata. No deterministic LPE technique remains Candidate or Planned.
 
 ICMP echo is not a WS01 health requirement: the Windows client firewall may block echo while the intended RDP and WinRM services remain healthy. The runtime validator therefore uses the service contract rather than requiring ping.
 
@@ -132,11 +146,11 @@ Milestone 2 is an extension to GOAD's attack journey, not a separate standalone 
 | Starting identity | `NORTH\\rickon.stark` |
 | Provisioning | Vagrant NAT, same M1 lifecycle contract as existing Windows guests |
 
-The WS01 box is pinned before LPE work begins. The foundation keeps Defender, UAC and Windows Firewall at their native Windows client baseline; WS01 is excluded from both GOAD's server-oriented `defender_on` role and `defender_off`. `rickon.stark` receives Remote Desktop access but is not placed in local Administrators.
+The WS01 box is pinned. The foundation keeps Defender, UAC and Windows Firewall at their native Windows client baseline; WS01 is excluded from both GOAD's server-oriented `defender_on` role and `defender_off`. `rickon.stark` receives Remote Desktop access but is not placed in local Administrators.
 
 ### LPE architecture
 
-GOAD Kingdoms will implement its own Ansible-native, resettable Windows LPE role rather than importing a destructive all-in-one Windows hardening-disable script.
+GOAD Kingdoms implements its own Ansible-native, resettable Windows LPE role rather than importing a destructive all-in-one Windows hardening-disable script.
 
 Primary technique/reference sources include:
 
@@ -145,40 +159,40 @@ Primary technique/reference sources include:
 - Sagi Shahar's LPE Workshop for additional technique references;
 - reset/cleanup patterns from modern lab seeders.
 
-The implementation must preserve normal security controls except where a specific exercise intentionally changes them.
+The implementation preserves normal security controls except where a specific exercise intentionally changes a narrowly scoped object.
 
-### Target technique catalog
+### Implemented deterministic technique catalog
 
-The target is approximately **18–22 deterministic misconfiguration-based techniques**, with an initial validated subset before the full catalog is enabled.
-
-Planned families include:
+The validated core contains exactly **20 misconfiguration-based techniques** across these families:
 
 - unquoted service paths;
 - weak service DACLs;
 - weak service binary permissions;
 - weak service registry permissions;
-- service/DLL/PATH search-order abuse;
+- service DLL hijacking;
+- PATH search-order hijacking;
 - AlwaysInstallElevated;
-- registry run keys;
-- writable startup folders;
-- scheduled-task path/binary weaknesses;
-- answer/unattend credential artifacts;
-- PowerShell/history credential artifacts;
+- registry Run keys;
+- writable Startup folder;
+- scheduled-task binary permissions;
+- scheduled-task directory permissions;
+- unattend credential artifacts;
+- PowerShell history credential artifacts;
 - hardcoded application credentials;
 - stored RunAs credentials;
 - stored Winlogon credentials;
 - SeBackupPrivilege;
 - SeImpersonatePrivilege;
-- writable application/program directories;
-- selected additional deterministic Windows misconfigurations that survive compatibility testing.
+- writable Program Files directory;
+- insecure custom service registry configuration.
 
 Patch/build-dependent kernel CVEs are optional additions, not part of the deterministic core catalog.
 
 ### Scenario profiles
 
-The catalog and the active exercise set are separate concepts. Normal training profiles should expose a focused subset while a full profile can intentionally enable everything.
+The catalog and the active exercise set are separate concepts. The implemented profiles expose focused subsets while `full-lpe` intentionally enables all 20.
 
-Planned profiles:
+Profiles:
 
 - `service-abuse`
 - `credential-hunting`
@@ -187,22 +201,26 @@ Planned profiles:
 - `mixed`
 - `full-lpe`
 
+Because all current catalog members are Implemented, normal profiles no longer require candidate opt-in.
+
 ### Required M2 validation gates
 
 Milestone 2 cannot close until all of the following are proven from committed, origin-synced source:
 
-1. WS01 installs as a first-class GOAD workstation and joins `north.sevenkingdoms.local`. **PASSED for the clean-foundation checkpoint.**
-2. WS01 follows the exact M1 provisioning/exercise NIC contract. **PASSED for the clean-foundation checkpoint.**
+1. WS01 installs as a first-class GOAD workstation and joins `north.sevenkingdoms.local`. **PASSED.**
+2. WS01 follows the exact M1 provisioning/exercise NIC contract. **PASSED for the validated WS01 checkpoint.**
 3. Start/stop/power-cycle behavior cannot restore its provisioning bypass.
-4. The chosen existing NORTH user can obtain the intended low-privilege foothold without receiving unintended local-admin rights. **Baseline rights validated; interactive foothold exercise remains part of the end-to-end gate.**
-5. Every supported LPE technique has an explicit apply check and validation check.
-6. Reset is deterministic: apply -> validate vulnerable -> reset -> validate clean -> reapply -> validate vulnerable.
-7. Technique profiles do not accidentally collide or destroy unrelated scenarios.
-8. Defender/UAC/Firewall baseline state is recorded and not globally weakened merely to make the lab easier. **PASSED for the clean-foundation checkpoint.**
-9. The exact WS01 Windows build has a compatibility matrix for every advertised technique.
-10. The intended progression from the starting NORTH account to SYSTEM and then into an existing GOAD AD attack path is demonstrated end to end.
-11. M1 segmentation/trust/DNS/linked-SQL validation remains green after WS01 is added.
-12. The final candidate is tested only after `scripts/verify-test-source.sh` proves the test checkout matches Git. **Enforced and passed for the clean-foundation checkpoint.**
+4. The chosen existing NORTH user can obtain the intended low-privilege foothold without receiving unintended local-admin rights. **Baseline rights and real RDP foothold validated.**
+5. Every supported LPE technique has an explicit apply check and validation check. **PASSED for all 20.**
+6. Reset is deterministic: apply -> validate vulnerable -> reset -> validate clean -> reapply -> validate vulnerable. **PASSED for all 20 together.**
+7. Technique profiles do not accidentally collide or destroy unrelated scenarios. **Full 20-scenario reversible cycle passed; focused profile acceptance remains available for final M2 regression.**
+8. Defender/UAC/Firewall baseline state is recorded and not globally weakened merely to make the lab easier. **PASSED before and after the full 20-scenario cycle.**
+9. The exact WS01 Windows build has compatibility evidence for every advertised technique. **PASSED for the deterministic 20-technique catalog, including interactive RunAs compatibility proof.**
+10. The intended progression from the starting NORTH account to SYSTEM and then into an existing GOAD AD attack path is demonstrated end to end. **PENDING.**
+11. M1 segmentation/trust/DNS/linked-SQL validation remains green after WS01 is added. **PENDING final M2 regression.**
+12. The final candidate is tested only after `scripts/verify-test-source.sh` proves the test checkout matches Git. **PASSED and enforced by the source/runtime gates.**
+
+The Windows LPE construction/promotion phase is complete. Milestone 2 remains open for the end-to-end attack-journey proof and final inherited-M1 regression gates rather than for additional local-LPE scenario construction.
 
 ---
 
