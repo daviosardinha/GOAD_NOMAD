@@ -566,13 +566,57 @@ pass "protected-zone host routes removed"
 
 section "10. STUDENT-SIDE NETWORK BOUNDARY"
 
-ping -c 2 -W 2 10.4.10.11 >/dev/null || fatal "Winterfell unreachable from NORTH"
-ping -c 2 -W 2 10.4.10.22 >/dev/null || fatal "Castelblack unreachable from NORTH"
-ping -c 2 -W 2 10.4.10.31 >/dev/null || fatal "WS01 unreachable from NORTH"
-timeout 3 nc -zw2 10.4.10.11 445 || fatal "Winterfell SMB unreachable from NORTH"
-timeout 3 nc -zw2 10.4.10.22 445 || fatal "Castelblack SMB unreachable from NORTH"
-timeout 3 nc -zw2 10.4.10.31 3389 || fatal "WS01 RDP unreachable from NORTH"
-pass "NORTH remains directly reachable"
+# lab-mode exercise may stop/start Windows guests when persisting the NAT NIC
+# as disconnected. VMware reporting power=running only means the VM process is
+# running; it does not guarantee that Windows networking/services are ready.
+# Wait on the actual NORTH-side services required by the exercise instead of
+# racing guest boot or depending on Windows ICMP firewall behavior.
+wait_north_service() {
+    local label="$1"
+    local host="$2"
+    local port="$3"
+    local timeout_s="${4:-300}"
+    local start now elapsed next_notice
+
+    start="$(date +%s)"
+    next_notice=30
+
+    while true; do
+        if timeout 3 nc -zw2 "$host" "$port" >/dev/null 2>&1; then
+            now="$(date +%s)"
+            elapsed=$((now - start))
+            echo "[READY] ${label} (${host}:${port}) after ${elapsed}s"
+            return 0
+        fi
+
+        now="$(date +%s)"
+        elapsed=$((now - start))
+
+        if (( elapsed >= timeout_s )); then
+            echo "[TIMEOUT] ${label} (${host}:${port}) not ready after ${elapsed}s" >&2
+            return 1
+        fi
+
+        if (( elapsed >= next_notice )); then
+            echo "[WAIT] ${label} (${host}:${port}) still starting after ${elapsed}s"
+            next_notice=$((next_notice + 30))
+        fi
+
+        sleep 5
+    done
+}
+
+wait_north_service "Winterfell SMB"   10.4.10.11 445  300 || fatal "Winterfell SMB did not recover after exercise transition"
+wait_north_service "Castelblack SMB"  10.4.10.22 445  300 || fatal "Castelblack SMB did not recover after exercise transition"
+wait_north_service "WS01 RDP"         10.4.10.31 3389 300 || fatal "WS01 RDP did not recover after exercise transition"
+
+# The next section executes Ansible directly over the isolated NORTH network,
+# so also wait for WinRM rather than allowing another post-reboot race.
+wait_north_service "Winterfell WinRM"  10.4.10.11 5986 300 || fatal "Winterfell WinRM did not recover after exercise transition"
+wait_north_service "Castelblack WinRM" 10.4.10.22 5986 300 || fatal "Castelblack WinRM did not recover after exercise transition"
+wait_north_service "WS01 WinRM"        10.4.10.31 5986 300 || fatal "WS01 WinRM did not recover after exercise transition"
+
+pass "NORTH services stabilized and remain directly reachable"
 
 if timeout 3 nc -zw2 10.4.20.10 445 2>/dev/null; then
     fatal "SevenKingdoms is directly reachable from student/host side"
