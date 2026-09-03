@@ -10,32 +10,36 @@ function Test-RunAsSavedCredential {
     $TargetEscaped = $CredentialTarget.Replace("'", "''")
     $Payload = @(
         "`$Target = '$TargetEscaped'"
-        "`$WorkDir = '__WORKDIR__'"
-        "`$ProofFile = Join-Path `$WorkDir 'runas-proof.txt'"
+        "`$ProofFile = Join-Path `$env:PUBLIC ('goad-runas-proof-' + [guid]::NewGuid().ToString('N') + '.txt')"
         'Remove-Item -LiteralPath $ProofFile -Force -ErrorAction SilentlyContinue'
-        "`$Program = `$env:SystemRoot + '\System32\cmd.exe /d /c echo RUNAS_SAVECRED_OK>' + `$ProofFile"
-        '$Psi = New-Object System.Diagnostics.ProcessStartInfo'
-        '$Psi.FileName = $env:SystemRoot + ''\System32\runas.exe'''
-        '$Psi.Arguments = "/savecred /user:$Target `"$Program`""'
-        '$Psi.UseShellExecute = $false'
-        '$Psi.CreateNoWindow = $true'
-        '$Psi.RedirectStandardOutput = $true'
-        '$Psi.RedirectStandardError = $true'
-        '$Process = [System.Diagnostics.Process]::Start($Psi)'
-        'if (-not $Process.WaitForExit(15000)) {'
-        '    try { $Process.Kill() } catch { }'
-        "    throw 'runas /savecred timed out waiting for saved credential'"
+        'try {'
+        "    `$Program = `$env:SystemRoot + '\System32\cmd.exe /d /c whoami > ' + `$ProofFile"
+        '    $Psi = New-Object System.Diagnostics.ProcessStartInfo'
+        '    $Psi.FileName = $env:SystemRoot + ''\System32\runas.exe'''
+        '    $Psi.Arguments = "/savecred /user:$Target `"$Program`""'
+        '    $Psi.UseShellExecute = $false'
+        '    $Psi.CreateNoWindow = $true'
+        '    $Psi.RedirectStandardOutput = $true'
+        '    $Psi.RedirectStandardError = $true'
+        '    $Process = [System.Diagnostics.Process]::Start($Psi)'
+        '    if (-not $Process.WaitForExit(15000)) {'
+        '        try { $Process.Kill() } catch { }'
+        "        throw 'runas /savecred timed out waiting for saved credential'"
+        '    }'
+        '    $Stdout = $Process.StandardOutput.ReadToEnd()'
+        '    $Stderr = $Process.StandardError.ReadToEnd()'
+        '    $ProofDeadline = (Get-Date).AddSeconds(10)'
+        '    while ((Get-Date) -lt $ProofDeadline -and -not (Test-Path -LiteralPath $ProofFile -PathType Leaf)) { Start-Sleep -Milliseconds 250 }'
+        '    if (-not (Test-Path -LiteralPath $ProofFile -PathType Leaf)) {'
+        '        throw ("runas proof failed exit={0} stdout={1} stderr={2}" -f $Process.ExitCode, $Stdout.Trim(), $Stderr.Trim())'
+        '    }'
+        '    $Proof = (Get-Content -LiteralPath $ProofFile -Raw).Trim()'
+        '    if ($Proof -ine $Target) { throw "runas proof identity invalid expected=$Target actual=$Proof" }'
+        "    'RUNAS_SAVECRED_OK' | Set-Content -LiteralPath '__OUTPUT_PATH__' -Encoding ascii"
         '}'
-        '$Stdout = $Process.StandardOutput.ReadToEnd()'
-        '$Stderr = $Process.StandardError.ReadToEnd()'
-        '$ProofDeadline = (Get-Date).AddSeconds(10)'
-        'while ((Get-Date) -lt $ProofDeadline -and -not (Test-Path -LiteralPath $ProofFile -PathType Leaf)) { Start-Sleep -Milliseconds 250 }'
-        'if (-not (Test-Path -LiteralPath $ProofFile -PathType Leaf)) {'
-        '    throw ("runas proof failed exit={0} stdout={1} stderr={2}" -f $Process.ExitCode, $Stdout.Trim(), $Stderr.Trim())'
+        'finally {'
+        '    Remove-Item -LiteralPath $ProofFile -Force -ErrorAction SilentlyContinue'
         '}'
-        '$Proof = (Get-Content -LiteralPath $ProofFile -Raw).Trim()'
-        'if ($Proof -ne ''RUNAS_SAVECRED_OK'') { throw "runas proof marker invalid: $Proof" }'
-        "'RUNAS_SAVECRED_OK' | Set-Content -LiteralPath '__OUTPUT_PATH__' -Encoding ascii"
     ) -join [Environment]::NewLine
 
     $ProofResult = Invoke-OwnerPayload 'RunAsProof' $Payload
