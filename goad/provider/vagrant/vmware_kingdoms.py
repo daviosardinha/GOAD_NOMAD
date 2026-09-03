@@ -1,6 +1,7 @@
 import os
 import subprocess
 
+from goad.goadpath import GoadPath
 from goad.log import Log
 from goad.provider.vagrant.vmware_nomad import GoadNomadVmwareProvider
 
@@ -69,62 +70,97 @@ class GoadKingdomsVmwareProvider(GoadNomadVmwareProvider):
         Log.success('GOAD Kingdoms: segmented VMware instance collision preflight passed')
         return True
 
-    def _ensure_vmware_tools(self, machine):
-        """Repair VMware Tools and finish the interrupted Vagrant provision cycle.
+    def _recover_failed_windows_vagrant_up(self, machine):
+        """Recover a failed fresh Windows ``vagrant up`` deterministically.
 
-        On a genuinely fresh StefanScherer Windows box, ``vagrant up`` can boot
-        far enough for forwarded WinRM to work but fail before the shell
-        provisioners because VMware Tools are absent. Installing Tools repairs
-        guest communication, but simply calling ``vagrant up`` again is not
-        sufficient: Vagrant may already consider the machine provisioned and
-        skip the WMF/WinRM/fix_ip shell stages.
+        A failed first bring-up does not necessarily mean VMware Tools are
+        absent. Fresh StefanScherer guests can already have healthy Tools and a
+        working forwarded WinRM endpoint while Vagrant's VMware guest channel
+        still fails during adapter/provisioner setup. Retrying ``vagrant up`` on
+        the running VM is unreliable and may either skip provisioning or fail
+        again in the first shell provisioner.
 
-        Therefore, only when Tools actually had to be installed, force a clean
-        power cycle and explicitly rerun Vagrant provisioning. The outer
-        VmwareProvider retry remains harmless and sees an already healthy guest.
+        After the common Tools/readiness gate has succeeded, every failed first
+        bring-up therefore receives the same recovery treatment: force the VM
+        off, boot it through a clean Vagrant communicator lifecycle, and rerun
+        all shell provisioners explicitly.
         """
-        vmx = self._vmx_path(machine)
-        if not vmx:
-            Log.error(f'GOAD_NOMAD: cannot locate VMX path for {machine}')
-            return False
-
-        port = self._winrm_forwarded_port(machine)
-        if not port:
-            Log.error(f'GOAD_NOMAD: cannot determine forwarded WinRM port for {machine}')
-            return False
-
-        if not self._wait_tcp(port, 120):
-            Log.error(f'GOAD_NOMAD: forwarded WinRM port {port} is not reachable for {machine}')
-            return False
-
-        if self._guest_tools_healthy(port):
-            if not self._wait_guest_ip(vmx, 60):
-                Log.warning(
-                    f'GOAD_NOMAD: {machine} VMware Tools are healthy but guest IP reporting is delayed'
-                )
-            return True
-
-        if not self._install_vmware_tools(machine, vmx, port):
-            return False
-
         Log.warning(
-            f'GOAD Kingdoms: {machine} VMware Tools were recovered after an '
-            'interrupted Vagrant bring-up; forcing a clean provision cycle'
+            f'GOAD Kingdoms: {machine} first Vagrant bring-up failed despite '
+            'recoverable guest readiness; forcing a clean provision cycle'
         )
+
         if not self._run_vagrant_bounded(['halt', machine, '-f'], timeout=60):
             Log.error(
-                f'GOAD Kingdoms: could not power-cycle {machine} after VMware Tools recovery'
+                f'GOAD Kingdoms: could not power-cycle {machine} after failed Vagrant bring-up'
             )
             return False
 
         if not self.command.run_vagrant(['up', machine, '--provision'], self.path):
             Log.error(
-                f'GOAD Kingdoms: {machine} failed the post-Tools Vagrant --provision recovery cycle'
+                f'GOAD Kingdoms: {machine} failed the clean Vagrant --provision recovery cycle'
             )
             return False
 
         Log.success(
-            f'GOAD Kingdoms: {machine} completed a clean post-Tools Vagrant provision cycle'
+            f'GOAD Kingdoms: {machine} completed a clean failed-bring-up recovery provision cycle'
+        )
+        return True
+
+    def install(self):
+        """Bring up a segmented GOAD instance with fail-closed Windows recovery."""
+        if self.lab_name != 'GOAD':
+            return super().install()
+
+        if not self._sync_goad_nomad_inventories():
+            return False
+
+        if not self._sync_goad_nomad_vagrantfile_compatibility():
+            return False
+
+        # Bring up the router independently so a Windows guest failure cannot
+        # prevent creation of the routing plane. Linux keeps the normal SSH path.
+        Log.info('GOAD_NOMAD: bringing up segmented router')
+        if not self.command.run_vagrant(['up', 'GOAD-ROUTER'], self.path):
+            Log.error('GOAD_NOMAD: failed to bring up GOAD-ROUTER')
+            return False
+
+        # A fresh Windows box can fail its first VMware/Vagrant guest operation
+        # for two different reasons: Tools may genuinely be absent, or Tools may
+        # already be healthy while Vagrant's guest-communication/provisioner
+        # transition is still unstable. _ensure_vmware_tools() covers the first
+        # case and proves baseline guest readiness for both. Any failed first
+        # vagrant up then gets one clean halt -> up --provision recovery cycle.
+        for machine in self.goad_nomad_windows:
+            Log.info(f'GOAD_NOMAD: bringing up {machine}')
+            first_up = self.command.run_vagrant(['up', machine], self.path)
+
+            if not self._ensure_vmware_tools(machine):
+                return False
+
+            if not first_up:
+                if not self._recover_failed_windows_vagrant_up(machine):
+                    Log.error(
+                        f'GOAD_NOMAD: {machine} still failed after clean Vagrant recovery'
+                    )
+                    return False
+
+        # The host has no vmnet20/vmnet30 adapters, so local Ansible must
+        # temporarily reach those protected networks through GOAD-ROUTER after
+        # Vagrant has brought the complete instance up.
+        route_script = GoadPath.get_script_file('provisioning-routes.sh')
+        if not os.path.isfile(route_script):
+            Log.error(f'GOAD_NOMAD provisioning route helper not found: {route_script}')
+            return False
+
+        Log.info('GOAD_NOMAD: enabling temporary host routes for local Ansible provisioning')
+        route_result = subprocess.run(['sudo', 'bash', route_script, 'enable'], check=False)
+        if route_result.returncode != 0:
+            Log.error('GOAD_NOMAD: failed to enable temporary provisioning routes')
+            return False
+
+        Log.warning(
+            'GOAD_NOMAD: provisioning routes are temporary and must be removed before exercise mode'
         )
         return True
 
