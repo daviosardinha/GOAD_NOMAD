@@ -16,8 +16,10 @@ pass 'Git source-of-truth gate'
 
 readonly REQUIRED=(
     goad.sh
+    goad_nomad.py
     goad/provisioner/ansible/ansible.py
     goad/provider/provider_factory.py
+    goad/provider/vagrant/vmware.py
     goad/provider/vagrant/vmware_kingdoms.py
     playbooks.yml
     ansible/ws01.yml
@@ -53,6 +55,25 @@ except Exception as exc:
 def fail(message):
     raise SystemExit(message)
 
+
+def require_tokens(label, text, tokens):
+    for token in tokens:
+        if token not in text:
+            fail(f'{label} missing contract: {token}')
+
+
+# Parse the Python sources without writing __pycache__ into the working tree.
+for source in (
+    'goad_nomad.py',
+    'goad/provider/vagrant/vmware.py',
+    'goad/provider/vagrant/vmware_kingdoms.py',
+):
+    text = Path(source).read_text()
+    try:
+        compile(text, source, 'exec')
+    except SyntaxError as exc:
+        fail(f'Python syntax error in {source}: {exc}')
+
 playbooks = yaml.safe_load(Path('playbooks.yml').read_text())
 expected = [
     'build.yml',
@@ -83,27 +104,31 @@ if actual[-1] != 'ws01-lpe-install.yml':
     fail('WS01 full LPE seeding must be the final GOAD Ansible stage')
 
 install_lpe = Path('ansible/ws01-lpe-install.yml').read_text()
-for token in (
-    'hosts: ws01',
-    'role: windows_lpe',
-    'windows_lpe_action: apply',
-    'windows_lpe_profile: full-lpe',
-):
-    if token not in install_lpe:
-        fail(f'WS01 LPE clean-install playbook missing contract: {token}')
+require_tokens(
+    'WS01 LPE clean-install playbook',
+    install_lpe,
+    (
+        'hosts: ws01',
+        'role: windows_lpe',
+        'windows_lpe_action: apply',
+        'windows_lpe_profile: full-lpe',
+    ),
+)
 if 'windows_lpe_allow_candidate' in install_lpe:
     fail('promoted clean install must not require candidate opt-in')
 
 foundation = Path('ansible/ws01.yml').read_text()
-for token in (
-    'hosts: ws01',
-    "role: 'settings/eval_rearm'",
-    "role: 'commonwkstn'",
-    "role: 'settings/adjust_rights'",
-    "role: 'settings/user_rights'",
-):
-    if token not in foundation:
-        fail(f'WS01 clean foundation playbook missing contract: {token}')
+require_tokens(
+    'WS01 clean foundation playbook',
+    foundation,
+    (
+        'hosts: ws01',
+        "role: 'settings/eval_rearm'",
+        "role: 'commonwkstn'",
+        "role: 'settings/adjust_rights'",
+        "role: 'settings/user_rights'",
+    ),
+)
 
 config = Path('ad/GOAD/data/config.json').read_text()
 if '"ws01"' not in config or '"north\\\\rickon.stark"' not in config:
@@ -124,25 +149,62 @@ provider_factory = Path('goad/provider/provider_factory.py').read_text()
 if 'GoadKingdomsVmwareProvider' not in provider_factory:
     fail('VMware provider factory is not wired to GOAD Kingdoms segmented provider')
 
+console = Path('goad_nomad.py').read_text()
+require_tokens(
+    'GOAD Kingdoms unattended sudo lifecycle',
+    console,
+    (
+        'def _start_install_sudo_keepalive(self, stop_event):',
+        "['sudo', '-k']",
+        "['sudo', '-v']",
+        "['sudo', '-n', '-v']",
+        "name='goad-kingdoms-sudo-keepalive'",
+        'non-interactive keepalive active every 60s',
+        'sudo_lost_event.is_set()',
+        'refusing to report the install as successful',
+    ),
+)
+
+vmware_provider = Path('goad/provider/vagrant/vmware.py').read_text()
+require_tokens(
+    'VMware Tools recoverable-transition logging',
+    vmware_provider,
+    (
+        'VMware Tools install/reboot interrupted WinRM',
+        'validating guest recovery before classifying it as a failure',
+        'recovery reboot closed WinRM',
+        'continuing with readiness validation',
+    ),
+)
+if 'VMware Tools WinRM session interrupted for' in vmware_provider:
+    fail('expected VMware Tools transport teardown must not use the old failure-like warning text')
+
 kingdoms_provider = Path('goad/provider/vagrant/vmware_kingdoms.py').read_text()
-for token in (
-    'def _wait_machine_stopped(self, machine, timeout=120):',
-    'def _stop_failed_windows_guest_cleanly(self, machine):',
-    'def _recover_failed_windows_vagrant_up(self, machine):',
-    'def install(self):',
-    "first_up = self.command.run_vagrant(['up', machine], self.path)",
-    'if not first_up:',
-    'if not self._recover_failed_windows_vagrant_up(machine):',
-    'shutdown.exe /s /t 0 /f',
-    "['vmrun', '-T', 'ws', 'stop', vmx, 'soft']",
-    "['halt', machine, '-f']",
-    "['up', machine, '--provision']",
-    'timeout=600',
-    'if not self._ensure_vmware_tools(machine):',
-    'completed a clean failed-bring-up recovery provision cycle',
-):
-    if token not in kingdoms_provider:
-        fail(f'GOAD Kingdoms failed Windows bring-up recovery contract missing: {token}')
+require_tokens(
+    'GOAD Kingdoms failed Windows bring-up recovery',
+    kingdoms_provider,
+    (
+        'def _wait_machine_stopped(self, machine, timeout=120):',
+        'def _stop_failed_windows_guest_cleanly(self, machine):',
+        'def _recover_failed_windows_vagrant_up(self, machine):',
+        'def install(self):',
+        "first_up = self.command.run_vagrant(['up', machine], self.path)",
+        'if not first_up:',
+        'if not self._recover_failed_windows_vagrant_up(machine):',
+        'shutdown.exe /s /t 0 /f',
+        "['vmrun', '-T', 'ws', 'stop', vmx, 'soft']",
+        "['halt', machine, '-f']",
+        "['up', machine, '--provision']",
+        'timeout=600',
+        'if not self._ensure_vmware_tools(machine):',
+        'starting a clean recovery provision cycle',
+        'completed a clean failed-bring-up recovery provision cycle',
+        "['sudo', '-n', '-v']",
+        "['sudo', '-n', 'bash', route_script, 'enable']",
+    ),
+)
+if 'forcing a clean provision cycle' in kingdoms_provider:
+    fail('recovery logging still claims the now-graceful recovery cycle is forced')
 
 # A failed first bring-up must no longer hard-power Windows off as the primary
 # recovery action. Older Server 2016 boxes have demonstrated a fully booted
@@ -173,7 +235,7 @@ for token in ('_prepare_provider_provisioning', '_finalize_provider_provisioning
     if token not in provisioner:
         fail(f'Ansible clean-install lifecycle missing provider hook: {token}')
 PY
-pass 'GOAD clean-install orchestration contract'
+pass 'GOAD clean-install orchestration + unattended lifecycle contract'
 
 readonly ANSIBLE_PLAYBOOK="${HOME}/.goad/.venv/bin/ansible-playbook"
 if [[ -x "${ANSIBLE_PLAYBOOK}" ]]; then
@@ -199,4 +261,4 @@ git diff --check
 pass 'Git whitespace check'
 
 printf '\n[READY] GOAD Kingdoms clean-install source gate passed.\n'
-printf 'A fresh GOAD/VMware install is wired to build segmentation, WS01 foundation, and all 20 LPE scenarios.\n'
+printf 'A fresh GOAD/VMware install is wired for unattended sudo continuity, segmented provisioning, WS01 foundation, and all 20 LPE scenarios.\n'
