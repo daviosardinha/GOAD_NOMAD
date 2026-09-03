@@ -25,6 +25,7 @@ readonly REQUIRED_FILES=(
     scripts/validate-windows-lpe-unquoted-service-path-runtime.sh
     scripts/validate-windows-lpe-service-batch-runtime.sh
     scripts/validate-windows-lpe-full-runtime.sh
+    scripts/validate-windows-lpe-promoted-runtime.sh
     scripts/diagnose-ws01-shutdown.sh
 )
 for file in "${REQUIRED_FILES[@]}"; do
@@ -37,6 +38,7 @@ bash -n scripts/apply-windows-lpe-candidates.sh
 bash -n scripts/validate-windows-lpe-unquoted-service-path-runtime.sh
 bash -n scripts/validate-windows-lpe-service-batch-runtime.sh
 bash -n scripts/validate-windows-lpe-full-runtime.sh
+bash -n scripts/validate-windows-lpe-promoted-runtime.sh
 bash -n scripts/diagnose-ws01-shutdown.sh
 pass 'framework/runtime/helper shell syntax'
 
@@ -108,6 +110,7 @@ playbook = Path('ansible/windows-lpe.yml').read_text()
 catalog_doc = Path('docs/WINDOWS_LPE_CATALOG.md').read_text()
 batch_runtime = Path('scripts/validate-windows-lpe-service-batch-runtime.sh').read_text()
 full_runtime = Path('scripts/validate-windows-lpe-full-runtime.sh').read_text()
+promotion_runtime = Path('scripts/validate-windows-lpe-promoted-runtime.sh').read_text()
 single_runtime = Path('scripts/validate-windows-lpe-unquoted-service-path-runtime.sh').read_text()
 helper = Path('scripts/apply-windows-lpe-candidates.sh').read_text()
 
@@ -226,6 +229,11 @@ if "windows_lpe_allow_candidate=true" in full_runtime:
 for token in ('run_full apply', 'run_full validate vulnerable', 'run_full reset', 'run_full validate clean', 'validate-ws01-runtime.sh'):
     if token not in full_runtime:
         fail(f'full 20-scenario runtime contract missing: {token}')
+if "windows_lpe_allow_candidate=true" in promotion_runtime:
+    fail('promoted profile acceptance gate must not require candidate opt-in')
+for token in ('windows_lpe_action=validate', 'windows_lpe_profile=full-lpe', 'windows_lpe_validate_state=vulnerable', 'validate-ws01-runtime.sh', 'require_ws01_ready'):
+    if token not in promotion_runtime:
+        fail(f'promoted profile acceptance contract missing: {token}')
 for token in ('windows_lpe_action=apply', 'windows_lpe_allow_candidate=true', 'windows_lpe_techniques'):
     if token not in helper:
         fail(f'legacy candidate apply helper contract missing: {token}')
