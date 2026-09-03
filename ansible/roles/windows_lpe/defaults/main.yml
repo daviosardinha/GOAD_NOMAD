@@ -185,7 +185,7 @@ windows_lpe_stored_runas_credentials:
   owner_account: 'NORTH\rickon.stark'
   owner_password: 'Winter2022'
   user_name: kingdom.runas
-  password: 'Kingdom-RunAs-2026!'
+  password: 'Kingdom-RunAs-2026!!'
   credential_target: 'WS01\kingdom.runas'
   root: 'C:\Kingdom LPE\Stored RunAs'
 
