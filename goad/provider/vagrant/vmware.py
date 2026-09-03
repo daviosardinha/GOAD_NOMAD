@@ -209,9 +209,9 @@ if ($p.ExitCode -ne 0 -and $p.ExitCode -ne 3010) { exit $p.ExitCode }
             # a reboot-pending state. First accept a guest that recovered on
             # its own; otherwise, once WinRM is stable, perform exactly one
             # controlled recovery reboot and validate Tools + guest-IP health.
-            Log.warning(
-                f'GOAD_NOMAD: VMware Tools WinRM session interrupted for {machine}: {exc}; '
-                'checking whether the guest recovered successfully'
+            Log.info(
+                f'GOAD_NOMAD: VMware Tools install/reboot interrupted WinRM for {machine}; '
+                f'validating guest recovery before classifying it as a failure ({exc})'
             )
 
             deadline = time.time() + 45
@@ -249,9 +249,9 @@ if ($p.ExitCode -ne 0 -and $p.ExitCode -ne 3010) { exit $p.ExitCode }
                 # A successful shutdown commonly closes WinRM before pywinrm
                 # receives a response. The readiness checks below are the
                 # authority, not the transport result of the reboot command.
-                Log.warning(
-                    f'GOAD_NOMAD: recovery reboot command interrupted WinRM for '
-                    f'{machine}: {reboot_exc}'
+                Log.info(
+                    f'GOAD_NOMAD: recovery reboot closed WinRM for {machine}; '
+                    f'continuing with readiness validation ({reboot_exc})'
                 )
 
             time.sleep(15)
