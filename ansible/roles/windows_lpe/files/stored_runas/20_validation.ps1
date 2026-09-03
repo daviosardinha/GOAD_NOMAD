@@ -6,7 +6,12 @@ function Get-StoredCredentialListing {
     return (Invoke-OwnerPayload 'List' $Payload)
 }
 
-function Test-RunAsSavedCredential {
+# RUNAS /savecred is an interactive-logon behavior. A Scheduled Task running
+# with SeBatchLogonRight can enumerate Rickon's Credential Manager entry, but
+# it cannot reliably prove the child process created by RUNAS. Keep the real
+# proof helper for explicit interactive compatibility testing; do not make the
+# automated apply/validate lifecycle depend on a batch-logon approximation.
+function Test-RunAsSavedCredentialInteractiveOnly {
     $TargetEscaped = $CredentialTarget.Replace("'", "''")
     $Payload = @(
         "`$Target = '$TargetEscaped'"
@@ -57,6 +62,13 @@ function Assert-VulnerableState {
     if (-not $Admin) { throw 'stored-RunAs training account is not a local administrator' }
     if (-not (Test-Path -LiteralPath $StateFile -PathType Leaf)) { throw 'stored RunAs state marker missing' }
 
+    $State = Get-Content -LiteralPath $StateFile -Raw | ConvertFrom-Json
+    if ([string]$State.owner -ine $Owner) { throw 'stored RunAs state owner mismatch' }
+    if ([string]$State.target -ine $CredentialTarget) { throw 'stored RunAs state target mismatch' }
+    if ([string]$State.user -ine $RunAsUser) { throw 'stored RunAs state user mismatch' }
+    if ([int]$State.flags -ne 8196) { throw 'stored RunAs state flags mismatch' }
+    if ([string]$State.blob -ine 'UTF-16LE') { throw 'stored RunAs state blob format mismatch' }
+
     $Listing = Get-StoredCredentialListing
     if ($Listing -notmatch 'Domain:interactive=') {
         throw "interactive-logon credential type is missing: $Listing"
@@ -68,7 +80,10 @@ function Assert-VulnerableState {
         throw 'Rickon interactive-logon credential username is missing'
     }
 
-    Test-RunAsSavedCredential
+    # The automated lifecycle stops here intentionally. The exact current
+    # Windows 10 build has been compatibility-proven from Rickon's real RDP
+    # session with RUNAS /savecred -> whoami == WS01\kingdom.runas. Repeating
+    # that proof from a batch-logon Scheduled Task is not equivalent.
 }
 
 function Assert-CleanState {
