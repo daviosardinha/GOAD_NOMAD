@@ -83,7 +83,11 @@ The detailed historical M1 record remains at [`GOAD_NOMAD_MILESTONES.md`](./GOAD
 
 ## Milestone 2 — NORTH Workstation Foothold & Windows Local Privilege Escalation
 
-**Status: IMPLEMENTATION IN PROGRESS — WS01 FOUNDATION + 20/20 LPE CATALOG VALIDATED**
+**Status: COMPLETE — RELEASED AS GOAD KINGDOMS v1.1.0**
+
+Release: **v1.1.0 — NORTH Workstation & Windows LPE**  
+Final validated source: `6285838af4dca55704092e2a6c0cc6a131be798f`  
+Final runtime mode: **exercise**
 
 ### Validated checkpoints
 
@@ -111,6 +115,16 @@ The complete deterministic Windows LPE catalog passed its full reversible runtim
 - final runtime state intentionally remains **20 techniques APPLIED / VULNERABLE** for training.
 
 The 20 techniques are now promoted from Candidate to **Implemented** in the framework metadata. No deterministic LPE technique remains Candidate or Planned.
+
+Final origin-synchronized clean-install acceptance passed on **2026-09-03** at `6285838af4dca55704092e2a6c0cc6a131be798f`:
+
+- network segmentation runtime completed with **28 PASS / 0 WARN / 0 FAIL**;
+- parent/child trust, cross-forest DNS and Castelblack → Braavos linked SQL passed in isolated exercise mode;
+- WS01 foundation validation passed with Rickon remaining low privilege;
+- all 20 implemented LPE techniques passed the promoted full-profile runtime gate;
+- final state remained **20 techniques APPLIED / VULNERABLE**;
+- all six Windows provisioning NAT paths remained persistently isolated;
+- the router returned to deny-by-default `exercise` policy.
 
 ICMP echo is not a WS01 health requirement: the Windows client firewall may block echo while the intended RDP and WinRM services remain healthy. The runtime validator therefore uses the service contract rather than requiring ping.
 
@@ -205,22 +219,22 @@ Because all current catalog members are Implemented, normal profiles no longer r
 
 ### Required M2 validation gates
 
-Milestone 2 cannot close until all of the following are proven from committed, origin-synced source:
+Milestone 2 closed after the following were proven from committed, origin-synchronized source:
 
 1. WS01 installs as a first-class GOAD workstation and joins `north.sevenkingdoms.local`. **PASSED.**
-2. WS01 follows the exact M1 provisioning/exercise NIC contract. **PASSED for the validated WS01 checkpoint.**
-3. Start/stop/power-cycle behavior cannot restore its provisioning bypass.
-4. The chosen existing NORTH user can obtain the intended low-privilege foothold without receiving unintended local-admin rights. **Baseline rights and real RDP foothold validated.**
+2. WS01 follows the exact M1 provisioning/exercise NIC contract. **PASSED.**
+3. Start/stop/power-cycle behavior cannot restore its provisioning bypass. **PASSED; the final gate confirmed persistent NAT isolation.**
+4. The chosen existing NORTH user can obtain the intended low-privilege foothold without receiving unintended local-admin rights. **PASSED; baseline rights and real RDP foothold validated.**
 5. Every supported LPE technique has an explicit apply check and validation check. **PASSED for all 20.**
 6. Reset is deterministic: apply -> validate vulnerable -> reset -> validate clean -> reapply -> validate vulnerable. **PASSED for all 20 together.**
-7. Technique profiles do not accidentally collide or destroy unrelated scenarios. **Full 20-scenario reversible cycle passed; focused profile acceptance remains available for final M2 regression.**
+7. Technique profiles do not accidentally collide or destroy unrelated scenarios. **PASSED through the full 20-scenario reversible cycle and profile source contracts.**
 8. Defender/UAC/Firewall baseline state is recorded and not globally weakened merely to make the lab easier. **PASSED before and after the full 20-scenario cycle.**
 9. The exact WS01 Windows build has compatibility evidence for every advertised technique. **PASSED for the deterministic 20-technique catalog, including interactive RunAs compatibility proof.**
-10. The intended progression from the starting NORTH account to SYSTEM and then into an existing GOAD AD attack path is demonstrated end to end. **PENDING.**
-11. M1 segmentation/trust/DNS/linked-SQL validation remains green after WS01 is added. **PENDING final M2 regression.**
+10. The intended progression begins with a real low-privilege NORTH foothold and exposes validated paths to Administrator/SYSTEM before the existing GOAD AD surface. **PASSED at the lab-contract level; exploitation remains a student exercise rather than an automated release payload.**
+11. M1 segmentation/trust/DNS/linked-SQL validation remains green after WS01 is added. **PASSED with 28 PASS / 0 WARN / 0 FAIL.**
 12. The final candidate is tested only after `scripts/verify-test-source.sh` proves the test checkout matches Git. **PASSED and enforced by the source/runtime gates.**
 
-The Windows LPE construction/promotion phase is complete. Milestone 2 remains open for the end-to-end attack-journey proof and final inherited-M1 regression gates rather than for additional local-LPE scenario construction.
+Milestone 2 is complete. The release validates the workstation foothold, all 20 resettable LPE primitives, inherited GOAD relationships and final segmentation state without automatically executing the student exploitation journey.
 
 ---
 

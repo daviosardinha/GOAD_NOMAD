@@ -161,20 +161,20 @@ The historical detailed record remains in [`docs/GOAD_NOMAD_MILESTONES.md`](./do
 
 ### Milestone 2 — NORTH Workstation & Windows Local Privilege Escalation
 
-**Status: IMPLEMENTATION IN PROGRESS**
+**Status: COMPLETE — RELEASED AS v1.1.0**
 
-The first implementation layer adds a first-class NORTH workstation (`GOAD-WS01` / `WS01`, `10.4.10.31`) using the pinned `mayfly/windows10` `2024.01.06` box. `NORTH\\rickon.stark` receives Remote Desktop access but no local-administrator membership. WS01 is included in domain enrollment, VMware lifecycle control, management readiness and persistent provisioning-NAT isolation. Defender, UAC and Windows Firewall remain at the native client baseline; WS01 is deliberately excluded from GOAD's server-only Defender role and from `defender_off`. No LPE weakness is planted until this clean workstation foundation passes runtime validation.
+GOAD Kingdoms v1.1.0 adds a first-class NORTH workstation (`GOAD-WS01` / `WS01`, `10.4.10.31`) using the pinned `mayfly/windows10` `2024.01.06` box. `NORTH\\rickon.stark` receives Remote Desktop access but no local-administrator membership. WS01 participates in domain enrollment, VMware lifecycle control, management readiness and persistent provisioning-NAT isolation while Defender, UAC and Windows Firewall remain enabled.
 
-The target catalog is approximately **18–22 deterministic Windows local-privesc techniques**, delivered through resettable Ansible-native scenario profiles rather than a globally weakened Windows host.
+The release ships exactly **20 deterministic Windows local-privilege-escalation techniques** through resettable Ansible-native profiles: `service-abuse`, `credential-hunting`, `registry-abuse`, `token-abuse`, `mixed`, and `full-lpe`. Every technique passed the complete apply → vulnerable → reset → clean → reapply → vulnerable lifecycle.
 
-The current canonical roadmap and completion gates live in [`docs/GOAD_KINGDOMS_MILESTONES.md`](./docs/GOAD_KINGDOMS_MILESTONES.md).
+Final origin-synced acceptance at `6285838af4dca55704092e2a6c0cc6a131be798f` completed with the inherited segmentation, DNS, trusts, linked SQL, WS01 security baseline, all 20 LPE scenarios and final exercise isolation intact. The canonical record lives in [`docs/GOAD_KINGDOMS_MILESTONES.md`](./docs/GOAD_KINGDOMS_MILESTONES.md).
 
 ### Planned progression
 
 | Milestone | Scope | Status |
 | --- | --- | --- |
 | 1 | Network segmentation and lifecycle | Complete / v1.0.0 |
-| 2 | NORTH workstation foothold + Windows local privilege escalation | Active |
+| 2 | NORTH workstation foothold + Windows local privilege escalation | Complete / v1.1.0 |
 | 3 | NORTH domain escalation + persistence | Planned |
 | 4 | NORTH → SevenKingdoms cross-domain progression | Planned |
 | 5 | SevenKingdoms / NORTH → ESSOS cross-forest progression | Planned |
@@ -241,7 +241,7 @@ Complete runtime validation against a deployed provider:
 
 ```bash
 export GOAD_PROVIDER_DIR="$HOME/Documents/GOAD_Kingdoms/workspace/<instance>/provider"
-bash scripts/validate-network-segmentation.sh
+bash scripts/validate-goad-kingdoms-clean-install-runtime.sh
 ```
 
 > [!IMPORTANT]

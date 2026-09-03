@@ -4,6 +4,13 @@ All notable project changes are documented in this file.
 
 ## [Unreleased] — GOAD Kingdoms
 
+## [v1.1.0] - 2026-09-03
+
+### Release
+- Released **GOAD Kingdoms v1.1.0 — NORTH Workstation & Windows LPE**.
+- Final validated source: `6285838af4dca55704092e2a6c0cc6a131be798f`.
+- Complete clean-install runtime acceptance passed from origin-synchronized source and returned the range to deny-by-default `exercise` mode.
+
 ### Changed
 - Renamed the public project identity from **GOAD_NOMAD** to **GOAD Kingdoms** (`GOAD_Kingdoms` in repository/directory contexts).
 - Added a canonical GOAD Kingdoms milestone roadmap for development after v1.0.0.
@@ -12,7 +19,7 @@ All notable project changes are documented in this file.
 - GOAD instance inventories are refreshed from committed canonical source during VMware install, and existing M1 instance Vagrantfiles receive the committed WS01 definition automatically.
 - Removed GOAD compatibility from the legacy optional `ws01` extension to prevent a duplicate `GOAD-WS01` Vagrant identity; the extension remains available to GOAD-Light and GOAD-Mini.
 - WS01 runtime reachability validation now uses the intended NORTH service contract (RDP 3389/tcp and WinRM HTTPS 5986/tcp) rather than requiring ICMP echo through the Windows client firewall.
-- Windows LPE development now distinguishes planned, candidate and implemented techniques so source-complete scenarios can be live-tested without advertising them as validated.
+- Windows LPE metadata distinguishes planned, candidate and implemented techniques; all 20 deterministic v1.1.0 scenarios are promoted to Implemented after reversible runtime validation.
 
 ### Added
 - `scripts/verify-test-source.sh`, a fail-closed source gate that rejects dirty, untracked, ahead, behind, diverged, untracked-upstream, or otherwise unverifiable test checkouts.
@@ -25,9 +32,11 @@ All notable project changes are documented in this file.
 - `ansible/ws01.yml` and `./goad.sh -t ws01 -i <instance-id>` for targeted, Git-driven WS01 materialization and baseline provisioning without replaying the full GOAD curriculum.
 - Fail-closed VMware instance-collision preflight that derives the project's deterministic segmented MAC identities from committed Vagrant source and blocks another provider from registering the same identities on the shared vmnet10/vmnet20/vmnet30/vmnet99 fabric.
 - Validated M2 WS01 clean-foundation checkpoint at source `4003f8b41f5344650f82c746b83b2fe8fec32010`: domain joined to NORTH, Rickon remains low privilege, exercise NAT remains persistently disabled, and UAC/Firewall/Defender remain enabled.
-- Initial Ansible-native Windows LPE framework skeleton with a 20-technique target catalog, named training profiles, a dedicated `windows-lpe.yml` entrypoint, and a fail-closed controller.
+- Ansible-native Windows LPE framework with exactly 20 implemented techniques, named training profiles, a dedicated `windows-lpe.yml` entrypoint, fail-closed selection and deterministic lifecycle control.
 - `docs/WINDOWS_LPE_CATALOG.md` and `scripts/validate-windows-lpe-framework-source.sh` to track and validate the LPE catalog/profile framework.
-- First Windows LPE candidate, `unquoted_service_path`, with deterministic apply, vulnerable-state validation, reset, clean-state validation and re-apply-ready source logic. The scenario uses a dedicated automatic LocalSystem service and a this-folder-only BUILTIN\\Users write ACE so it does not collapse into the later weak-service-binary-permissions exercise.
+- Twenty resettable Windows LPE scenarios spanning service abuse, registry abuse, credential artifacts, scheduled tasks, token privileges, writable directories and installer policy.
+- `service-abuse`, `credential-hunting`, `registry-abuse`, `token-abuse`, `mixed`, and `full-lpe` profiles.
+- Full-catalog runtime gates proving apply → vulnerable → reset → clean → reapply → vulnerable behavior without candidate opt-in.
 
 ### Fixed
 - Recover VMware Tools installation on Windows guests when the installer resets WinRM before the controller can issue its normal reboot; the lifecycle now performs one controlled recovery reboot and validates Tools plus guest-IP health.
@@ -39,8 +48,15 @@ All notable project changes are documented in this file.
 
 ### Security
 - The validated WS01 foundation keeps Defender, UAC and Windows Firewall enabled; WS01 is not sent through GOAD's server-only Defender role and is never added to `defender_off`.
-- Candidate LPE scenarios require an exact technique selection plus explicit `windows_lpe_allow_candidate=true`; normal profiles remain fail-closed until their members are promoted to implemented.
+- LPE selection remains fail-closed: normal profiles expose only implemented techniques, and the release contains no remaining candidate or planned deterministic scenario.
 - `unquoted_service_path` deliberately grants low-privileged file-creation rights only on the ambiguous parent directory and validates that the legitimate privileged service executable itself is not writable by BUILTIN\\Users.
+
+### Validation
+- Network segmentation runtime: **28 PASS / 0 WARN / 0 FAIL**.
+- Parent/child trust, cross-forest DNS and linked SQL exercise paths passed after provisioning NAT isolation.
+- WS01 domain membership, Rickon low privilege, RDP/WinRM, UAC, Windows Firewall and Defender baseline passed.
+- All 20 LPE techniques passed reversible lifecycle validation and remain **APPLIED / VULNERABLE** for training.
+- Final runtime state: `exercise`, deny-by-default forwarding, six Windows NAT paths persistently isolated.
 
 ### Compatibility
 - Milestone 1 and the `v1.0.0 — Segmented Foundation` release retain the historical GOAD_NOMAD name.
@@ -90,4 +106,5 @@ The validated final runtime state is **exercise mode** with Windows provisioning
 - This release preserves the original GOAD Active Directory scenario while changing the VMware network architecture and lifecycle around it.
 - Non-GOAD labs/providers retain the upstream behavior unless explicitly handled by GOAD_NOMAD.
 
+[v1.1.0]: https://github.com/daviosardinha/GOAD_NOMAD/releases/tag/v1.1.0
 [v1.0.0]: https://github.com/daviosardinha/GOAD_NOMAD/releases/tag/v1.0.0
