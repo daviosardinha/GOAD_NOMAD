@@ -109,7 +109,6 @@ run_full() {
         -i "${GLOBAL_INVENTORY}"
         "${ROOT}/ansible/windows-lpe.yml"
         -e "windows_lpe_action=${action}"
-        -e 'windows_lpe_allow_candidate=true'
         -e "${FULL_JSON}"
     )
     if [[ "${action}" == 'validate' ]]; then
@@ -172,5 +171,5 @@ pass 'WS01 baseline remains healthy after full 20-scenario cycle'
 echo
 echo '============================================================'
 echo '[READY] Windows LPE full 20-scenario reversible runtime gate passed.'
-echo 'Final state: 20 techniques APPLIED / VULNERABLE for training.'
+echo 'Final state: 20 implemented techniques APPLIED / VULNERABLE for training.'
 echo '============================================================'
