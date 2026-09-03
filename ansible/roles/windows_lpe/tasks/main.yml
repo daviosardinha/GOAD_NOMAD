@@ -120,6 +120,12 @@
 - name: Manage AlwaysInstallElevated candidate
   ansible.builtin.include_tasks: techniques/always_install_elevated.yml
   when: [windows_lpe_action != 'status', "'always_install_elevated' in windows_lpe_requested_techniques"]
+- name: Manage registry Run keys candidate
+  ansible.builtin.include_tasks: techniques/registry_run_keys.yml
+  when: [windows_lpe_action != 'status', "'registry_run_keys' in windows_lpe_requested_techniques"]
+- name: Manage writable Startup folder candidate
+  ansible.builtin.include_tasks: techniques/writable_startup_folder.yml
+  when: [windows_lpe_action != 'status', "'writable_startup_folder' in windows_lpe_requested_techniques"]
 - name: Manage scheduled task binary permissions candidate
   ansible.builtin.include_tasks: techniques/scheduled_task_binary_permissions.yml
   when: [windows_lpe_action != 'status', "'scheduled_task_binary_permissions' in windows_lpe_requested_techniques"]
