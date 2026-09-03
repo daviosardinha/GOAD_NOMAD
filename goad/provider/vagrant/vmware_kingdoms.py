@@ -19,11 +19,12 @@ class GoadKingdomsVmwareProvider(GoadNomadVmwareProvider):
         """Require an already-authenticated sudo timestamp without prompting.
 
         GOAD Kingdoms lifecycle commands must never stop deep inside a provider
-        transition waiting for an unexpected password prompt. The operator owns
-        interactive authentication explicitly with ``sudo -v`` before invoking
-        install/start/ws01. Every provider entry/mode transition refreshes that
-        timestamp non-interactively and fails before changing runtime state if
-        credentials are unavailable or expired.
+        transition waiting for an unexpected password prompt. Long install/ws01
+        lifecycles prime sudo once at the console boundary and refresh it with a
+        non-interactive keepalive. Direct provider/mode operations still require
+        an existing sudo cache. Every privileged transition re-checks the cache
+        non-interactively and fails before changing runtime state if credentials
+        are unavailable or expired.
         """
         result = subprocess.run(
             ['sudo', '-n', '-v'],
@@ -165,7 +166,7 @@ class GoadKingdomsVmwareProvider(GoadNomadVmwareProvider):
         """
         Log.warning(
             f'GOAD Kingdoms: {machine} first Vagrant bring-up failed despite '
-            'recoverable guest readiness; forcing a clean provision cycle'
+            'recoverable guest readiness; starting a clean recovery provision cycle'
         )
 
         if not self._stop_failed_windows_guest_cleanly(machine):
@@ -239,7 +240,10 @@ class GoadKingdomsVmwareProvider(GoadNomadVmwareProvider):
             return False
 
         Log.info('GOAD_NOMAD: enabling temporary host routes for local Ansible provisioning')
-        route_result = subprocess.run(['sudo', 'bash', route_script, 'enable'], check=False)
+        route_result = subprocess.run(
+            ['sudo', '-n', 'bash', route_script, 'enable'],
+            check=False,
+        )
         if route_result.returncode != 0:
             Log.error('GOAD_NOMAD: failed to enable temporary provisioning routes')
             return False
