@@ -69,6 +69,65 @@ class GoadKingdomsVmwareProvider(GoadNomadVmwareProvider):
         Log.success('GOAD Kingdoms: segmented VMware instance collision preflight passed')
         return True
 
+    def _ensure_vmware_tools(self, machine):
+        """Repair VMware Tools and finish the interrupted Vagrant provision cycle.
+
+        On a genuinely fresh StefanScherer Windows box, ``vagrant up`` can boot
+        far enough for forwarded WinRM to work but fail before the shell
+        provisioners because VMware Tools are absent. Installing Tools repairs
+        guest communication, but simply calling ``vagrant up`` again is not
+        sufficient: Vagrant may already consider the machine provisioned and
+        skip the WMF/WinRM/fix_ip shell stages.
+
+        Therefore, only when Tools actually had to be installed, force a clean
+        power cycle and explicitly rerun Vagrant provisioning. The outer
+        VmwareProvider retry remains harmless and sees an already healthy guest.
+        """
+        vmx = self._vmx_path(machine)
+        if not vmx:
+            Log.error(f'GOAD_NOMAD: cannot locate VMX path for {machine}')
+            return False
+
+        port = self._winrm_forwarded_port(machine)
+        if not port:
+            Log.error(f'GOAD_NOMAD: cannot determine forwarded WinRM port for {machine}')
+            return False
+
+        if not self._wait_tcp(port, 120):
+            Log.error(f'GOAD_NOMAD: forwarded WinRM port {port} is not reachable for {machine}')
+            return False
+
+        if self._guest_tools_healthy(port):
+            if not self._wait_guest_ip(vmx, 60):
+                Log.warning(
+                    f'GOAD_NOMAD: {machine} VMware Tools are healthy but guest IP reporting is delayed'
+                )
+            return True
+
+        if not self._install_vmware_tools(machine, vmx, port):
+            return False
+
+        Log.warning(
+            f'GOAD Kingdoms: {machine} VMware Tools were recovered after an '
+            'interrupted Vagrant bring-up; forcing a clean provision cycle'
+        )
+        if not self._run_vagrant_bounded(['halt', machine, '-f'], timeout=60):
+            Log.error(
+                f'GOAD Kingdoms: could not power-cycle {machine} after VMware Tools recovery'
+            )
+            return False
+
+        if not self.command.run_vagrant(['up', machine, '--provision'], self.path):
+            Log.error(
+                f'GOAD Kingdoms: {machine} failed the post-Tools Vagrant --provision recovery cycle'
+            )
+            return False
+
+        Log.success(
+            f'GOAD Kingdoms: {machine} completed a clean post-Tools Vagrant provision cycle'
+        )
+        return True
+
     def prepare_install(self):
         # This method is the first provider hook executed by the hardened
         # install/start/ws01 paths, before GOAD-ROUTER or any Windows guest is
