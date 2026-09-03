@@ -18,6 +18,7 @@ readonly REQUIRED=(
     goad.sh
     goad/provisioner/ansible/ansible.py
     goad/provider/provider_factory.py
+    goad/provider/vagrant/vmware_kingdoms.py
     playbooks.yml
     ansible/ws01.yml
     ansible/ws01-lpe-install.yml
@@ -122,6 +123,16 @@ if not re.search(
 provider_factory = Path('goad/provider/provider_factory.py').read_text()
 if 'GoadKingdomsVmwareProvider' not in provider_factory:
     fail('VMware provider factory is not wired to GOAD Kingdoms segmented provider')
+
+kingdoms_provider = Path('goad/provider/vagrant/vmware_kingdoms.py').read_text()
+for token in (
+    'def _ensure_vmware_tools(self, machine):',
+    "['halt', machine, '-f']",
+    "['up', machine, '--provision']",
+    'completed a clean post-Tools Vagrant provision cycle',
+):
+    if token not in kingdoms_provider:
+        fail(f'GOAD Kingdoms VMware Tools recovery contract missing: {token}')
 
 provisioner = Path('goad/provisioner/ansible/ansible.py').read_text()
 for token in ('_prepare_provider_provisioning', '_finalize_provider_provisioning', 'get_playbook_list'):
