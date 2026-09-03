@@ -126,22 +126,45 @@ if 'GoadKingdomsVmwareProvider' not in provider_factory:
 
 kingdoms_provider = Path('goad/provider/vagrant/vmware_kingdoms.py').read_text()
 for token in (
+    'def _wait_machine_stopped(self, machine, timeout=120):',
+    'def _stop_failed_windows_guest_cleanly(self, machine):',
     'def _recover_failed_windows_vagrant_up(self, machine):',
     'def install(self):',
     "first_up = self.command.run_vagrant(['up', machine], self.path)",
     'if not first_up:',
     'if not self._recover_failed_windows_vagrant_up(machine):',
+    'shutdown.exe /s /t 0 /f',
+    "['vmrun', '-T', 'ws', 'stop', vmx, 'soft']",
     "['halt', machine, '-f']",
     "['up', machine, '--provision']",
+    'timeout=600',
+    'if not self._ensure_vmware_tools(machine):',
     'completed a clean failed-bring-up recovery provision cycle',
 ):
     if token not in kingdoms_provider:
         fail(f'GOAD Kingdoms failed Windows bring-up recovery contract missing: {token}')
 
+# A failed first bring-up must no longer hard-power Windows off as the primary
+# recovery action. Older Server 2016 boxes have demonstrated a fully booted
+# desktop with dead VMware Tools/WSMan after an unconditional halt -f. Require
+# the recovery path to call the graceful-stop controller before the bounded
+# Vagrant provisioning cycle. Forced halt remains only as the final fallback.
+recovery_match = re.search(
+    r'(?ms)^    def _recover_failed_windows_vagrant_up\(self, machine\):.*?(?=^    def install\(self\):)',
+    kingdoms_provider,
+)
+if recovery_match is None:
+    fail('cannot isolate GOAD Kingdoms failed-bring-up recovery implementation')
+recovery = recovery_match.group(0)
+if 'self._stop_failed_windows_guest_cleanly(machine)' not in recovery:
+    fail('failed-bring-up recovery must invoke graceful Windows shutdown controller')
+if "self._run_vagrant_bounded(['up', machine, '--provision'], timeout=600)" not in recovery:
+    fail('failed-bring-up recovery must use a bounded Vagrant --provision cycle')
+
 # The recovery decision must be driven by the failed first Vagrant bring-up,
 # not only by whether VMware Tools had to be installed. This protects guests
-# such as DC02 where Tools/IP reporting are already healthy while Vagrant guest
-# communication still fails before provisioning completes.
+# where Tools/IP reporting are already healthy while Vagrant guest communication
+# still fails before provisioning completes.
 if 'def _ensure_vmware_tools(self, machine):' in kingdoms_provider:
     fail('Kingdoms provider must not couple failed-bring-up recovery only to VMware Tools installation')
 
