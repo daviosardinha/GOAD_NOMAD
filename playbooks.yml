@@ -72,6 +72,34 @@ DRACARYS:
   - reboot.yml
   - glpi.yml
 
+# GOAD Kingdoms has first-class WS01 foundation and deterministic Windows LPE
+# stages. Keep these explicit instead of relying on the upstream default list so
+# a clean `GOAD` install reproduces the exact training state validated in M2.
+GOAD:
+  - build.yml
+  - ad-servers.yml
+  - ad-parent_domain.yml
+  # Wait after the child domain creation before adding servers
+  - ad-child_domain.yml
+  # Waiting 5 minutes for the child domain to be ready
+  - wait5m.yml
+  - ad-members.yml
+  - ad-trusts.yml
+  - ad-data.yml
+  # Rickon exists after ad-data; now establish the validated WS01 foothold
+  # baseline (evaluation grace, domain state and intended local rights).
+  - ws01.yml
+  - ad-gmsa.yml
+  - laps.yml
+  - ad-relations.yml
+  - adcs.yml
+  - ad-acl.yml
+  - servers.yml
+  - security.yml
+  - vulnerabilities.yml
+  # Seed all 20 promoted Windows LPE techniques as the final install stage.
+  - ws01-lpe-install.yml
+
 default:
   - build.yml
   - ad-servers.yml
