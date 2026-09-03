@@ -7,6 +7,19 @@ cd "${ROOT}"
 fail() { printf '[FAIL] %s\n' "$*" >&2; exit 1; }
 pass() { printf '[PASS] %s\n' "$*"; }
 
+normalize_goad_runtime() {
+    # GOAD installs Ansible into its own managed virtualenv. Interactive shells
+    # do not necessarily expose that directory in PATH, while several runtime
+    # validators intentionally use command -v first. Normalize the canonical
+    # GOAD runtime once here so the complete acceptance chain sees the same
+    # Ansible installation that ./goad.sh uses.
+    local goad_bin="${HOME}/.goad/.venv/bin"
+    if [[ -x "${goad_bin}/ansible-playbook" ]]; then
+        export PATH="${goad_bin}:${PATH}"
+        printf '[INFO] GOAD Ansible runtime: %s\n' "${goad_bin}/ansible-playbook"
+    fi
+}
+
 resolve_provider() {
     if [[ -n "${GOAD_PROVIDER_DIR:-}" ]]; then
         [[ -d "${GOAD_PROVIDER_DIR}" ]] || fail "GOAD_PROVIDER_DIR does not exist: ${GOAD_PROVIDER_DIR}"
@@ -28,6 +41,8 @@ resolve_provider() {
 printf '\n============================================================\n'
 printf 'GOAD KINGDOMS — CLEAN-INSTALL RUNTIME ACCEPTANCE GATE\n'
 printf '============================================================\n\n'
+
+normalize_goad_runtime
 
 bash scripts/validate-goad-kingdoms-install-source.sh
 pass 'clean-install source contract'
