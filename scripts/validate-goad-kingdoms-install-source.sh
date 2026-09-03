@@ -25,6 +25,7 @@ readonly REQUIRED=(
     ad/GOAD/data/config.json
     ad/GOAD/data/inventory
     ad/GOAD/providers/vmware/Vagrantfile
+    ad/GOAD/providers/vmware/inventory
     scripts/validate-network-segmentation-source.sh
     scripts/validate-ws01-source.sh
     scripts/validate-windows-lpe-framework-source.sh
@@ -108,8 +109,15 @@ if '"ws01"' not in config or '"north\\\\rickon.stark"' not in config:
     fail('GOAD data does not define WS01 with Rickon foothold rights')
 
 inventory = Path('ad/GOAD/data/inventory').read_text()
-if not re.search(r'(?m)^ws01\s+ansible_host=10\.4\.10\.31\b', inventory):
-    fail('GOAD inventory does not pin ws01 to 10.4.10.31')
+if not re.search(r'(?m)^ws01\s*$', inventory):
+    fail('GOAD lab inventory does not include ws01')
+
+provider_inventory = Path('ad/GOAD/providers/vmware/inventory').read_text()
+if not re.search(
+    r'(?m)^ws01\s+ansible_host=10\.4\.10\.31\s+dns_domain=dc02\s+dict_key=ws01\s*$',
+    provider_inventory,
+):
+    fail('GOAD VMware provider inventory does not pin ws01 to 10.4.10.31')
 
 provider_factory = Path('goad/provider/provider_factory.py').read_text()
 if 'GoadKingdomsVmwareProvider' not in provider_factory:
