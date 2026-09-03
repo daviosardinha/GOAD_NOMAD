@@ -1,34 +1,90 @@
 # DNSCHANGE
 - name: "prioritize the {{domain_adapter}} interface (local) as the default for routing"
-  ansible.windows.win_shell:
-    Set-NetIPInterface -InterfaceAlias "{{domain_adapter}}" -InterfaceMetric 10
+  ansible.windows.win_shell: |
+    Set-NetIPInterface -InterfaceAlias "{{ domain_adapter }}" -InterfaceMetric 10
   when: two_adapters
 
 - name: "Set configure dns to {{dns_domain}}"
-  win_dns_client:
+  ansible.windows.win_dns_client:
     adapter_names: "{{domain_adapter}}"
     ipv4_addresses:
-    - "{{hostvars[dns_domain].ansible_host}}"
+      - "{{hostvars[dns_domain].ansible_host}}"
     log_path: C:\dns_log.txt
 
 - name: Verify File Server Role is installed.
-  win_feature:
-    name: File-Services, FS-FileServer
+  ansible.windows.win_feature:
+    name:
+      - File-Services
+      - FS-FileServer
     state: present
-    include_management_tools: True
+    include_management_tools: true
 
 - name: "Add member server"
-  win_domain_membership:
+  ansible.windows.win_domain_membership:
     dns_domain_name: "{{member_domain}}"
     domain_admin_user: "{{domain_username}}"
     domain_admin_password: "{{domain_password}}"
-#    domain_ou_path: "{{member_domain_ou_path}}"
+    # domain_ou_path: "{{member_domain_ou_path}}"
     state: domain
   register: domain_state
 
 - name: Reboot if needed
-  win_reboot:
+  ansible.windows.win_reboot:
     reboot_timeout: 1500
     post_reboot_delay: 100
   when: domain_state.reboot_required
 
+# Dual-homed domain members must not publish their NAT-side address into AD DNS.
+- name: "Disable DNS registration on {{nat_adapter}}"
+  ansible.windows.win_shell: |
+    Set-DnsClient -InterfaceAlias "{{ nat_adapter }}" -RegisterThisConnectionsAddress $false
+  when: two_adapters
+
+# Domain members should use the Active Directory time hierarchy rather than remain
+# on Local CMOS Clock after the domain-join reboot.
+- name: Configure Windows Time to use the domain hierarchy
+  ansible.windows.win_shell: |
+    $ErrorActionPreference = 'Stop'
+    w32tm.exe /config /syncfromflags:domhier /update | Out-Null
+    Restart-Service W32Time -Force
+    w32tm.exe /resync /rediscover | Out-Null
+  changed_when: true
+
+# Wait for DC discovery without invoking repair-capable secure-channel commands.
+- name: Wait for domain controller discovery
+  ansible.windows.win_shell: |
+    nltest.exe /dsgetdc:{{ member_domain }}
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+  register: member_server_dc_discovery
+  retries: 30
+  delay: 10
+  until: member_server_dc_discovery.rc == 0
+  changed_when: false
+
+- name: Wait for Netlogon secure channel
+  ansible.windows.win_shell: |
+    nltest.exe /sc_query:{{ member_domain }}
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+  register: member_server_secure_channel
+  retries: 30
+  delay: 10
+  until: member_server_secure_channel.rc == 0
+  changed_when: false
+
+- name: Validate computer secure channel
+  ansible.windows.win_powershell:
+    script: |
+      $healthy = Test-ComputerSecureChannel
+      if (-not $healthy) {
+          throw "Computer secure channel to {{ member_domain }} is not healthy after domain join"
+      }
+      $healthy
+  register: member_server_secure_channel_validation
+  changed_when: false
+
+- name: Show member server domain readiness
+  ansible.builtin.debug:
+    msg:
+      - "DC discovery: {{ member_server_dc_discovery.stdout | trim }}"
+      - "Secure channel: {{ member_server_secure_channel.stdout | trim }}"
+      - "Computer secure channel: healthy"
