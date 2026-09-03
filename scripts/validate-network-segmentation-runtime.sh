@@ -636,18 +636,54 @@ section "11. EXERCISE-PATH DNS / TRUST / SQL FROM NORTH"
 
 ansible_ps_north dc02 exercise-dns-trust <<'PS'
 $ErrorActionPreference = 'Stop'
-Import-Module ActiveDirectory
+
+# Importing the ActiveDirectory module normally creates an implicit AD: drive.
+# That provider initialization performs its own default-server discovery and
+# can fail during post-boot convergence even after TCP/9389 starts listening.
+# This validator never uses AD:, so suppress that side effect and probe the
+# exact directory server and trust cmdlet path that section 11 requires.
+$Env:ADPS_LoadDefaultDrive = '0'
+Import-Module ActiveDirectory -ErrorAction Stop
+
 Clear-DnsClientCache
 try { Clear-DnsServerCache -Force -ErrorAction Stop } catch { }
 
+$localDc = 'winterfell.north.sevenkingdoms.local'
+$deadline = (Get-Date).AddMinutes(5)
+$lastAdError = 'no functional Active Directory probe completed'
+$t = $null
+
+while ((Get-Date) -lt $deadline) {
+    try {
+        $rootDse = Get-ADRootDSE -Server $localDc -ErrorAction Stop
+        if ($rootDse.defaultNamingContext -ne 'DC=north,DC=sevenkingdoms,DC=local') {
+            throw "unexpected Winterfell naming context: $($rootDse.defaultNamingContext)"
+        }
+
+        $t = Get-ADTrust -Identity 'sevenkingdoms.local' -Server $localDc -ErrorAction Stop
+        if ($t.Direction.ToString() -ne 'BiDirectional') {
+            throw "parent/child trust direction: $($t.Direction)"
+        }
+
+        $lastAdError = $null
+        break
+    } catch {
+        $lastAdError = $_.Exception.Message
+        Start-Sleep -Seconds 5
+    }
+}
+
+if ($null -ne $lastAdError) {
+    throw "Winterfell AD cmdlets were not functional within 300 seconds: $lastAdError"
+}
+
 $parent = nltest /dsgetdc:sevenkingdoms.local /force | Out-String
 if ($parent -notmatch '10\.4\.20\.10') { throw 'parent DC discovery failed in exercise mode' }
-$t = Get-ADTrust -Identity sevenkingdoms.local
-if ($t.Direction.ToString() -ne 'BiDirectional') { throw 'parent/child trust is not bidirectional' }
 
 $essos = Resolve-DnsName '_ldap._tcp.dc._msdcs.essos.local' -Type SRV -ErrorAction Stop
 if (($essos | Where-Object NameTarget -match '^meereen\.essos\.local\.?$').Count -lt 1) { throw 'ESSOS SRV resolution did not return Meereen' }
 
+Write-Output 'EXERCISE_AD_FUNCTIONAL_READY=PASS'
 Write-Output 'EXERCISE_PARENT_CHILD=PASS'
 Write-Output 'EXERCISE_ESSOS_DNS=PASS'
 PS
