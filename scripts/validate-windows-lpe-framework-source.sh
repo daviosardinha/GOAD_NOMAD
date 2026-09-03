@@ -195,6 +195,20 @@ if 'stored_runas_credentials' in available:
             fail(f'stored_runas_credentials decoded interop contract missing: {token}')
     if "credential_target: 'WS01\\kingdom.runas'" not in defaults:
         fail('stored_runas_credentials target must be WS01\\kingdom.runas')
+    password_match = re.search(
+        r"(?ms)^windows_lpe_stored_runas_credentials:\s*$.*?^  password: '([^']+)'\s*$",
+        defaults,
+    )
+    if password_match is None:
+        fail('stored_runas_credentials password is missing')
+    try:
+        runas_password_bytes = password_match.group(1).encode('ascii')
+    except UnicodeEncodeError:
+        fail('stored_runas_credentials compatibility password must be ASCII')
+    if len(runas_password_bytes) % 2 != 0:
+        fail('stored_runas_credentials ANSI compatibility blob must have an even byte length')
+    if "[KingdomInteractiveCredential]::DeleteInteractive($Target)" not in runtime:
+        fail('stored_runas_credentials must purge its dedicated target before reseeding')
 
 for token in ('windows_lpe_candidate_techniques', 'windows_lpe_implemented_techniques', 'windows_lpe_allow_candidate | bool', "windows_lpe_action in ['apply', 'validate', 'reset']"):
     if token not in tasks:
