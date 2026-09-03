@@ -1,4 +1,5 @@
 import os
+import signal
 import subprocess
 import time
 
@@ -72,6 +73,116 @@ class GoadKingdomsVmwareProvider(GoadNomadVmwareProvider):
         Log.success('GOAD Kingdoms: segmented VMware instance collision preflight passed')
         return True
 
+    @staticmethod
+    def _process_group_alive(pgid):
+        """Return whether a locally-owned process group still has members."""
+        try:
+            os.killpg(pgid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        return True
+
+    def _wait_process_group_gone(self, process, timeout):
+        """Reap the direct child and wait until its whole process group is gone."""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            process.poll()
+            if not self._process_group_alive(process.pid):
+                return True
+            time.sleep(0.2)
+
+        process.poll()
+        return not self._process_group_alive(process.pid)
+
+    def _reap_vagrant_process_group(self, process, command):
+        """Terminate every process from a timed-out Vagrant controller.
+
+        ``subprocess.run(..., timeout=...)`` only guarantees that Python reaps
+        the direct Vagrant process. Vagrant/Ruby descendants can outlive that
+        parent and retain per-machine action locks. The shutdown fallback must
+        never start while the timed-out controller can still mutate the same VM.
+        """
+        rendered = ' '.join(command)
+        pgid = process.pid
+
+        if not self._process_group_alive(pgid):
+            process.poll()
+            return True
+
+        Log.warning(
+            f'GOAD Kingdoms: terminating timed-out Vagrant process group for: {rendered}'
+        )
+        try:
+            os.killpg(pgid, signal.SIGTERM)
+        except ProcessLookupError:
+            process.poll()
+            return True
+        except OSError as exc:
+            Log.error(
+                f'GOAD Kingdoms: could not terminate Vagrant process group {pgid}: {exc}'
+            )
+            return False
+
+        if self._wait_process_group_gone(process, 5):
+            Log.success('GOAD Kingdoms: timed-out Vagrant process group fully reaped')
+            return True
+
+        Log.warning(
+            'GOAD Kingdoms: Vagrant descendants survived SIGTERM; '
+            'sending SIGKILL before any fallback'
+        )
+        try:
+            os.killpg(pgid, signal.SIGKILL)
+        except ProcessLookupError:
+            process.poll()
+            return True
+        except OSError as exc:
+            Log.error(
+                f'GOAD Kingdoms: could not kill Vagrant process group {pgid}: {exc}'
+            )
+            return False
+
+        if not self._wait_process_group_gone(process, 5):
+            Log.error(
+                'GOAD Kingdoms: timed-out Vagrant process group is still alive; '
+                'refusing to race a second lifecycle action'
+            )
+            return False
+
+        Log.success('GOAD Kingdoms: timed-out Vagrant process group fully reaped')
+        return True
+
+    def _run_vagrant_bounded(self, args, timeout):
+        """Run Vagrant in an isolated process group and fully reap it on timeout."""
+        command = [self.command.vagrant_bin] + args
+        Log.info(f'GOAD_NOMAD: running bounded command: {" ".join(command)}')
+        self._last_bounded_vagrant_reaped = True
+
+        try:
+            process = subprocess.Popen(
+                command,
+                cwd=self.path,
+                start_new_session=True,
+            )
+        except OSError as exc:
+            Log.error(f'GOAD Kingdoms: failed to start {" ".join(command)}: {exc}')
+            return False
+
+        try:
+            return process.wait(timeout=timeout) == 0
+        except subprocess.TimeoutExpired:
+            Log.warning(
+                f'GOAD_NOMAD: {" ".join(command)} exceeded {timeout}s; '
+                'reaping the entire Vagrant process group before fallback'
+            )
+            self._last_bounded_vagrant_reaped = self._reap_vagrant_process_group(
+                process,
+                command,
+            )
+            return False
+
     def _wait_machine_stopped(self, machine, timeout=120):
         """Wait until VMware no longer reports ``machine`` as running."""
         deadline = time.time() + timeout
@@ -82,6 +193,63 @@ class GoadKingdomsVmwareProvider(GoadNomadVmwareProvider):
             if machine not in running:
                 return True
             time.sleep(3)
+        return False
+
+    def _stop_machine_via_vmware(self, machine):
+        """Stop one leftover guest without entering Vagrant's action-lock path."""
+        vmx = self._vmx_path(machine)
+        if not vmx:
+            Log.error(f'GOAD Kingdoms: cannot locate VMX for shutdown fallback: {machine}')
+            return False
+
+        Log.warning(
+            f'GOAD Kingdoms: {machine} still running after bounded Vagrant halt; '
+            'trying VMware Tools soft shutdown'
+        )
+        try:
+            soft = subprocess.run(
+                ['vmrun', '-T', 'ws', 'stop', vmx, 'soft'],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+                timeout=45,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            Log.warning(f'GOAD Kingdoms: VMware soft stop failed for {machine}: {exc}')
+        else:
+            if self._wait_machine_stopped(machine, 60):
+                Log.success(f'GOAD Kingdoms: {machine} completed VMware soft shutdown')
+                return True
+            detail = soft.stderr.strip() or soft.stdout.strip()
+            if detail:
+                Log.warning(f'GOAD Kingdoms: VMware soft stop for {machine}: {detail}')
+
+        Log.warning(
+            f'GOAD Kingdoms: {machine} did not stop softly; '
+            'using VMware hard stop as the final fallback'
+        )
+        try:
+            hard = subprocess.run(
+                ['vmrun', '-T', 'ws', 'stop', vmx, 'hard'],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+                timeout=30,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            Log.error(f'GOAD Kingdoms: VMware hard stop failed for {machine}: {exc}')
+            return False
+
+        if self._wait_machine_stopped(machine, 30):
+            Log.success(f'GOAD Kingdoms: {machine} stopped by VMware hard fallback')
+            return True
+
+        detail = hard.stderr.strip() or hard.stdout.strip()
+        if detail:
+            Log.error(f'GOAD Kingdoms: VMware hard stop for {machine}: {detail}')
+        Log.error(f'GOAD Kingdoms: {machine} is still running after VMware hard fallback')
         return False
 
     def _stop_failed_windows_guest_cleanly(self, machine):
@@ -190,6 +358,71 @@ class GoadKingdomsVmwareProvider(GoadNomadVmwareProvider):
 
         Log.success(
             f'GOAD Kingdoms: {machine} completed a clean failed-bring-up recovery provision cycle'
+        )
+        return True
+
+    def stop(self):
+        """Stop GOAD Kingdoms without racing a timed-out Vagrant controller."""
+        if self.lab_name != 'GOAD':
+            return super().stop()
+
+        running = self._running_instance_vms()
+        if running is None:
+            return False
+        if not running:
+            Log.success('GOAD_NOMAD: all instance VMs are already stopped')
+            return True
+
+        Log.info(
+            'GOAD_NOMAD: stopping lab gracefully with a bounded controller timeout '
+            f'({", ".join(running)})'
+        )
+        graceful = self._run_vagrant_bounded(['halt'], timeout=180)
+
+        if not graceful and not getattr(self, '_last_bounded_vagrant_reaped', True):
+            Log.error(
+                'GOAD Kingdoms: timed-out Vagrant controller could not be fully reaped; '
+                'refusing shutdown fallback to avoid a per-machine action-lock race'
+            )
+            return False
+
+        remaining = self._running_instance_vms()
+        if remaining is None:
+            return False
+
+        if remaining and not graceful:
+            Log.info(
+                'GOAD Kingdoms: bounded Vagrant halt ended; allowing 30s for '
+                'already-requested guest shutdowns to finish'
+            )
+            deadline = time.time() + 30
+            while remaining and time.time() < deadline:
+                time.sleep(3)
+                remaining = self._running_instance_vms()
+                if remaining is None:
+                    return False
+
+        if remaining:
+            Log.warning(
+                'GOAD Kingdoms: graceful shutdown did not finish for: '
+                + ', '.join(remaining)
+                + '; using lock-free VMware fallback only for those guests'
+            )
+            for machine in list(remaining):
+                self._stop_machine_via_vmware(machine)
+
+        remaining = self._running_instance_vms()
+        if remaining is None:
+            return False
+        if remaining:
+            Log.error(
+                'GOAD Kingdoms: shutdown incomplete; still running: '
+                + ', '.join(remaining)
+            )
+            return False
+
+        Log.success(
+            'GOAD Kingdoms: all instance VMs stopped and VMware state verified'
         )
         return True
 
