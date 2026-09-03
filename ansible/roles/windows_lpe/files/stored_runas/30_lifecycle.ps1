@@ -58,7 +58,7 @@ if ($Action -eq 'apply') {
         user = $RunAsUser
         type = 'Interactive Logon'
         flags = 8196
-        blob = 'ANSI-even-byte'
+        blob = 'UTF-16LE'
     } | ConvertTo-Json | Set-Content -LiteralPath $StateFile -Encoding UTF8
 
     Write-Output 'WINDOWS_LPE_STORED_RUNAS_CREDENTIALS=APPLIED'
