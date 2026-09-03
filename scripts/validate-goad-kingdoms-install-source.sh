@@ -126,13 +126,24 @@ if 'GoadKingdomsVmwareProvider' not in provider_factory:
 
 kingdoms_provider = Path('goad/provider/vagrant/vmware_kingdoms.py').read_text()
 for token in (
-    'def _ensure_vmware_tools(self, machine):',
+    'def _recover_failed_windows_vagrant_up(self, machine):',
+    'def install(self):',
+    "first_up = self.command.run_vagrant(['up', machine], self.path)",
+    'if not first_up:',
+    'if not self._recover_failed_windows_vagrant_up(machine):',
     "['halt', machine, '-f']",
     "['up', machine, '--provision']",
-    'completed a clean post-Tools Vagrant provision cycle',
+    'completed a clean failed-bring-up recovery provision cycle',
 ):
     if token not in kingdoms_provider:
-        fail(f'GOAD Kingdoms VMware Tools recovery contract missing: {token}')
+        fail(f'GOAD Kingdoms failed Windows bring-up recovery contract missing: {token}')
+
+# The recovery decision must be driven by the failed first Vagrant bring-up,
+# not only by whether VMware Tools had to be installed. This protects guests
+# such as DC02 where Tools/IP reporting are already healthy while Vagrant guest
+# communication still fails before provisioning completes.
+if 'def _ensure_vmware_tools(self, machine):' in kingdoms_provider:
+    fail('Kingdoms provider must not couple failed-bring-up recovery only to VMware Tools installation')
 
 provisioner = Path('goad/provisioner/ansible/ansible.py').read_text()
 for token in ('_prepare_provider_provisioning', '_finalize_provider_provisioning', 'get_playbook_list'):
