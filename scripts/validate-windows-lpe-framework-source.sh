@@ -24,6 +24,7 @@ readonly REQUIRED_FILES=(
     scripts/validate-powershell-parser.ps1
     scripts/validate-windows-lpe-unquoted-service-path-runtime.sh
     scripts/validate-windows-lpe-service-batch-runtime.sh
+    scripts/validate-windows-lpe-full-runtime.sh
     scripts/diagnose-ws01-shutdown.sh
 )
 for file in "${REQUIRED_FILES[@]}"; do
@@ -35,6 +36,7 @@ bash -n scripts/validate-windows-lpe-framework-source.sh
 bash -n scripts/apply-windows-lpe-candidates.sh
 bash -n scripts/validate-windows-lpe-unquoted-service-path-runtime.sh
 bash -n scripts/validate-windows-lpe-service-batch-runtime.sh
+bash -n scripts/validate-windows-lpe-full-runtime.sh
 bash -n scripts/diagnose-ws01-shutdown.sh
 pass 'framework/runtime/helper shell syntax'
 
@@ -79,6 +81,8 @@ def fail(message):
 
 
 def yaml_list(text, key):
+    if re.search(rf'(?m)^{re.escape(key)}:\s*\[\s*\]\s*$', text):
+        return []
     match = re.search(rf'(?m)^{re.escape(key)}:\s*\n((?:  - [^\r\n]+(?:\r?\n|$))+)', text)
     if match is None:
         fail(f'missing YAML list: {key}')
@@ -103,6 +107,7 @@ tasks = Path('ansible/roles/windows_lpe/tasks/main.yml').read_text()
 playbook = Path('ansible/windows-lpe.yml').read_text()
 catalog_doc = Path('docs/WINDOWS_LPE_CATALOG.md').read_text()
 batch_runtime = Path('scripts/validate-windows-lpe-service-batch-runtime.sh').read_text()
+full_runtime = Path('scripts/validate-windows-lpe-full-runtime.sh').read_text()
 single_runtime = Path('scripts/validate-windows-lpe-unquoted-service-path-runtime.sh').read_text()
 helper = Path('scripts/apply-windows-lpe-candidates.sh').read_text()
 
@@ -113,14 +118,16 @@ available = implemented + candidates
 
 if catalog != expected_catalog:
     fail('Windows LPE catalog does not match the 20-technique contract')
-if implemented != implemented_service_batch:
-    fail('implemented Service Batch 1 set is incorrect')
-if len(set(candidates)) != len(candidates):
-    fail('duplicate Windows LPE candidate technique')
+if candidates:
+    fail(f'promoted Windows LPE catalog must have zero candidates; found: {candidates}')
+if implemented != expected_catalog:
+    fail('implemented Windows LPE set does not exactly match the 20-technique catalog')
+if len(set(implemented)) != len(implemented):
+    fail('duplicate implemented Windows LPE technique')
 if set(implemented) & set(candidates):
     fail('a Windows LPE technique is both implemented and candidate')
-if set(available) - set(catalog):
-    fail('available Windows LPE techniques contain unknown catalog IDs')
+if available != catalog:
+    fail('available Windows LPE techniques do not exactly match the catalog')
 
 for profile in ('none', 'service-abuse', 'credential-hunting', 'registry-abuse', 'token-abuse', 'mixed', 'full-lpe'):
     if not re.search(rf'(?m)^  {re.escape(profile)}:', defaults):
@@ -160,45 +167,42 @@ contracts = {
     'seimpersonate_privilege': ('SeImpersonatePrivilege', 'LsaAddAccountRights', 'LsaRemoveAccountRights', 'preexisting'),
 }
 for technique_id, tokens in contracts.items():
-    if technique_id not in available:
-        continue
     source = Path(f'ansible/roles/windows_lpe/tasks/techniques/{technique_id}.yml').read_text()
     for token in tokens:
         if token not in source:
             fail(f'{technique_id} contract missing: {token}')
 
-if 'stored_runas_credentials' in available:
-    wrapper = Path('ansible/roles/windows_lpe/tasks/techniques/stored_runas_credentials.yml').read_text()
-    part_paths = [
-        Path('ansible/roles/windows_lpe/files/stored_runas/10_core.ps1'),
-        Path('ansible/roles/windows_lpe/files/stored_runas/20_validation.ps1'),
-        Path('ansible/roles/windows_lpe/files/stored_runas/30_lifecycle.ps1'),
-    ]
-    runtime = ''.join(path.read_text() for path in part_paths)
-    for token in ('sensitive_parameters:', 'OwnerCredential', 'RunAsCredential', '10_core.ps1', '20_validation.ps1', '30_lifecycle.ps1'):
-        if token not in wrapper:
-            fail(f'stored_runas_credentials wrapper contract missing: {token}')
-    for token in ('Domain:interactive=', 'RUNAS_SAVECRED_OK', 'ProcessStartInfo', 'WINDOWS_LPE_STORED_RUNAS_CREDENTIALS=APPLIED', 'WINDOWS_LPE_STORED_RUNAS_CREDENTIALS=VULNERABLE', 'WINDOWS_LPE_STORED_RUNAS_CREDENTIALS=RESET', 'WINDOWS_LPE_STORED_RUNAS_CREDENTIALS=CLEAN'):
-        if token not in runtime:
-            fail(f'stored_runas_credentials runtime contract missing: {token}')
-    if re.search(r'(?m)^\s*elif\b', runtime):
-        fail('stored_runas_credentials contains non-PowerShell elif syntax')
-    match = re.search(r"\$CredentialInteropB64\s*=\s*'([A-Za-z0-9+/=]+)'", runtime)
-    if match is None:
-        fail('stored_runas_credentials Base64 interop payload missing')
-    try:
-        interop = base64.b64decode(match.group(1), validate=True).decode('utf-8')
-    except Exception as exc:
-        fail(f'stored_runas_credentials Base64 interop payload invalid: {exc}')
-    for token in ('credential.Flags = 8196', 'Encoding.Unicode.GetBytes(password)', 'credential.CredentialBlobSize = (uint)blobBytes.Length', 'credential.Persist = 3', 'CredWriteW', 'CredDeleteW'):
-        if token not in interop:
-            fail(f'stored_runas_credentials decoded interop contract missing: {token}')
-    if "credential_target: 'WS01\\kingdom.runas'" not in defaults:
-        fail('stored_runas_credentials target must be WS01\\kingdom.runas')
-    if "[KingdomInteractiveCredential]::DeleteInteractive($Target)" not in runtime:
-        fail('stored_runas_credentials must purge its dedicated target before reseeding')
-    if "blob = 'UTF-16LE'" not in runtime:
-        fail('stored_runas_credentials state must record the UTF-16LE credential blob format')
+wrapper = Path('ansible/roles/windows_lpe/tasks/techniques/stored_runas_credentials.yml').read_text()
+part_paths = [
+    Path('ansible/roles/windows_lpe/files/stored_runas/10_core.ps1'),
+    Path('ansible/roles/windows_lpe/files/stored_runas/20_validation.ps1'),
+    Path('ansible/roles/windows_lpe/files/stored_runas/30_lifecycle.ps1'),
+]
+runtime = ''.join(path.read_text() for path in part_paths)
+for token in ('sensitive_parameters:', 'OwnerCredential', 'RunAsCredential', '10_core.ps1', '20_validation.ps1', '30_lifecycle.ps1'):
+    if token not in wrapper:
+        fail(f'stored_runas_credentials wrapper contract missing: {token}')
+for token in ('Domain:interactive=', 'RUNAS_SAVECRED_OK', 'ProcessStartInfo', 'WINDOWS_LPE_STORED_RUNAS_CREDENTIALS=APPLIED', 'WINDOWS_LPE_STORED_RUNAS_CREDENTIALS=VULNERABLE', 'WINDOWS_LPE_STORED_RUNAS_CREDENTIALS=RESET', 'WINDOWS_LPE_STORED_RUNAS_CREDENTIALS=CLEAN'):
+    if token not in runtime:
+        fail(f'stored_runas_credentials runtime contract missing: {token}')
+if re.search(r'(?m)^\s*elif\b', runtime):
+    fail('stored_runas_credentials contains non-PowerShell elif syntax')
+match = re.search(r"\$CredentialInteropB64\s*=\s*'([A-Za-z0-9+/=]+)'", runtime)
+if match is None:
+    fail('stored_runas_credentials Base64 interop payload missing')
+try:
+    interop = base64.b64decode(match.group(1), validate=True).decode('utf-8')
+except Exception as exc:
+    fail(f'stored_runas_credentials Base64 interop payload invalid: {exc}')
+for token in ('credential.Flags = 8196', 'Encoding.Unicode.GetBytes(password)', 'credential.CredentialBlobSize = (uint)blobBytes.Length', 'credential.Persist = 3', 'CredWriteW', 'CredDeleteW'):
+    if token not in interop:
+        fail(f'stored_runas_credentials decoded interop contract missing: {token}')
+if "credential_target: 'WS01\\kingdom.runas'" not in defaults:
+    fail('stored_runas_credentials target must be WS01\\kingdom.runas')
+if "[KingdomInteractiveCredential]::DeleteInteractive($Target)" not in runtime:
+    fail('stored_runas_credentials must purge its dedicated target before reseeding')
+if "blob = 'UTF-16LE'" not in runtime:
+    fail('stored_runas_credentials state must record the UTF-16LE credential blob format')
 
 for token in ('windows_lpe_candidate_techniques', 'windows_lpe_implemented_techniques', 'windows_lpe_allow_candidate | bool', "windows_lpe_action in ['apply', 'validate', 'reset']"):
     if token not in tasks:
@@ -215,11 +219,18 @@ for token in ('run_lpe apply', 'run_lpe validate vulnerable', 'run_lpe reset', '
 for technique_id in expected_catalog:
     if f'`{technique_id}`' not in catalog_doc:
         fail(f'catalog documentation missing technique: {technique_id}')
+    if technique_id not in full_runtime:
+        fail(f'full 20-scenario runtime gate missing technique: {technique_id}')
+if "windows_lpe_allow_candidate=true" in full_runtime:
+    fail('promoted full 20-scenario gate must not require candidate opt-in')
+for token in ('run_full apply', 'run_full validate vulnerable', 'run_full reset', 'run_full validate clean', 'validate-ws01-runtime.sh'):
+    if token not in full_runtime:
+        fail(f'full 20-scenario runtime contract missing: {token}')
 for token in ('windows_lpe_action=apply', 'windows_lpe_allow_candidate=true', 'windows_lpe_techniques'):
     if token not in helper:
-        fail(f'candidate apply helper contract missing: {token}')
+        fail(f'legacy candidate apply helper contract missing: {token}')
 PY
-pass 'dynamic Windows LPE candidate and stored RunAs source contract'
+pass 'promoted 20-technique Windows LPE source contract'
 
 if command -v pwsh >/dev/null 2>&1; then
     runas_combined="$(mktemp /tmp/goad-stored-runas.XXXXXX.ps1)"
