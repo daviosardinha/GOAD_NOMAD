@@ -46,8 +46,15 @@
   ansible.windows.win_shell: |
     $ErrorActionPreference = 'Stop'
     w32tm.exe /config /syncfromflags:domhier /update | Out-Null
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     Restart-Service W32Time -Force
+    Start-Sleep -Seconds 2
     w32tm.exe /resync /rediscover | Out-Null
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+  register: member_server_time_sync
+  retries: 12
+  delay: 5
+  until: member_server_time_sync.rc == 0
   changed_when: true
 
 # Wait for DC discovery without invoking repair-capable secure-channel commands.
@@ -79,12 +86,12 @@
           throw "Computer secure channel to {{ member_domain }} is not healthy after domain join"
       }
       $healthy
-  register: member_server_secure_channel_validation
   changed_when: false
 
 - name: Show member server domain readiness
   ansible.builtin.debug:
     msg:
+      - "Time hierarchy: synchronized via domain hierarchy"
       - "DC discovery: {{ member_server_dc_discovery.stdout | trim }}"
       - "Secure channel: {{ member_server_secure_channel.stdout | trim }}"
       - "Computer secure channel: healthy"
