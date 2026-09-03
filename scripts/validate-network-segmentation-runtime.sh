@@ -613,6 +613,12 @@ wait_north_service "WS01 RDP"         10.4.10.31 3389 300 || fatal "WS01 RDP did
 # The next section executes Ansible directly over the isolated NORTH network,
 # so also wait for WinRM rather than allowing another post-reboot race.
 wait_north_service "Winterfell WinRM"  10.4.10.11 5986 300 || fatal "Winterfell WinRM did not recover after exercise transition"
+
+# WinRM can become available before the domain controller is operational.
+# The ActiveDirectory PowerShell provider requires Active Directory Web
+# Services, so wait for ADWS TCP/9389 before executing the exercise trust gate.
+wait_north_service "Winterfell ADWS"   10.4.10.11 9389 300 || fatal "Winterfell ADWS did not recover after exercise transition"
+
 wait_north_service "Castelblack WinRM" 10.4.10.22 5986 300 || fatal "Castelblack WinRM did not recover after exercise transition"
 wait_north_service "WS01 WinRM"        10.4.10.31 5986 300 || fatal "WS01 WinRM did not recover after exercise transition"
 
