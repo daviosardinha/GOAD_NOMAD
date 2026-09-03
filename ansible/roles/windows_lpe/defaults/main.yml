@@ -45,10 +45,16 @@ windows_lpe_catalog:
   - writable_program_directory
   - insecure_service_registry
 
-# The five original service techniques passed their exact current-source live
-# promotion gate on 2026-09-02. New source-complete techniques stay candidate
-# until their reversible live promotion gates are run later.
-windows_lpe_candidate_techniques:
+# All 20 deterministic WS01 LPE techniques passed the full reversible runtime
+# gate on 2026-09-03 from origin-synced source. No technique remains Candidate.
+windows_lpe_candidate_techniques: []
+
+windows_lpe_implemented_techniques:
+  - unquoted_service_path
+  - weak_service_dacl
+  - weak_service_binary_permissions
+  - weak_service_registry_permissions
+  - service_dll_hijacking
   - path_search_order_hijacking
   - always_install_elevated
   - registry_run_keys
@@ -64,13 +70,6 @@ windows_lpe_candidate_techniques:
   - seimpersonate_privilege
   - writable_program_directory
   - insecure_service_registry
-
-windows_lpe_implemented_techniques:
-  - unquoted_service_path
-  - weak_service_dacl
-  - weak_service_binary_permissions
-  - weak_service_registry_permissions
-  - service_dll_hijacking
 
 windows_lpe_profiles:
   none: []
