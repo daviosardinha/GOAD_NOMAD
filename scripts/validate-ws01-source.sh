@@ -202,11 +202,14 @@ for token in (
 if 'WS01_FOUNDATION=PASS' not in focused_runtime:
     fail('focused WS01 runtime validator is missing its success contract')
 for token in (
-    'nc -zw2 10.4.10.31 3389',
-    'nc -zw2 10.4.10.31 5986',
+    'readonly WS01_IP="10.4.10.31"',
+    'wait_for_tcp "${WS01_IP}" 3389',
+    'wait_for_tcp "${WS01_IP}" 5986',
 ):
     if token not in focused_runtime:
-        fail(f'focused WS01 runtime validator missing service reachability check: {token}')
+        fail(f'focused WS01 runtime validator missing bounded service reachability contract: {token}')
+if 'timeout 3 nc -zw2 "${host}" "${port}"' not in focused_runtime:
+    fail('focused WS01 runtime validator wait_for_tcp helper does not perform bounded TCP probes')
 if re.search(r'ping\s+[^\n]*10\.4\.10\.31', focused_runtime):
     fail('focused WS01 runtime validator must not require ICMP echo while Windows Firewall remains enabled')
 
