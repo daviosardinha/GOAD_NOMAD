@@ -38,6 +38,55 @@ resolve_provider() {
     PROVIDER_DIR="${ids[0]%%/.vagrant/*}"
 }
 
+wait_for_vagrant_winrm() {
+    local machine="$1"
+    local deadline=$((SECONDS + 300))
+    local next_notice=$SECONDS
+
+    while (( SECONDS < deadline )); do
+        if (
+            cd "${GOAD_PROVIDER_DIR}"
+            timeout 30 vagrant winrm "${machine}" -c 'hostname' >/dev/null 2>&1
+        ); then
+            pass "${machine} Vagrant WinRM ready after provisioning transition"
+            return 0
+        fi
+
+        if (( SECONDS >= next_notice )); then
+            printf '[WAIT] %s Vagrant WinRM not ready yet (%ss remaining)\n' \
+                "${machine}" "$((deadline - SECONDS))"
+            next_notice=$((SECONDS + 30))
+        fi
+        sleep 5
+    done
+
+    return 1
+}
+
+stabilize_m1_management_plane() {
+    local machine
+    local -a machines=(
+        GOAD-DC01
+        GOAD-DC02
+        GOAD-DC03
+        GOAD-SRV02
+        GOAD-SRV03
+        GOAD-WS01
+    )
+
+    printf '\n=== PREPARE M1 RUNTIME MANAGEMENT PLANE ===\n'
+    printf '[INFO] Entering provisioning mode before the deep M1 runtime gate so guests restarted for persistent NAT changes can become communicator-ready.\n'
+
+    GOAD_PROVIDER_DIR="${GOAD_PROVIDER_DIR}" \
+        bash scripts/lab-mode.sh provisioning || return 1
+
+    for machine in "${machines[@]}"; do
+        wait_for_vagrant_winrm "${machine}" || return 1
+    done
+
+    pass 'all six Vagrant management channels stabilized'
+}
+
 printf '\n============================================================\n'
 printf 'GOAD KINGDOMS — CLEAN-INSTALL RUNTIME ACCEPTANCE GATE\n'
 printf '============================================================\n\n'
@@ -54,6 +103,13 @@ printf '[INFO] Provider: %s\n' "${GOAD_PROVIDER_DIR}"
 [[ -f "${GOAD_PROVIDER_DIR}/.goad-nomad-mode" ]] || fail 'segmented provider mode state is missing after install'
 [[ "$(<"${GOAD_PROVIDER_DIR}/.goad-nomad-mode")" == 'exercise' ]] || fail 'fresh install did not finalize into exercise mode'
 pass 'fresh install finalized into exercise mode'
+
+if ! stabilize_m1_management_plane; then
+    printf '[ERROR] M1 management plane did not stabilize; restoring exercise mode before aborting.\n' >&2
+    GOAD_PROVIDER_DIR="${GOAD_PROVIDER_DIR}" \
+        bash scripts/lab-mode.sh exercise >/dev/null 2>&1 || true
+    fail 'all six Vagrant management channels must be ready before M1 runtime validation'
+fi
 
 printf '\n=== 1. INHERITED M1 / SEGMENTATION / GOAD RELATIONSHIPS ===\n'
 bash scripts/validate-network-segmentation-runtime.sh
