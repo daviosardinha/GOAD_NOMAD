@@ -17,7 +17,19 @@ if ($Action -eq 'apply') {
     $SeedPayload = @(
         "`$CSharp = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('$CredentialInteropB64'))"
         'Add-Type -TypeDefinition $CSharp -Language CSharp'
-        "[KingdomInteractiveCredential]::WriteInteractive('$TargetEscaped', '$TargetEscaped', '$PasswordEscaped')"
+        'try {'
+        "    [KingdomInteractiveCredential]::WriteInteractive('$TargetEscaped', '$TargetEscaped', '$PasswordEscaped')"
+        '}'
+        'catch {'
+        '    $ErrorChain = @()'
+        '    $CurrentError = $_.Exception'
+        '    while ($null -ne $CurrentError) {'
+        '        $NativeCode = if ($CurrentError.PSObject.Properties.Name -contains ''NativeErrorCode'') { [string]$CurrentError.NativeErrorCode } else { ''n/a'' }'
+        '        $ErrorChain += (''type={0} hresult=0x{1:X8} native={2} message={3}'' -f $CurrentError.GetType().FullName, ([uint32]$CurrentError.HResult), $NativeCode, $CurrentError.Message)'
+        '        $CurrentError = $CurrentError.InnerException'
+        '    }'
+        '    throw (''CredWrite diagnostic: '' + ($ErrorChain -join '' -> ''))'
+        '}'
         "& `$env:SystemRoot\System32\cmdkey.exe /list | Set-Content -LiteralPath '__OUTPUT_PATH__' -Encoding utf8"
         'if ($LASTEXITCODE -ne 0) { throw "cmdkey list failed exit=$LASTEXITCODE" }'
     ) -join [Environment]::NewLine
