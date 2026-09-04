@@ -44,7 +44,8 @@ A compromised credential should not automatically mean every system is directly 
 ## Current segmented architecture
 
 GOAD Kingdoms places the five original GOAD Windows systems and the M2 WS01 workstation behind a dedicated Debian routing plane.
-<img width="1448" height="1086" alt="Topology" src="https://github.com/user-attachments/assets/aa1f1cb0-3f97-4d11-b23c-b5aa8babcf08" />
+<img width="1536" height="1024" alt="topology" src="https://github.com/user-attachments/assets/7bd531d6-de4f-427f-8ca2-499fac183f37" />
+
 
 
 
