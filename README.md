@@ -1,53 +1,80 @@
 <div align="center">
 
 # GOAD Kingdoms
-<img width="1122" height="1402" alt="goad" src="https://github.com/user-attachments/assets/f4f90c84-e145-4904-94ff-2167c91f33f3" />
 
+<img width="1122" height="1402" alt="goad" src="https://github.com/user-attachments/assets/f4f90c84-e145-4904-94ff-2167c91f33f3" />
 
 ### Segmented Active Directory Red Team Training Range
 
 **Segment. Pivot. Escalate. Persist.**
 
-GOAD Kingdoms transforms the original **Game Of Active Directory (GOAD)** environment into a routed, segmented Red Team training range built around realistic network boundaries, controlled management access, privilege escalation, pivoting, domain compromise, persistence, and cross-domain / cross-forest progression.
+GOAD Kingdoms extends the original **Game Of Active Directory (GOAD)** into a routed, segmented Red Team training range while preserving the progressive learning model that makes GOAD such a strong Active Directory lab.
 
-**Built on [Orange Cyberdefense GOAD](https://github.com/Orange-Cyberdefense/GOAD). Extended for a different training model.**
+The project adds realistic network boundaries, a first-class Windows workstation, Windows local privilege escalation, hardened lifecycle automation, real pivoting opportunities, and an expandable advanced Active Directory curriculum.
+
+**Built on [Orange Cyberdefense GOAD](https://github.com/Orange-Cyberdefense/GOAD). Extended for a broader training model.**
+
+**Latest release: [v1.1.1 — Lifecycle Reliability](https://github.com/daviosardinha/GOAD_NOMAD/releases/tag/v1.1.1)**
 
 </div>
 
 ---
 
 > [!NOTE]
-> This project was named **GOAD_NOMAD** through Milestone 1 and the `v1.0.0 — Segmented Foundation` release. Historical v1.0.0 release notes intentionally keep that name. Development after v1.0.0 uses **GOAD Kingdoms** (`GOAD_Kingdoms` in repository/directory contexts).
+> This project was named **GOAD_NOMAD** through Milestone 1 and the `v1.0.0 — Segmented Foundation` release. Historical v1.0.0 release notes intentionally keep that name. Development after v1.0.0 uses the **GOAD Kingdoms** identity. Some internal compatibility identifiers still retain `GOAD_NOMAD` / `nomad` names so validated lifecycle behavior is not changed only for cosmetic reasons.
 
 ## Why GOAD Kingdoms exists
 
-GOAD is an excellent vulnerable Active Directory lab. GOAD Kingdoms keeps that foundation and changes the way the environment is deployed, reached, operated, and ultimately attacked.
+GOAD is an excellent vulnerable Active Directory lab and Mayfly's GOAD walkthrough provides a strong progressive learning path through reconnaissance, user discovery, authenticated enumeration, relay, exploitation, ADCS, MSSQL, privilege escalation, lateral movement, delegation, ACL abuse, trusts and advanced Active Directory attacks.
 
-The goal is not to replace GOAD or hide where this project came from. The goal is to turn the inherited environment into a coherent Red Team range where identity relationships and network reachability are separate concepts.
+GOAD Kingdoms does **not** aim to replace that learning concept.
 
-A compromised credential should not automatically mean every system is directly reachable. Moving from one security boundary to another should require the student to understand the environment, obtain the right access, and pivot through the paths intentionally exposed by the range.
+The goal is to preserve it and expand it.
+
+The project changes the environment so a student does not immediately treat Active Directory as a flat collection of directly reachable servers. Instead, the student can learn the same core GOAD techniques while also learning what happens before, between and after those techniques:
+
+- how a low-privilege domain user reaches a workstation;
+- how authenticated enumeration differs from Linux and Windows;
+- how to enumerate and escalate privileges on a real Windows workstation;
+- how a compromised host becomes an internal attack position;
+- how network segmentation affects reachability;
+- how and when pivoting becomes necessary;
+- how domain, parent-domain and foreign-forest compromise differ;
+- how persistence and advanced identity abuse fit into a complete Red Team learning path.
+
+The project therefore treats **identity relationships** and **network reachability** as separate concepts.
+
+A compromised credential should not automatically mean every system is directly reachable. A compromised machine should not automatically mean the domain is owned. Moving from one security boundary to another should require the student to understand the environment, obtain the right access, and use the paths intentionally exposed by the range.
+
+For the original GOAD learning path and Mayfly walkthrough, see:
+
+- [GOAD walkthrough series by Mayfly](https://mayfly277.github.io/categories/goad/)
+- [Orange Cyberdefense GOAD](https://github.com/Orange-Cyberdefense/GOAD)
 
 ## What GOAD Kingdoms changes
 
 | Area | Upstream GOAD foundation | GOAD Kingdoms direction |
 | --- | --- | --- |
+| Learning model | Progressive GOAD technique walkthrough | Preserve the GOAD progression and add more learning layers around it |
 | Network model | Primarily flat lab connectivity | Routed security zones with deny-by-default exercise policy |
 | Address space | Traditional GOAD lab range | `10.4.0.0/16` segmented range |
 | Student entry | Broad lab reachability | Student attack host starts in NORTH |
 | Cross-zone access | Network reachability is largely implicit | Explicitly permitted relationships and real pivoting |
-| Deployment access | Vagrant / Ansible management path | Separate provisioning plane, removed from the training surface |
+| Deployment access | Vagrant / Ansible management path | Separate provisioning plane removed from the training surface |
 | Runtime lifecycle | Standard GOAD / Vagrant operations | Kingdoms-aware `start`, `stop`, `install`, mode control, readiness gates and recovery |
-| Windows privilege escalation | Not the primary curriculum focus | Dedicated resettable NORTH workstation curriculum |
-| Domain persistence | Individual techniques can be practiced | Dedicated persistence phase planned after NORTH Domain Admin |
-| Cross-domain / cross-forest | GOAD trust relationships | Trust abuse combined with network segmentation and pivoting |
+| Windows workstation | No dedicated workstation learning stage | First-class NORTH Windows 10 workstation (`WS01`) |
+| Authenticated enumeration | Primarily technique/tool driven | Dedicated Linux and Windows authenticated-enumeration learning stages |
+| Windows local privilege escalation | Not the primary curriculum focus | Dedicated resettable 20-technique workstation curriculum |
+| Pivoting | Not forced by a flat topology | Dedicated pivoting opportunities created by segmentation |
+| ADCS | Split across multiple upstream walkthrough stages | Planned unified GOAD Kingdoms ADCS chapter |
+| Advanced AD attacks | Existing GOAD advanced material | Expandable catalog including additional CRTE-style domain, persistence and trust techniques |
+| Cross-domain / cross-forest | GOAD trust relationships | Trust abuse combined with segmentation, routing and pivoting |
 
 ## Current segmented architecture
 
-GOAD Kingdoms places the five original GOAD Windows systems and the M2 WS01 workstation behind a dedicated Debian routing plane.
+GOAD Kingdoms places the five original GOAD Windows systems and the GOAD-WS01 workstation behind a dedicated Debian routing plane.
+
 <img width="1536" height="1024" alt="topology" src="https://github.com/user-attachments/assets/7bd531d6-de4f-427f-8ca2-499fac183f37" />
-
-
-
 
 | Zone | VMware network | Subnet | Systems |
 | --- | --- | --- | --- |
@@ -64,7 +91,7 @@ The student attack machine attaches directly to **NORTH**. GOAD Kingdoms does no
 
 The original GOAD relationships are intentionally preserved, but the router exposes only the communication required for those relationships and the designed attack paths.
 
-The current exercise policy preserves:
+The validated exercise policy preserves:
 
 - Winterfell `10.4.10.11` ↔ Kingslanding `10.4.20.10` for the NORTH child-domain / SevenKingdoms parent-domain relationship and required Active Directory traffic.
 - Kingslanding `10.4.20.10` ↔ Meereen `10.4.30.12` for the SevenKingdoms / ESSOS forest trust.
@@ -107,8 +134,6 @@ GOAD Kingdoms keeps the familiar GOAD interactive console and extends it so the 
 ./goad.sh
 ```
 
-For a segmented GOAD/VMware instance, the console understands the project network scope and runtime mode. The installation lifecycle prepares the segmented VMware networks, brings up the routing plane, validates Windows management readiness, runs provisioning, and transitions the completed range into exercise isolation.
-
 Useful interactive commands include:
 
 ```text
@@ -123,11 +148,216 @@ mode exercise
 validate
 ```
 
-`start` and `stop` are hardened for the segmented VMware lifecycle rather than being treated as bare `vagrant up` / `vagrant halt` operations.
+For a segmented GOAD/VMware instance, the lifecycle prepares the segmented VMware networks, brings up the routing plane, validates management readiness, runs provisioning when required, and returns the completed range to exercise isolation.
+
+### Hardened start lifecycle
+
+As of **v1.1.1**, segmented `start`:
+
+- authenticates sudo before changing VM state;
+- keeps the sudo ticket alive non-interactively during long startup operations;
+- runs collision and network preflight before guest bring-up;
+- enables temporary provisioning routes only when required;
+- restores the recorded exercise mode before reporting success.
+
+### Hardened stop lifecycle
+
+As of **v1.1.1**, segmented `stop`:
+
+- runs the bounded Vagrant controller in its own process group;
+- fully reaps timed-out Vagrant/Ruby descendants before fallback;
+- avoids racing a second Vagrant action against a still-locked VM;
+- uses VMware soft shutdown as the lock-free fallback;
+- uses hard stop only as a final fallback;
+- verifies final VMware power state before reporting success.
+
+The real 180-second timeout path was exercised during release validation and completed with all six Windows guests and `GOAD-ROUTER` powered off.
+
+## Current release status
+
+### v1.0.0 — Segmented Foundation
+
+**Milestone 1 — COMPLETE**
+
+Established the NORTH / SEVENKINGDOMS / ESSOS / MANAGEMENT network model, routed exercise plane, provisioning/exercise lifecycle, persistent Windows NAT isolation, trust-aware firewall relationships and source/runtime validation.
+
+Historical project/release identity: **GOAD_NOMAD**.
+
+### v1.1.0 — NORTH Workstation & Windows LPE
+
+**Milestone 2 — COMPLETE**
+
+Added the first-class NORTH workstation:
+
+- `GOAD-WS01` / `WS01`
+- `10.4.10.31/24`
+- Windows 10 Enterprise 22H2
+- pinned `mayfly/windows10` `2024.01.06` Vagrant box
+- joined to `north.sevenkingdoms.local`
+- `NORTH\\rickon.stark` receives RDP access but remains non-admin
+- UAC, Defender and Windows Firewall remain enabled
+- provisioning NAT follows the same persistent isolation contract as the original GOAD guests
+
+The release also introduced exactly **20 deterministic Windows local-privilege-escalation scenarios** with resettable Ansible-native profiles:
+
+- `service-abuse`
+- `credential-hunting`
+- `registry-abuse`
+- `token-abuse`
+- `mixed`
+- `full-lpe`
+
+Every implemented technique passed:
+
+```text
+apply -> vulnerable -> reset -> clean -> reapply -> vulnerable
+```
+
+Final clean-install acceptance preserved segmentation, DNS, trusts, linked SQL, the WS01 security baseline, all 20 LPE scenarios and final exercise isolation.
+
+### v1.1.1 — Lifecycle Reliability
+
+**MAINTENANCE RELEASE — COMPLETE**
+
+v1.1.1 does not change the v1.1.0 student curriculum. It hardens the operator lifecycle after real VMware testing exposed two long-running lifecycle races.
+
+Validated fixes include:
+
+- sudo continuity throughout segmented startup;
+- pre-start collision/network checks before guest state changes;
+- no late provisioning-route failure from an expired sudo ticket;
+- Vagrant/Ruby process-group reaping after bounded shutdown timeout;
+- no second Vagrant action while the original controller may still own locks;
+- lock-free VMware soft-stop fallback;
+- final all-VM power-state verification.
+
+Validated implementation commit: `e40f7d2e7fdbcdbe5de342787471ade4b4f54c9c`  
+Release commit: `db4ca4cd3a84f3e13728ddc902117c9d16df2cce`
+
+## GOAD Kingdoms learning path
+
+The long-term curriculum is intended to preserve the style and progression of the GOAD walkthrough while adding new stages where the original flat/server-focused environment did not provide them.
+
+This is a **learning path**, not a requirement that every exercise be solved through one rigid attack chain. Individual techniques remain useful as focused labs, while the full Kingdoms environment gives them context.
+
+| Part | Learning stage | Direction |
+| --- | --- | --- |
+| 1 | Reconnaissance and scanning | Preserve / expand original GOAD Part 1 |
+| 2 | Finding users and unauthenticated enumeration | Preserve / expand original GOAD Part 2 |
+| 3 | Authenticated enumeration via Linux | Expanded GOAD authenticated-enumeration stage |
+| 4 | Authenticated enumeration via Windows | **GOAD Kingdoms addition using WS01** |
+| 5 | Windows local privilege escalation | **Implemented in v1.1.0 — 20-technique catalog** |
+| 6 | Poisoning and relay | Preserve original GOAD poison/relay learning stage |
+| 7 | Exploitation with a domain user | Preserve / expand original GOAD authenticated exploitation |
+| 8 | Active Directory Certificate Services | **Unified GOAD Kingdoms ADCS chapter** instead of splitting the subject across two chapters |
+| 9 | MSSQL attacks | Preserve / expand original GOAD MSSQL material |
+| 10 | Server privilege escalation | Preserve server-side privilege-escalation context separately from WS01 LPE |
+| 11 | Lateral movement | Preserve / expand original GOAD lateral-movement material |
+| 12 | Network pivoting | **GOAD Kingdoms addition enabled by real segmentation** |
+| 13 | Kerberos delegation | Preserve / expand unconstrained, constrained and RBCD learning |
+| 14 | Active Directory ACL abuse | Preserve / expand GOAD ACL material |
+| 15 | Domain and forest trusts | Preserve GOAD trust learning and combine it with network boundaries |
+| 16 | Advanced domain attacks | Preserve GOAD advanced material and expand the technique catalog |
+| 17 | Domain persistence | Expanded Kingdoms persistence curriculum |
+| 18 | Cross-domain attacks | Expanded child/root and domain-boundary curriculum |
+| 19 | Cross-forest attacks | Expanded foreign-forest curriculum plus pivoting requirements |
+
+### Why Parts 3 and 4 are separate
+
+The student should learn authenticated enumeration from **both sides**.
+
+Part 3 keeps the student on Kali/Linux and teaches how to enumerate Active Directory with valid credentials from an attacker-controlled system.
+
+Part 4 moves the student onto the domain-joined WS01 foothold and teaches the Windows-native view of the same environment: local/domain context, groups, privileges, Kerberos tickets, DNS, shares, PowerShell/AD tooling, SharpHound and related Windows-native discovery.
+
+The student then moves naturally into Part 5 and asks a different question:
+
+> I can access this Windows workstation as a normal domain user. How do I become local Administrator or SYSTEM?
+
+That is the role of the v1.1.0 Windows LPE curriculum.
+
+### Why Poison & Relay stays in the learning path
+
+GOAD Kingdoms keeps the original poisoning/relay subject rather than removing it simply because the student has already learned authenticated enumeration.
+
+The difference is that the segmented environment can give the subject more context: the student is now learning what can happen from an internal network position and how captured/relayed authentication can affect later movement.
+
+### Why Windows workstation LPE and server privilege escalation are separate
+
+They teach different contexts.
+
+**Part 5** teaches local Windows privilege escalation from a normal interactive domain-user foothold on WS01.
+
+**Part 10** preserves the server-side privilege-escalation stage where the initial context may be a service, application, web shell or other restricted server identity.
+
+Both belong in the curriculum.
+
+## Future advanced technique expansion
+
+GOAD Kingdoms is intended to grow beyond the vulnerability catalog currently covered by the Mayfly GOAD walkthrough.
+
+Future subject areas can be added to the relevant chapters instead of creating disconnected one-off labs. Planned expansion areas include techniques such as:
+
+- targeted Kerberoasting;
+- LAPS abuse;
+- gMSA abuse;
+- LSASS and credential-material discovery;
+- Pass-the-Certificate and certificate-based identity abuse;
+- unconstrained delegation;
+- constrained delegation and protocol transition;
+- Resource-Based Constrained Delegation (RBCD);
+- Shadow Credentials;
+- advanced Kerberos ticket attacks;
+- AdminSDHolder and domain persistence;
+- child-to-root-domain escalation;
+- SIDHistory and trust-key abuse;
+- cross-domain ADCS abuse;
+- cross-forest Kerberoasting and delegation;
+- Foreign Security Principals and cross-forest ACLs;
+- MSSQL database-link trust paths;
+- trust transitivity and SID-filtering concepts;
+- PAM / Shadow Security Principals;
+- additional advanced domain and cross-forest scenarios.
+
+These are roadmap directions, **not a claim that every listed technique is currently implemented**.
+
+## Milestone roadmap
+
+Engineering milestones and student-learning Parts are deliberately separate concepts.
+
+A milestone describes what is built and validated in the repository. A Part describes what the student learns.
+
+| Milestone | Engineering scope | Status |
+| --- | --- | --- |
+| 1 | Network segmentation and lifecycle foundation | Complete / v1.0.0 |
+| 2 | NORTH workstation + deterministic Windows LPE framework | Complete / v1.1.0 |
+| 2.1 | Segmented start/stop lifecycle reliability | Complete / v1.1.1 |
+| 3 | Learning-path integration: authenticated enumeration via Linux and Windows around the WS01 foothold | Next |
+| 4 | Segmented movement and pivoting curriculum | Planned |
+| 5 | Unified ADCS curriculum and expanded certificate-abuse scenarios | Planned |
+| 6+ | Advanced domain, persistence, cross-domain and cross-forest expansion | Planned |
+
+Milestone 3 is intentionally focused on the **student journey around the foothold we already built**, rather than immediately adding another large pile of vulnerabilities.
+
+The goal is to make the transition coherent:
+
+```text
+Reconnaissance
+    -> unauthenticated enumeration
+    -> first valid NORTH identity
+    -> authenticated enumeration from Linux
+    -> discover / access WS01
+    -> authenticated enumeration from Windows
+    -> Windows local privilege escalation
+    -> Administrator / SYSTEM
+    -> continue into the wider GOAD attack surface
+```
+
+After that foundation is integrated, later milestones can add more advanced technique families without losing the learning structure.
 
 ## Git is the source of truth
 
-Project code is changed in Git **before** it is tested on a lab machine.
+Project code is changed in Git **before** it is considered validated on a lab machine.
 
 The required direction is:
 
@@ -137,7 +367,7 @@ Git change -> commit -> push -> test checkout sync -> source gate -> test
 
 A locally repaired test checkout is never considered the validated implementation until that repair exists in Git, has been pushed, pulled back into the test checkout, and revalidated.
 
-Before milestone/reproducibility testing, run:
+Before milestone/reproducibility testing:
 
 ```bash
 bash scripts/verify-test-source.sh
@@ -149,69 +379,14 @@ For an exact candidate commit:
 bash scripts/verify-test-source.sh <commit-sha>
 ```
 
-The gate fails when the worktree is dirty, the branch has no upstream, Git cannot fetch the remote state, or the local branch is ahead/behind/diverged from upstream. Detached-HEAD testing is accepted only when explicitly pinned to the expected commit.
-
 See [`docs/DEVELOPMENT_WORKFLOW.md`](./docs/DEVELOPMENT_WORKFLOW.md) for the full policy.
-
-## Project status
-
-### Milestone 1 — Network Segmentation
-
-**Status: COMPLETE — released as GOAD_NOMAD v1.0.0**
-
-Final clean source/runtime validation was executed from source commit `35f592184e87ba25f427403fde4674b444aad6c8` and finished with **27 PASS / 0 WARN / 0 FAIL**. The fresh interactive install and subsequent validation returned the lab to persistent exercise isolation.
-
-The historical detailed record remains in [`docs/GOAD_NOMAD_MILESTONES.md`](./docs/GOAD_NOMAD_MILESTONES.md), matching the project identity used when v1.0.0 was completed.
-
-### Milestone 2 — NORTH Workstation & Windows Local Privilege Escalation
-
-**Status: COMPLETE — RELEASED AS v1.1.0**
-
-GOAD Kingdoms v1.1.0 adds a first-class NORTH workstation (`GOAD-WS01` / `WS01`, `10.4.10.31`) using the pinned `mayfly/windows10` `2024.01.06` box. `NORTH\\rickon.stark` receives Remote Desktop access but no local-administrator membership. WS01 participates in domain enrollment, VMware lifecycle control, management readiness and persistent provisioning-NAT isolation while Defender, UAC and Windows Firewall remain enabled.
-
-The release ships exactly **20 deterministic Windows local-privilege-escalation techniques** through resettable Ansible-native profiles: `service-abuse`, `credential-hunting`, `registry-abuse`, `token-abuse`, `mixed`, and `full-lpe`. Every technique passed the complete apply → vulnerable → reset → clean → reapply → vulnerable lifecycle.
-
-Final origin-synced acceptance at `6285838af4dca55704092e2a6c0cc6a131be798f` completed with the inherited segmentation, DNS, trusts, linked SQL, WS01 security baseline, all 20 LPE scenarios and final exercise isolation intact. The canonical record lives in [`docs/GOAD_KINGDOMS_MILESTONES.md`](./docs/GOAD_KINGDOMS_MILESTONES.md).
-
-### Planned progression
-
-| Milestone | Scope | Status |
-| --- | --- | --- |
-| 1 | Network segmentation and lifecycle | Complete / v1.0.0 |
-| 2 | NORTH workstation foothold + Windows local privilege escalation | Complete / v1.1.0 |
-| 3 | NORTH domain escalation + persistence | Planned |
-| 4 | NORTH → SevenKingdoms cross-domain progression | Planned |
-| 5 | SevenKingdoms / NORTH → ESSOS cross-forest progression | Planned |
-| 6 | Advanced operational / defense-evasion layers | Optional / planned |
-
-## Training progression target
-
-The intended end-to-end student journey is:
-
-1. Reconnaissance and unauthenticated enumeration from NORTH.
-2. Compromise a valid NORTH domain account.
-3. Obtain a low-privilege foothold on WS01.
-4. Complete focused Windows local privilege escalation and reach local Administrator / SYSTEM.
-5. Use privileged workstation access to continue into an existing GOAD identity/credential/ticket path.
-6. Resume authenticated Active Directory enumeration.
-7. Escalate through `north.sevenkingdoms.local` to Domain Admin.
-8. Complete a dedicated NORTH domain-persistence phase.
-9. Cross the child/root boundary into `sevenkingdoms.local`.
-10. Cross the forest boundary into `essos.local` using identity abuse plus realistic pivoting.
-11. Continue into optional advanced operational, defense-evasion and hybrid identity layers.
-
-The intended scope progression is:
-
-```text
-Machine -> Domain -> Parent Domain -> Forest -> Foreign Forest
-```
 
 ## Validation
 
-Before running project validation on a test checkout:
+Complete clean-install source validation:
 
 ```bash
-bash scripts/verify-test-source.sh
+bash scripts/validate-goad-kingdoms-install-source.sh
 ```
 
 Source-only segmentation preflight:
@@ -226,30 +401,25 @@ WS01 source-contract validation:
 bash scripts/validate-ws01-source.sh
 ```
 
-Install or update the clean WS01 foundation in an existing GOAD/VMware instance:
+Install or refresh the clean WS01 foundation in an existing GOAD/VMware instance:
 
 ```bash
 ./goad.sh -t ws01 -i <instance-id>
 ```
 
-The command materializes WS01 from committed source, provisions only the workstation baseline, validates all six management endpoints and restores exercise isolation before returning.
-
 Focused WS01 runtime validation:
 
 ```bash
-export GOAD_PROVIDER_DIR="$HOME/Documents/GOAD_Kingdoms/workspace/<instance>/provider"
+export GOAD_PROVIDER_DIR="$HOME/Documents/GOAD_NOMAD/workspace/<instance>/provider"
 bash scripts/validate-ws01-runtime.sh
 ```
 
 Complete runtime validation against a deployed provider:
 
 ```bash
-export GOAD_PROVIDER_DIR="$HOME/Documents/GOAD_Kingdoms/workspace/<instance>/provider"
+export GOAD_PROVIDER_DIR="$HOME/Documents/GOAD_NOMAD/workspace/<instance>/provider"
 bash scripts/validate-goad-kingdoms-clean-install-runtime.sh
 ```
-
-> [!IMPORTANT]
-> Some internal compatibility identifiers still use `GOAD_NOMAD`, `goad_nomad.py`, `vmware_nomad.py`, and related names. These are intentionally retained during the first public-brand rename so the already validated M1 lifecycle is not changed cosmetically and behaviorally in one step. Internal identifiers will be migrated separately with regression tests and compatibility aliases where needed.
 
 ## Upstream GOAD foundation
 
@@ -272,6 +442,7 @@ For the original project, documentation and full upstream lab family, visit:
 
 - [Orange Cyberdefense GOAD repository](https://github.com/Orange-Cyberdefense/GOAD)
 - [Official GOAD documentation](https://orange-cyberdefense.github.io/GOAD/)
+- [Mayfly GOAD walkthrough](https://mayfly277.github.io/categories/goad/)
 
 ## Safety
 
@@ -282,4 +453,4 @@ For the original project, documentation and full upstream lab family, visit:
 
 GOAD Kingdoms remains licensed under the **GNU General Public License v3.0**, consistent with the upstream GOAD project. See [`LICENSE`](./LICENSE).
 
-This repository contains substantial modifications to the upstream project. GOAD and the original lab design are credited to **Orange Cyberdefense and the GOAD contributors**; GOAD Kingdoms identifies the additional segmented range, lifecycle, curriculum and operational changes developed in this fork.
+This repository contains substantial modifications to the upstream project. GOAD and the original lab design are credited to **Orange Cyberdefense and the GOAD contributors**; GOAD Kingdoms identifies the additional segmented range, lifecycle, workstation, Windows LPE curriculum, pivoting model and future advanced-training extensions developed in this fork.
