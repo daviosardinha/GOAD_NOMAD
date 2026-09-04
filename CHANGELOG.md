@@ -4,6 +4,29 @@ All notable project changes are documented in this file.
 
 ## [Unreleased] — GOAD Kingdoms
 
+## [v1.1.1] - 2026-09-04
+
+### Release
+- Released **GOAD Kingdoms v1.1.1 — Lifecycle Reliability**.
+- Runtime validation was completed from the origin-synchronized implementation commit `e40f7d2e7fdbcdbe5de342787471ade4b4f54c9c`.
+- This maintenance release changes the segmented VMware start/stop control plane only; the v1.1.0 topology, WS01 foundation and Windows LPE curriculum are unchanged.
+
+### Fixed
+- Authenticate sudo before any segmented `start` VM state change and keep the sudo timestamp alive throughout long startup operations.
+- Run the network/collision preflight before guest bring-up so privileged setup failures occur before the lab is partially started.
+- Prevent temporary provisioning-route activation from failing late because the sudo timestamp expired.
+- Run bounded Vagrant shutdown in its own process group and fully terminate/reap the timed-out Vagrant/Ruby tree before fallback begins.
+- Refuse to enter fallback while the original Vagrant controller may still hold machine action locks.
+- Replace the conflicting per-machine Vagrant fallback with lock-free VMware soft shutdown, retaining hard stop only as the final fallback.
+- Verify final VMware power state before reporting a successful segmented shutdown.
+
+### Validation
+- Segmented start with an intentionally expired sudo ticket: **PASS**; authentication occurred before VM startup and remained valid through the approximately 7.5-minute lifecycle.
+- Provisioning routes and exercise-mode restoration: **PASS**.
+- The 180-second global `vagrant halt` timeout path was exercised: process-group reaping, grace period and VMware soft-stop fallback all passed.
+- The former `another process is already executing an action on the machine` race was not reproduced.
+- All six Windows guests and `GOAD-ROUTER` finished powered off, and the merged `main` clean-install source gate passed.
+
 ## [v1.1.0] - 2026-09-03
 
 ### Release
@@ -106,5 +129,6 @@ The validated final runtime state is **exercise mode** with Windows provisioning
 - This release preserves the original GOAD Active Directory scenario while changing the VMware network architecture and lifecycle around it.
 - Non-GOAD labs/providers retain the upstream behavior unless explicitly handled by GOAD_NOMAD.
 
+[v1.1.1]: https://github.com/daviosardinha/GOAD_NOMAD/releases/tag/v1.1.1
 [v1.1.0]: https://github.com/daviosardinha/GOAD_NOMAD/releases/tag/v1.1.0
 [v1.0.0]: https://github.com/daviosardinha/GOAD_NOMAD/releases/tag/v1.0.0
