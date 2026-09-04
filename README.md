@@ -103,28 +103,78 @@ Everything else traversing the routed exercise plane is denied by default.
 
 ## Two operating modes
 
-GOAD Kingdoms separates **deployment connectivity** from the **student attack surface**.
+GOAD Kingdoms has **one segmented architecture** and two runtime modes inside that architecture.
+
+> [!IMPORTANT]
+> **Exercise mode does not mean original/flat GOAD.** There is no `mode flat`, `mode mayfly`, or `mode original-goad` switch. Both `provisioning` and `exercise` are GOAD Kingdoms segmented modes.
+
+The difference is whether the temporary management paths required to build and maintain the range are enabled.
+
+```text
+GOAD Kingdoms segmented architecture
+        |
+        +-- provisioning mode  -> temporary deployment/maintenance access
+        |
+        +-- exercise mode      -> normal student-facing segmented attack surface
+```
 
 ### Provisioning mode
 
-Used by Vagrant, Ansible and maintenance operations.
+**Provisioning mode is an operator/installer state, not the normal student state.**
 
+It is used temporarily by Vagrant, Ansible and maintenance operations so GOAD Kingdoms can configure systems across the protected zones.
+
+- The NORTH / SEVENKINGDOMS / ESSOS segmentation still exists.
 - Windows provisioning/NAT adapters are connected.
 - Temporary host routes to protected zones are enabled through GOAD-ROUTER.
 - The router uses the provisioning forwarding policy.
 - Management readiness is checked before Ansible is allowed to run.
+- The host temporarily receives the reachability needed to configure protected systems.
+
+Provisioning mode therefore creates a **temporary management bypass around the student isolation policy**. It does not convert the environment into the original flat GOAD topology.
 
 ### Exercise mode
 
-Used for the actual training environment.
+**Exercise mode is the normal student-facing state of GOAD Kingdoms.**
 
-- The router switches to a deny-by-default forwarding policy.
+This is the state in which the lab is intended to be attacked and studied.
+
+- The router switches to the deny-by-default exercise forwarding policy.
 - Temporary protected-zone host routes are removed.
 - Windows provisioning/NAT adapters are persistently disabled and disconnected at the VMware layer.
 - NORTH remains the student entry zone.
 - Direct host/student access to SEVENKINGDOMS and ESSOS is blocked.
+- Only the explicitly designed cross-zone relationships required by GOAD and the training paths remain reachable through GOAD-ROUTER.
 
 The persistent adapter state prevents a simple VM power cycle from silently restoring the provisioning bypass.
+
+In short:
+
+```text
+provisioning mode = GOAD Kingdoms segmented lab + temporary management access
+exercise mode     = GOAD Kingdoms segmented lab + student isolation enforced
+```
+
+### What happens during `install`
+
+A normal installation automatically uses both modes. The user does not need to switch modes manually.
+
+```text
+./goad.sh
+    -> install
+        -> provisioning connectivity is enabled
+        -> Vagrant/Ansible build and configure the lab
+        -> provisioning completes
+        -> final isolation is applied
+        -> exercise mode
+        -> installation reports success
+```
+
+A successful `install` therefore **finishes in exercise mode by default**.
+
+Likewise, normal `start` restores the installed segmented lab to its recorded student-facing exercise state before reporting readiness.
+
+Manual `mode provisioning` and `mode exercise` commands exist for maintenance, development, debugging and recovery. They are not normally part of the student's everyday workflow.
 
 ## `goad.sh` is the control plane
 
@@ -134,19 +184,30 @@ GOAD Kingdoms keeps the familiar GOAD interactive console and extends it so the 
 ./goad.sh
 ```
 
-Useful interactive commands include:
+### Normal workflow
+
+For most users the normal lifecycle is simply:
 
 ```text
-install
-start
-stop
-status
-network
+install   # first build; automatically finishes in exercise mode
+start     # start an existing lab and restore its normal exercise state
+stop      # safely stop the lab
+status    # show instance state
+network   # show the segmented network profile
+validate  # validate the deployed environment
+```
+
+### Operator / maintenance mode controls
+
+These commands expose the underlying network mode directly:
+
+```text
 mode status
 mode provisioning
 mode exercise
-validate
 ```
+
+They are primarily intended for development, maintenance, debugging and recovery. A student following the normal lab workflow should not need to switch modes manually.
 
 For a segmented GOAD/VMware instance, the lifecycle prepares the segmented VMware networks, brings up the routing plane, validates management readiness, runs provisioning when required, and returns the completed range to exercise isolation.
 
