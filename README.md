@@ -1,14 +1,14 @@
 <div align="center">
 
-# GOAD Kingdoms
+# KINGDOMS
 
-<img width="1122" height="1402" alt="goad" src="https://github.com/user-attachments/assets/f4f90c84-e145-4904-94ff-2167c91f33f3" />
+<img width="1122" height="1402" alt="KINGDOMS" src="https://github.com/user-attachments/assets/f4f90c84-e145-4904-94ff-2167c91f33f3" />
 
 ### Segmented Active Directory Red Team Training Range
 
 **Segment. Pivot. Escalate. Persist.**
 
-GOAD Kingdoms extends the original **Game Of Active Directory (GOAD)** into a routed, segmented Red Team training range while preserving the progressive learning model that makes GOAD such a strong Active Directory lab.
+KINGDOMS extends the original **Game Of Active Directory (GOAD)** into a routed, segmented Red Team training range while preserving the progressive learning model that makes GOAD such a strong Active Directory lab.
 
 The project adds realistic network boundaries, a first-class Windows workstation, Windows local privilege escalation, hardened lifecycle automation, real pivoting opportunities, and an expandable advanced Active Directory curriculum.
 
@@ -21,13 +21,13 @@ The project adds realistic network boundaries, a first-class Windows workstation
 ---
 
 > [!NOTE]
-> This project was named **GOAD_NOMAD** through Milestone 1 and the `v1.0.0 — Segmented Foundation` release. Historical v1.0.0 release notes intentionally keep that name. Development after v1.0.0 uses the **GOAD Kingdoms** identity. Some internal compatibility identifiers still retain `GOAD_NOMAD` / `nomad` names so validated lifecycle behavior is not changed only for cosmetic reasons.
+> This project was named **GOAD_NOMAD** through Milestone 1 and the `v1.0.0 — Segmented Foundation` release, then **GOAD Kingdoms** during the next stage of development. Historical release notes intentionally keep those names. The current project identity is **KINGDOMS**. Internal compatibility identifiers still retain `GOAD_NOMAD`, `nomad`, and GOAD-derived names where changing them would risk validated lifecycle or installation behavior.
 
-## Why GOAD Kingdoms exists
+## Why KINGDOMS exists
 
 GOAD is an excellent vulnerable Active Directory lab and Mayfly's GOAD walkthrough provides a strong progressive learning path through reconnaissance, user discovery, authenticated enumeration, relay, exploitation, ADCS, MSSQL, privilege escalation, lateral movement, delegation, ACL abuse, trusts and advanced Active Directory attacks.
 
-GOAD Kingdoms does **not** aim to replace that learning concept.
+KINGDOMS does **not** aim to replace that learning concept.
 
 The goal is to preserve it and expand it.
 
@@ -51,9 +51,9 @@ For the original GOAD learning path and Mayfly walkthrough, see:
 - [GOAD walkthrough series by Mayfly](https://mayfly277.github.io/categories/goad/)
 - [Orange Cyberdefense GOAD](https://github.com/Orange-Cyberdefense/GOAD)
 
-## What GOAD Kingdoms changes
+## What KINGDOMS changes
 
-| Area | Upstream GOAD foundation | GOAD Kingdoms direction |
+| Area | Upstream GOAD foundation | KINGDOMS direction |
 | --- | --- | --- |
 | Learning model | Progressive GOAD technique walkthrough | Preserve the GOAD progression and add more learning layers around it |
 | Network model | Primarily flat lab connectivity | Routed security zones with deny-by-default exercise policy |
@@ -66,13 +66,13 @@ For the original GOAD learning path and Mayfly walkthrough, see:
 | Authenticated enumeration | Primarily technique/tool driven | Dedicated Linux and Windows authenticated-enumeration learning stages |
 | Windows local privilege escalation | Not the primary curriculum focus | Dedicated resettable 20-technique workstation curriculum |
 | Pivoting | Not forced by a flat topology | Dedicated pivoting opportunities created by segmentation |
-| ADCS | Split across multiple upstream walkthrough stages | Planned unified GOAD Kingdoms ADCS chapter |
+| ADCS | Split across multiple upstream walkthrough stages | Planned unified KINGDOMS ADCS chapter |
 | Advanced AD attacks | Existing GOAD advanced material | Expandable catalog including additional CRTE-style domain, persistence and trust techniques |
 | Cross-domain / cross-forest | GOAD trust relationships | Trust abuse combined with segmentation, routing and pivoting |
 
 ## Current segmented architecture
 
-GOAD Kingdoms places the five original GOAD Windows systems and the GOAD-WS01 workstation behind a dedicated Debian routing plane.
+KINGDOMS places the five original GOAD Windows systems and the GOAD-WS01 workstation behind a dedicated Debian routing plane.
 
 <img width="1536" height="1024" alt="topology" src="https://github.com/user-attachments/assets/7bd531d6-de4f-427f-8ca2-499fac183f37" />
 
@@ -85,7 +85,7 @@ GOAD Kingdoms places the five original GOAD Windows systems and the GOAD-WS01 wo
 
 `GOAD-ROUTER` uses `.1/24` on each project zone. The host has adapters only on NORTH (`10.4.10.254/24`) and MANAGEMENT (`10.4.99.254/24`). There are deliberately no host-side VMware adapters on SEVENKINGDOMS or ESSOS.
 
-The student attack machine attaches directly to **NORTH**. GOAD Kingdoms does not ship a project-owned Kali VM.
+The student attack machine attaches directly to **NORTH**. KINGDOMS does not ship a project-owned Kali VM.
 
 ## Identity relationships are not network reachability
 
@@ -103,15 +103,15 @@ Everything else traversing the routed exercise plane is denied by default.
 
 ## Two operating modes
 
-GOAD Kingdoms has **one segmented architecture** and two runtime modes inside that architecture.
+KINGDOMS has **one segmented architecture** and two runtime modes inside that architecture.
 
 > [!IMPORTANT]
-> **Exercise mode does not mean original/flat GOAD.** There is no `mode flat`, `mode mayfly`, or `mode original-goad` switch. Both `provisioning` and `exercise` are GOAD Kingdoms segmented modes.
+> **Exercise mode does not mean original/flat GOAD.** There is no `mode flat`, `mode mayfly`, or `mode original-goad` switch. Both `provisioning` and `exercise` are KINGDOMS segmented modes.
 
 The difference is whether the temporary management paths required to build and maintain the range are enabled.
 
 ```text
-GOAD Kingdoms segmented architecture
+KINGDOMS segmented architecture
         |
         +-- provisioning mode  -> temporary deployment/maintenance access
         |
@@ -122,7 +122,7 @@ GOAD Kingdoms segmented architecture
 
 **Provisioning mode is an operator/installer state, not the normal student state.**
 
-It is used temporarily by Vagrant, Ansible and maintenance operations so GOAD Kingdoms can configure systems across the protected zones.
+It is used temporarily by Vagrant, Ansible and maintenance operations so KINGDOMS can configure systems across the protected zones.
 
 - The NORTH / SEVENKINGDOMS / ESSOS segmentation still exists.
 - Windows provisioning/NAT adapters are connected.
@@ -135,7 +135,7 @@ Provisioning mode therefore creates a **temporary management bypass around the s
 
 ### Exercise mode
 
-**Exercise mode is the normal student-facing state of GOAD Kingdoms.**
+**Exercise mode is the normal student-facing state of KINGDOMS.**
 
 This is the state in which the lab is intended to be attacked and studied.
 
@@ -151,8 +151,8 @@ The persistent adapter state prevents a simple VM power cycle from silently rest
 In short:
 
 ```text
-provisioning mode = GOAD Kingdoms segmented lab + temporary management access
-exercise mode     = GOAD Kingdoms segmented lab + student isolation enforced
+provisioning mode = KINGDOMS segmented lab + temporary management access
+exercise mode     = KINGDOMS segmented lab + student isolation enforced
 ```
 
 ### What happens during `install`
@@ -178,7 +178,7 @@ Manual `mode provisioning` and `mode exercise` commands exist for maintenance, d
 
 ## `goad.sh` is the control plane
 
-GOAD Kingdoms keeps the familiar GOAD interactive console and extends it so the normal workflow remains centered on:
+KINGDOMS keeps the familiar GOAD interactive console and extends it so the normal workflow remains centered on:
 
 ```bash
 ./goad.sh
@@ -295,31 +295,31 @@ Validated fixes include:
 Validated implementation commit: `e40f7d2e7fdbcdbe5de342787471ade4b4f54c9c`  
 Release commit: `db4ca4cd3a84f3e13728ddc902117c9d16df2cce`
 
-## GOAD Kingdoms learning path
+## KINGDOMS learning path
 
 The long-term curriculum is intended to preserve the style and progression of the GOAD walkthrough while adding new stages where the original flat/server-focused environment did not provide them.
 
-This is a **learning path**, not a requirement that every exercise be solved through one rigid attack chain. Individual techniques remain useful as focused labs, while the full Kingdoms environment gives them context.
+This is a **learning path**, not a requirement that every exercise be solved through one rigid attack chain. Individual techniques remain useful as focused labs, while the full KINGDOMS environment gives them context.
 
 | Part | Learning stage | Direction |
 | --- | --- | --- |
 | 1 | Reconnaissance and scanning | Preserve / expand original GOAD Part 1 |
 | 2 | Finding users and unauthenticated enumeration | Preserve / expand original GOAD Part 2 |
 | 3 | Authenticated enumeration via Linux | Expanded GOAD authenticated-enumeration stage |
-| 4 | Authenticated enumeration via Windows | **GOAD Kingdoms addition using WS01** |
+| 4 | Authenticated enumeration via Windows | **KINGDOMS addition using WS01** |
 | 5 | Windows local privilege escalation | **Implemented in v1.1.0 — 20-technique catalog** |
 | 6 | Poisoning and relay | Preserve original GOAD poison/relay learning stage |
 | 7 | Exploitation with a domain user | Preserve / expand original GOAD authenticated exploitation |
-| 8 | Active Directory Certificate Services | **Unified GOAD Kingdoms ADCS chapter** instead of splitting the subject across two chapters |
+| 8 | Active Directory Certificate Services | **Unified KINGDOMS ADCS chapter** instead of splitting the subject across two chapters |
 | 9 | MSSQL attacks | Preserve / expand original GOAD MSSQL material |
 | 10 | Server privilege escalation | Preserve server-side privilege-escalation context separately from WS01 LPE |
 | 11 | Lateral movement | Preserve / expand original GOAD lateral-movement material |
-| 12 | Network pivoting | **GOAD Kingdoms addition enabled by real segmentation** |
+| 12 | Network pivoting | **KINGDOMS addition enabled by real segmentation** |
 | 13 | Kerberos delegation | Preserve / expand unconstrained, constrained and RBCD learning |
 | 14 | Active Directory ACL abuse | Preserve / expand GOAD ACL material |
 | 15 | Domain and forest trusts | Preserve GOAD trust learning and combine it with network boundaries |
 | 16 | Advanced domain attacks | Preserve GOAD advanced material and expand the technique catalog |
-| 17 | Domain persistence | Expanded Kingdoms persistence curriculum |
+| 17 | Domain persistence | Expanded KINGDOMS persistence curriculum |
 | 18 | Cross-domain attacks | Expanded child/root and domain-boundary curriculum |
 | 19 | Cross-forest attacks | Expanded foreign-forest curriculum plus pivoting requirements |
 
@@ -339,7 +339,7 @@ That is the role of the v1.1.0 Windows LPE curriculum.
 
 ### Why Poison & Relay stays in the learning path
 
-GOAD Kingdoms keeps the original poisoning/relay subject rather than removing it simply because the student has already learned authenticated enumeration.
+KINGDOMS keeps the original poisoning/relay subject rather than removing it simply because the student has already learned authenticated enumeration.
 
 The difference is that the segmented environment can give the subject more context: the student is now learning what can happen from an internal network position and how captured/relayed authentication can affect later movement.
 
@@ -355,7 +355,7 @@ Both belong in the curriculum.
 
 ## Future advanced technique expansion
 
-GOAD Kingdoms is intended to grow beyond the vulnerability catalog currently covered by the Mayfly GOAD walkthrough.
+KINGDOMS is intended to grow beyond the vulnerability catalog currently covered by the Mayfly GOAD walkthrough.
 
 Future subject areas can be added to the relevant chapters instead of creating disconnected one-off labs. Planned expansion areas include techniques such as:
 
@@ -484,7 +484,7 @@ bash scripts/validate-goad-kingdoms-clean-install-runtime.sh
 
 ## Upstream GOAD foundation
 
-GOAD Kingdoms is a modified fork of **[Orange Cyberdefense / GOAD](https://github.com/Orange-Cyberdefense/GOAD)** and continues to use the GOAD Active Directory environment, vulnerabilities, identities and domain relationships as its foundation.
+KINGDOMS is an independent modified fork of **[Orange Cyberdefense / GOAD](https://github.com/Orange-Cyberdefense/GOAD)** and continues to use the GOAD Active Directory environment, vulnerabilities, identities and domain relationships as its foundation. KINGDOMS is not an official GOAD distribution.
 
 The inherited full GOAD topology contains five Windows servers, three domains and two forests:
 
@@ -497,7 +497,7 @@ The inherited full GOAD topology contains five Windows servers, three domains an
   - Meereen / DC03 — Windows Server 2016
   - Braavos / SRV03 — Windows Server 2016, MSSQL, ADCS
 
-GOAD Kingdoms preserves the parent/child trust, the SevenKingdoms ↔ ESSOS forest trust, and the Castelblack ↔ Braavos MSSQL linked-server relationship while placing those systems behind explicit network security boundaries.
+KINGDOMS preserves the parent/child trust, the SevenKingdoms ↔ ESSOS forest trust, and the Castelblack ↔ Braavos MSSQL linked-server relationship while placing those systems behind explicit network security boundaries.
 
 For the original project, documentation and full upstream lab family, visit:
 
@@ -508,10 +508,10 @@ For the original project, documentation and full upstream lab family, visit:
 ## Safety
 
 > [!CAUTION]
-> GOAD Kingdoms is an intentionally vulnerable offensive-security training environment. Do not deploy it directly to the Internet or reuse its vulnerable configuration as a production Active Directory design. Run it only in an isolated lab environment you control and are authorized to test.
+> KINGDOMS is an intentionally vulnerable offensive-security training environment. Do not deploy it directly to the Internet or reuse its vulnerable configuration as a production Active Directory design. Run it only in an isolated lab environment you control and are authorized to test.
 
 ## License and attribution
 
-GOAD Kingdoms remains licensed under the **GNU General Public License v3.0**, consistent with the upstream GOAD project. See [`LICENSE`](./LICENSE).
+KINGDOMS remains licensed under the **GNU General Public License v3.0**, consistent with the upstream GOAD project. See [`LICENSE`](./LICENSE).
 
-This repository contains substantial modifications to the upstream project. GOAD and the original lab design are credited to **Orange Cyberdefense and the GOAD contributors**; GOAD Kingdoms identifies the additional segmented range, lifecycle, workstation, Windows LPE curriculum, pivoting model and future advanced-training extensions developed in this fork.
+This repository contains substantial modifications to the upstream project. GOAD and the original lab design are credited to **Orange Cyberdefense, Mayfly, and the GOAD contributors**; KINGDOMS identifies the additional segmented range, lifecycle, workstation, Windows LPE curriculum, pivoting model and future advanced-training extensions developed in this fork.
