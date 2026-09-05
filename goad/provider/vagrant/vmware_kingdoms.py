@@ -452,7 +452,7 @@ class GoadKingdomsVmwareProvider(GoadNomadVmwareProvider):
         # Bring up the router independently so a Windows guest failure cannot
         # prevent creation of the routing plane. Linux keeps the normal SSH path.
         Log.info('GOAD_NOMAD: bringing up segmented router')
-        if not self.command.run_vagrant(['up', 'GOAD-ROUTER'], self.path):
+        if not self._bring_up_router():
             Log.error('GOAD_NOMAD: failed to bring up GOAD-ROUTER')
             return False
 
@@ -497,6 +497,76 @@ class GoadKingdomsVmwareProvider(GoadNomadVmwareProvider):
             'GOAD_NOMAD: provisioning routes are temporary and must be removed before exercise mode'
         )
         return True
+
+    def _bring_up_router(self):
+        """Installed ranges use local power-on and deterministic management SSH.
+
+        A recorded mode identifies an existing managed deployment. An unknown
+        or fresh deployment retains the Vagrant provisioning path. Never fall
+        back to NAT after a management failure and obscure the original error.
+        """
+        if self.get_runtime_mode() not in ('exercise', 'provisioning'):
+            return self.command.run_vagrant(['up', 'GOAD-ROUTER'], self.path)
+
+        vmx = self._vmx_path('GOAD-ROUTER')
+        if not vmx:
+            Log.error('GOAD Kingdoms: installed router VMX is missing; refusing to recreate it during start')
+            return False
+        running = self._running_instance_vms()
+        if running is None:
+            return False
+        try:
+            if 'GOAD-ROUTER' not in running:
+                result = subprocess.run(
+                    ['vmrun', '-T', 'ws', 'start', vmx, 'nogui'],
+                    check=False, timeout=60,
+                )
+                if result.returncode != 0:
+                    Log.error('GOAD Kingdoms: local router power-on failed')
+                    return False
+
+            # VMware can recreate the host interfaces during power-on. Repair
+            # synchronously, then validate before using the router's .1 address.
+            repair = subprocess.run(
+                ['sudo', '-n', 'systemctl', 'restart',
+                 'goad-nomad-vmnet-hostaddrs.service'],
+                check=False, timeout=50,
+            )
+            checker = self._script('check-vmware-networks.sh')
+            ssh = self._script('router-ssh.sh')
+            if repair.returncode != 0 or checker is None or ssh is None:
+                return False
+            if subprocess.run(['bash', checker], check=False, timeout=30).returncode != 0:
+                return False
+
+            Log.info('GOAD Kingdoms: waiting for router management SSH at 10.4.99.1:22')
+            deadline = time.monotonic() + 180
+            while time.monotonic() < deadline:
+                try:
+                    ready = subprocess.run(
+                        ['bash', ssh,
+                         'test "$(cat /proc/sys/net/ipv4/ip_forward)" = 1 && '
+                         'sudo -n systemctl is-active --quiet nftables'],
+                        env=self._provider_env(), check=False, timeout=15,
+                        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                        text=True,
+                    )
+                    if ready.returncode == 0:
+                        Log.success('GOAD Kingdoms: router management ready without NAT discovery')
+                        return True
+                except subprocess.TimeoutExpired:
+                    pass
+                time.sleep(3)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            Log.error(f'GOAD Kingdoms: local router startup failed: {exc}')
+            return False
+
+        Log.error(
+            'GOAD Kingdoms: router management did not become ready within 180s; '
+            'check vmnet99, the router SSH service/key and nftables. '
+            'No NAT fallback or router reprovisioning was attempted.'
+        )
+        return False
 
     def prepare_install(self):
         # This method is the first provider hook executed by the hardened

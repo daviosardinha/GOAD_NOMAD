@@ -172,11 +172,10 @@ Description=Keep GOAD_NOMAD VMware host-only addresses present
 After=vmware.service
 
 [Timer]
-OnBootSec=3s
-OnUnitActiveSec=15s
+OnActiveSec=3s
+OnUnitInactiveSec=15s
 AccuracySec=1s
 Unit=goad-nomad-vmnet-hostaddrs.service
-Persistent=true
 
 [Install]
 WantedBy=timers.target
@@ -187,7 +186,7 @@ systemctl reset-failed "${HOSTADDR_SERVICE_NAME}" >/dev/null 2>&1 || true
 
 # Apply desired state synchronously. Do not rely on service runtime state or the
 # first timer tick for initial setup correctness.
-"${HOSTADDR_HELPER}"
+systemctl start "${HOSTADDR_SERVICE_NAME}"
 
 # Refuse to report success unless the live addresses are actually present.
 ip -4 -o addr show dev vmnet10 | awk '{print $4}' | grep -Fxq '10.4.10.254/24' || fail "vmnet10 host address was not applied"

@@ -40,6 +40,7 @@ boxes.append(
   # automatically instead of requiring Ctrl+C from the operator.
   config.vm.boot_timeout = 1200
 {% if lab_name == 'GOAD' %}
+  config.vm.box_check_update = false
   config.vm.graceful_halt_timeout = 120
 {% else %}
   config.vm.graceful_halt_timeout = 600

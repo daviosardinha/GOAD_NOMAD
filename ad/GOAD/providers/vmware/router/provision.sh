@@ -61,7 +61,7 @@ apt-get install -y --no-install-recommends nftables
 install -d -m 0755 /etc/network/interfaces.d
 cat > /etc/network/interfaces.d/goad-router <<'EOF'
 # Managed by GOAD_NOMAD. Do not add a default gateway on lab interfaces.
-# Vagrant's NAT adapter remains the operator SSH/provisioning path for GOAD-ROUTER.
+# Vagrant NAT bootstraps installation; installed lifecycle SSH uses MANAGEMENT.
 # Exercise isolation is enforced by the router forward policy and by disconnecting
 # the Windows guests' provisioning NAT adapters.
 EOF

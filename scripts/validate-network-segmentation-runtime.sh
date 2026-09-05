@@ -71,7 +71,7 @@ vmx_for() {
 router_cmd() {
     (
         cd "${PROVIDER}"
-        vagrant ssh GOAD-ROUTER -c "$1"
+        GOAD_PROVIDER_DIR="${PROVIDER}" bash "${ROOT}/scripts/router-ssh.sh" "$1"
     )
 }
 

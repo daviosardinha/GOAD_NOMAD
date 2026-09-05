@@ -107,10 +107,15 @@ else
   fail "${HOSTADDR_TIMER} is not enabled"
 fi
 
-if systemctl is-active "${HOSTADDR_TIMER}" >/dev/null 2>&1; then
-  ok "${HOSTADDR_TIMER} active"
+timer_state="$(systemctl show "${HOSTADDR_TIMER}" -p SubState --value)"
+timer_next="$(systemctl show "${HOSTADDR_TIMER}" -p NextElapseUSecMonotonic --value)"
+service_state="$(systemctl show "${HOSTADDR_SERVICE}" -p ActiveState --value)"
+if systemctl is-active "${HOSTADDR_TIMER}" >/dev/null 2>&1 &&
+   { [[ "${timer_state}" == waiting && -n "${timer_next}" && "${timer_next}" != 0 && "${timer_next}" != infinity ]] ||
+     [[ "${timer_state}" == running && "${service_state}" == activating ]]; }; then
+  ok "${HOSTADDR_TIMER} scheduling repairs (${timer_state})"
 else
-  fail "${HOSTADDR_TIMER} is not active"
+  fail "${HOSTADDR_TIMER} has no scheduled repair or running service (${timer_state}, next=${timer_next:-missing})"
 fi
 
 if systemctl is-failed "${HOSTADDR_SERVICE}" >/dev/null 2>&1; then
