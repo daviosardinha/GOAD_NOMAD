@@ -39,7 +39,7 @@ class VagrantProvider(Provider):
     def destroy(self):
         return self.command.run_vagrant(['destroy'], self.path)
 
-    def start(self):
+    def start(self, vm_name=None):
         # GOAD_NOMAD's segmented VMware provider needs more than a bare
         # ``vagrant up``. Protected-zone routing may need to be opened
         # temporarily, older Windows guests may require VMware Tools recovery,
@@ -132,11 +132,25 @@ class VagrantProvider(Provider):
                     f'(recorded mode: {original_mode})'
                 )
 
-                # Dynamic dispatch intentionally calls the segmented provider's
-                # install implementation here, not this base implementation. It
-                # brings the router/guests up and prepares the management plane;
-                # it does not run the GOAD Ansible curriculum provisioning.
-                if not self.install():
+                # Installed Kingdoms guests must not re-enter Vagrant's NAT
+                # provisioning transport just to power on. Other segmented
+                # providers retain their existing install/bring-up behavior.
+                start_existing = getattr(self, '_start_existing_instance', None)
+                restored = True
+                try:
+                    if callable(start_existing):
+                        ready = start_existing(vm_name) if vm_name is not None else start_existing()
+                    else:
+                        ready = self.install()
+                finally:
+                    # Close temporary management routing even when startup or
+                    # readiness fails, or the operator interrupts the wait.
+                    if original_mode == 'exercise':
+                        restored = callable(set_mode) and set_mode('exercise')
+                        if not restored:
+                            Log.error('GOAD_NOMAD: exercise isolation restoration failed; inspect router policy and host routes')
+
+                if not ready:
                     elapsed = self._format_elapsed(time.monotonic() - started)
                     Log.error(
                         f'GOAD_NOMAD: start failed after {elapsed}; '
@@ -144,14 +158,8 @@ class VagrantProvider(Provider):
                     )
                     return False
 
-                if original_mode == 'exercise':
-                    if not callable(set_mode) or not set_mode('exercise'):
-                        elapsed = self._format_elapsed(time.monotonic() - started)
-                        Log.error(
-                            f'GOAD_NOMAD: guests started but exercise isolation '
-                            f'could not be restored after {elapsed}'
-                        )
-                        return False
+                if not restored:
+                    return False
 
                 if sudo_lost.is_set():
                     elapsed = self._format_elapsed(time.monotonic() - started)

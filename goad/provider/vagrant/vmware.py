@@ -339,6 +339,15 @@ if ($p.ExitCode -ne 0 -and $p.ExitCode -ne 3010) { exit $p.ExitCode }
         with open(vagrantfile, 'r', encoding='utf-8') as handle:
             text = handle.read()
 
+        # Also migrate existing generated workspaces: template edits alone do
+        # not disable their Vagrant Cloud metadata checks.
+        if 'config.vm.box_check_update = false' not in text:
+            config_marker = 'Vagrant.configure("2") do |config|'
+            if text.count(config_marker) != 1:
+                Log.error('GOAD_NOMAD: cannot locate unique Vagrant configuration for offline settings')
+                return False
+            text = text.replace(config_marker, config_marker + '\n  config.vm.box_check_update = false', 1)
+
         required = (
             'v.enable_vmrun_ip_lookup = false',
             'v.vmx["ethernet0.startConnected"] = "TRUE"',

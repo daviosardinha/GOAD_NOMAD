@@ -145,13 +145,22 @@ class GoadNomadVmwareProvider(VmwareProvider):
             'sudo systemctl restart nftables'
         )
 
-        result = subprocess.run(
-            [self.command.vagrant_bin, 'ssh', 'GOAD-ROUTER', '-c', remote],
-            cwd=self.path,
-            input=policy_text,
-            text=True,
-            check=False,
-        )
+        ssh = self._script('router-ssh.sh')
+        if ssh is None:
+            return False
+        try:
+            result = subprocess.run(
+                ['bash', ssh, remote],
+                cwd=self.path,
+                env=self._provider_env(),
+                input=policy_text,
+                text=True,
+                check=False,
+                timeout=30,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            Log.error(f'GOAD_NOMAD: router policy update failed: {exc}')
+            return False
         if result.returncode != 0:
             Log.error(f'GOAD_NOMAD: failed to apply router {mode} policy')
             return False

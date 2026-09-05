@@ -112,6 +112,7 @@ boxes = [
     :mem => 768,
     :skip_private_network => true,
     :vmware_vmx => {
+      "ethernet0.startConnected" => "TRUE",
       "ethernet0.pcislotnumber" => "160",
       "ethernet1.pcislotnumber" => "224",
       "ethernet2.pcislotnumber" => "256",

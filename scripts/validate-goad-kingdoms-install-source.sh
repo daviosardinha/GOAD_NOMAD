@@ -208,7 +208,7 @@ if 'forcing a clean provision cycle' in kingdoms_provider:
     fail('recovery logging still claims the now-graceful recovery cycle is forced')
 
 preflight_call = kingdoms_provider.find('if not self.prepare_install():')
-first_guest_start = kingdoms_provider.find("self.command.run_vagrant(['up', 'GOAD-ROUTER']")
+first_guest_start = kingdoms_provider.find('if not self._bring_up_router():')
 if preflight_call == -1 or first_guest_start == -1 or preflight_call >= first_guest_start:
     fail('Kingdoms install must complete host-network preflight before starting GOAD-ROUTER')
 

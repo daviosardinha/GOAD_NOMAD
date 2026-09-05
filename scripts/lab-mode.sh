@@ -193,7 +193,7 @@ apply_router_policy() {
         cd "${PROVIDER}"
 
         cat "${policy}" |
-            vagrant ssh GOAD-ROUTER -c '
+            GOAD_PROVIDER_DIR="${PROVIDER}" bash "${ROOT}/scripts/router-ssh.sh" '
                 set -e
 
                 cat > /tmp/goad-nomad-mode.nft
@@ -361,7 +361,7 @@ show_status() {
     (
         cd "${PROVIDER}"
 
-        vagrant ssh GOAD-ROUTER -c \
+        GOAD_PROVIDER_DIR="${PROVIDER}" bash "${ROOT}/scripts/router-ssh.sh" \
             'sudo nft list chain inet goad_nomad forward'
     )
 
