@@ -498,6 +498,67 @@ class GoadKingdomsVmwareProvider(GoadNomadVmwareProvider):
         )
         return True
 
+    def _start_existing_instance(self):
+        """Power on an installed range without any Vagrant NAT communicator.
+
+        Only temporarily open the existing routed management plane. The caller
+        restores exercise isolation in a finally block, including on failure.
+        Installation/repair remains an explicit, separate Vagrant operation.
+        """
+        if self.get_runtime_mode() not in ('exercise', 'provisioning'):
+            Log.error('GOAD Kingdoms: no recorded installed mode; complete installation before using start')
+            return False
+        vmxs = {name: self._vmx_path(name) for name in self.goad_nomad_windows}
+        if not all(vmxs.values()) or not self._vmx_path('GOAD-ROUTER'):
+            Log.error('GOAD Kingdoms: installed VM files are missing; start will not recreate or provision guests')
+            return False
+        if not self._sync_goad_nomad_inventories():
+            return False
+        if not self._sync_goad_nomad_vagrantfile_compatibility():
+            return False
+        if not self._bring_up_router():
+            return False
+
+        # Use the router's management NIC to establish routes BEFORE checking
+        # protected-zone Windows addresses. Windows NAT settings are untouched.
+        if not self._apply_router_policy('provisioning'):
+            return False
+        if not self._enable_provisioning_routes():
+            return False
+        running = self._running_instance_vms()
+        if running is None:
+            return False
+        for machine, vmx in vmxs.items():
+            if machine in running:
+                continue
+            Log.info(f'GOAD Kingdoms: powering on {machine} locally (no Vagrant NAT discovery)')
+            try:
+                result = subprocess.run(
+                    ['vmrun', '-T', 'ws', 'start', vmx, 'nogui'],
+                    check=False, timeout=60,
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                Log.error(f'GOAD Kingdoms: local power-on failed for {machine}: {exc}')
+                return False
+            if result.returncode != 0:
+                Log.error(f'GOAD Kingdoms: local power-on failed for {machine}')
+                return False
+
+        # Reassert .254 after VMware has finished preparing all guest adapters.
+        if not self._enable_provisioning_routes():
+            return False
+        deadline = time.monotonic() + 600
+        for machine, host in self.management_hosts.items():
+            remaining = int(deadline - time.monotonic())
+            if remaining <= 0:
+                Log.error('GOAD Kingdoms: installed range management readiness budget exhausted')
+                return False
+            Log.info(f'GOAD Kingdoms: verifying {machine} directly at {host}:5986')
+            if not self._wait_lab_winrm_ready(machine, host, timeout=min(300, remaining)):
+                return False
+        Log.success('GOAD Kingdoms: all installed guests ready over local management; no NAT communicator used')
+        return True
+
     def _bring_up_router(self):
         """Installed ranges use local power-on and deterministic management SSH.
 

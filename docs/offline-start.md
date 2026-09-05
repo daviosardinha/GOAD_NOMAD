@@ -5,6 +5,17 @@ power control and checks SSH on `10.4.99.1:22`. It does not wait for the router'
 NAT address. Mode switching and router runtime checks use the same management
 SSH helper. The host must own `10.4.99.254/24`, never the router's `.1` address.
 
+Normal console `start` also powers on all six installed Windows guests through
+local `vmrun`, without invoking `vagrant up`, NAT address discovery, forwarded
+WinRM ports, or automatic provisioning/recovery. It opens the existing temporary
+router policy/routes before checking each inventory address directly on HTTPS
+WinRM port 5986. Power-on is bounded to 60 seconds per guest; readiness uses up to
+300 seconds per endpoint within a shared 600-second budget, with individual
+network-operation timeouts. The original exercise isolation is restored even if
+readiness fails or the operator interrupts startup. Already running guests are
+not powered on again. Missing VM files or an unknown recorded mode cause `start`
+to fail instead of silently creating or repairing machines.
+
 A recorded `exercise` or `provisioning` mode selects this installed path.
 Missing router state, failed SSH, or failed nftables readiness stops startup
 without silently recreating or reprovisioning the router. Fresh instances with
@@ -47,6 +58,6 @@ waiting with a next trigger and produces repeated successful service runs.
 Repeat after restarting the timer long after host boot.
 
 The repository regression tests mock VMware/systemd; they do not establish that
-the full lab starts offline on Workstation. Windows provisioning/recovery still
+the full lab starts offline on Workstation. Explicit installation/repair still
 uses its existing Vagrant path. The observed association between Wi-Fi state and
 router NAT carrier does not establish the underlying VMware cause.
