@@ -39,7 +39,7 @@ class VagrantProvider(Provider):
     def destroy(self):
         return self.command.run_vagrant(['destroy'], self.path)
 
-    def start(self):
+    def start(self, vm_name=None):
         # GOAD_NOMAD's segmented VMware provider needs more than a bare
         # ``vagrant up``. Protected-zone routing may need to be opened
         # temporarily, older Windows guests may require VMware Tools recovery,
@@ -138,7 +138,10 @@ class VagrantProvider(Provider):
                 start_existing = getattr(self, '_start_existing_instance', None)
                 restored = True
                 try:
-                    ready = start_existing() if callable(start_existing) else self.install()
+                    if callable(start_existing):
+                        ready = start_existing(vm_name) if vm_name is not None else start_existing()
+                    else:
+                        ready = self.install()
                 finally:
                     # Close temporary management routing even when startup or
                     # readiness fails, or the operator interrupts the wait.

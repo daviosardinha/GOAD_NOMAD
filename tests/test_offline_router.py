@@ -19,6 +19,12 @@ def load_method(file, name, namespace):
     return namespace[name]
 
 
+def class_field(file, name):
+    tree = ast.parse((ROOT / file).read_text())
+    return next(ast.literal_eval(n.value) for n in ast.walk(tree)
+                if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == name for t in n.targets))
+
+
 class RouterStartup(unittest.TestCase):
     def setUp(self):
         self.process = Mock()
@@ -230,6 +236,32 @@ class InstalledWindows(unittest.TestCase):
         self.assertFalse(self.method(self.provider))
         self.assertEqual(self.provider._wait_lab_winrm_ready.call_count, 1)
 
+    def test_each_real_machine_can_be_selected_without_starting_other_windows(self):
+        names = class_field('goad/provider/vagrant/vmware.py', 'goad_nomad_windows')
+        hosts = class_field('goad/provider/vagrant/vmware_nomad.py', 'management_hosts')
+        self.assertEqual(set(names), set(hosts))
+        for selected in names + ['GOAD-ROUTER']:
+            with self.subTest(selected=selected):
+                self.setUp()
+                self.provider.goad_nomad_windows = names
+                self.provider.management_hosts = hosts
+                self.assertTrue(self.method(self.provider, selected))
+                self.provider._bring_up_router.assert_called_once()
+                if selected == 'GOAD-ROUTER':
+                    self.process.run.assert_not_called()
+                    self.provider._wait_lab_winrm_ready.assert_not_called()
+                    self.provider._apply_router_policy.assert_not_called()
+                else:
+                    self.process.run.assert_called_once()
+                    self.assertEqual(self.process.run.call_args.args[0][4], f'/instance/{selected}.vmx')
+                    self.provider._wait_lab_winrm_ready.assert_called_once_with(selected, hosts[selected], timeout=300)
+                self.provider.command.run_vagrant.assert_not_called()
+
+    def test_invalid_selection_has_no_side_effects(self):
+        self.assertFalse(self.method(self.provider, 'OTHER-VM'))
+        self.provider._bring_up_router.assert_not_called()
+        self.process.run.assert_not_called()
+
 
 class StartIsolation(unittest.TestCase):
     def test_success_failure_interrupt_and_restore_failure(self):
@@ -255,6 +287,111 @@ class StartIsolation(unittest.TestCase):
                     self.assertEqual(method(provider), outcome and restoration)
                 provider.set_runtime_mode.assert_called_once_with('exercise')
                 provider.install.assert_not_called()
+
+    def test_single_guest_uses_same_restoration_on_failure(self):
+        process = Mock()
+        process.run.return_value = subprocess.CompletedProcess([], 0)
+        clock = Mock()
+        clock.monotonic.return_value = 0
+        method = load_method('goad/provider/vagrant/vagrant.py', 'start', {
+            'subprocess': process, 'threading': threading, 'time': clock, 'Log': Mock(),
+        })
+        provider = Mock()
+        provider.get_runtime_mode.return_value = 'exercise'
+        provider._start_existing_instance.return_value = False
+        self.assertFalse(method(provider, 'GOAD-WS01'))
+        provider._start_existing_instance.assert_called_once_with('GOAD-WS01')
+        provider.set_runtime_mode.assert_called_once_with('exercise')
+        provider.install.assert_not_called()
+
+
+class LocalShutdown(unittest.TestCase):
+    def setUp(self):
+        self.process = Mock()
+        self.process.TimeoutExpired = subprocess.TimeoutExpired
+        self.process.run.return_value = subprocess.CompletedProcess([], 0, '', '')
+        self.namespace = {'subprocess': self.process, 'Log': Mock()}
+        self.stop = load_method('goad/provider/vagrant/vmware_kingdoms.py', 'stop', self.namespace)
+        self.stop_vm = load_method('goad/provider/vagrant/vmware_kingdoms.py', 'stop_vm', self.namespace)
+        self.start_vm = load_method('goad/provider/vagrant/vmware_kingdoms.py', 'start_vm', self.namespace)
+        self.helper = load_method('goad/provider/vagrant/vmware_kingdoms.py', '_stop_machine_via_vmware', self.namespace)
+        self.provider = Mock()
+        self.provider.lab_name = 'GOAD'
+        self.provider.goad_nomad_windows = class_field('goad/provider/vagrant/vmware.py', 'goad_nomad_windows')
+        self.provider._last_bounded_vagrant_reaped = True
+        self.names = self.provider.goad_nomad_windows + ['GOAD-ROUTER']
+
+    def test_windows_first_router_last_without_vagrant(self):
+        self.provider._running_instance_vms.side_effect = [self.names, ['GOAD-ROUTER'], []]
+        self.assertTrue(self.stop(self.provider))
+        actual = [c.args[0] for c in self.provider._stop_machine_via_vmware.call_args_list]
+        self.assertEqual(actual, list(reversed(self.names[:-1])) + ['GOAD-ROUTER'])
+        self.provider._run_vagrant_bounded.assert_not_called()
+        self.provider.command.run_vagrant.assert_not_called()
+
+    def test_failed_windows_shutdown_preserves_router(self):
+        self.provider._running_instance_vms.side_effect = [self.names, ['GOAD-DC01', 'GOAD-ROUTER']]
+        self.assertFalse(self.stop(self.provider))
+        actual = [c.args[0] for c in self.provider._stop_machine_via_vmware.call_args_list]
+        self.assertNotIn('GOAD-ROUTER', actual)
+
+    def test_already_stopped_is_noop(self):
+        self.provider._running_instance_vms.return_value = []
+        self.assertTrue(self.stop(self.provider))
+        self.assertTrue(self.stop_vm(self.provider, 'GOAD-WS01'))
+        self.provider._stop_machine_via_vmware.assert_not_called()
+
+    def test_unknown_vmware_state_fails_without_shutdown(self):
+        self.provider._running_instance_vms.return_value = None
+        self.assertFalse(self.stop(self.provider))
+        self.provider._stop_machine_via_vmware.assert_not_called()
+
+    def test_single_stop_targets_only_requested_guest(self):
+        self.provider._running_instance_vms.return_value = self.names
+        self.provider._stop_machine_via_vmware.return_value = True
+        self.assertTrue(self.stop_vm(self.provider, 'GOAD-WS01'))
+        self.provider._stop_machine_via_vmware.assert_called_once_with('GOAD-WS01')
+        self.assertFalse(self.stop_vm(self.provider, 'GOAD-ROUTER'))
+        self.assertFalse(self.stop_vm(self.provider, 'OTHER-VM'))
+        self.assertEqual(self.provider._stop_machine_via_vmware.call_count, 1)
+
+    def test_single_start_dispatch_and_invalid_name(self):
+        self.provider.start.return_value = True
+        self.assertTrue(self.start_vm(self.provider, 'GOAD-WS01'))
+        self.provider.start.assert_called_once_with(vm_name='GOAD-WS01')
+        self.assertFalse(self.start_vm(self.provider, 'OTHER-VM'))
+        self.assertEqual(self.provider.start.call_count, 1)
+
+    def test_unreaped_controller_blocks_local_shutdown(self):
+        self.provider._last_bounded_vagrant_reaped = False
+        self.assertFalse(self.stop(self.provider))
+        self.assertFalse(self.stop_vm(self.provider, 'GOAD-WS01'))
+        self.provider._running_instance_vms.assert_not_called()
+
+    def test_soft_success_never_hard_powers_off(self):
+        self.provider._vmx_path.return_value = '/instance/ws.vmx'
+        self.provider._wait_machine_stopped.return_value = True
+        self.assertTrue(self.helper(self.provider, 'GOAD-WS01'))
+        self.assertEqual(self.process.run.call_count, 1)
+        self.assertEqual(self.process.run.call_args.args[0][-1], 'soft')
+
+    def test_soft_timeout_still_waits_for_guest(self):
+        self.process.run.side_effect = subprocess.TimeoutExpired('vmrun', 45)
+        self.provider._wait_machine_stopped.return_value = True
+        self.assertTrue(self.helper(self.provider, 'GOAD-WS01'))
+        self.assertEqual(self.process.run.call_count, 1)
+
+    def test_hard_fallback_requires_proven_running_state(self):
+        self.provider._wait_machine_stopped.side_effect = [False, True]
+        self.provider._running_instance_vms.return_value = ['GOAD-WS01']
+        self.assertTrue(self.helper(self.provider, 'GOAD-WS01'))
+        self.assertEqual([c.args[0][-1] for c in self.process.run.call_args_list], ['soft', 'hard'])
+
+    def test_unknown_state_prevents_hard_fallback(self):
+        self.provider._wait_machine_stopped.return_value = False
+        self.provider._running_instance_vms.return_value = None
+        self.assertFalse(self.helper(self.provider, 'GOAD-WS01'))
+        self.assertEqual(self.process.run.call_count, 1)
 
 
 if __name__ == '__main__':

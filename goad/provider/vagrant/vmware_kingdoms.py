@@ -196,16 +196,13 @@ class GoadKingdomsVmwareProvider(GoadNomadVmwareProvider):
         return False
 
     def _stop_machine_via_vmware(self, machine):
-        """Stop one leftover guest without entering Vagrant's action-lock path."""
+        """Request local guest shutdown, retaining the bounded hard fallback."""
         vmx = self._vmx_path(machine)
         if not vmx:
             Log.error(f'GOAD Kingdoms: cannot locate VMX for shutdown fallback: {machine}')
             return False
 
-        Log.warning(
-            f'GOAD Kingdoms: {machine} still running after bounded Vagrant halt; '
-            'trying VMware Tools soft shutdown'
-        )
+        Log.info(f'GOAD Kingdoms: requesting local VMware Tools soft shutdown for {machine}')
         try:
             soft = subprocess.run(
                 ['vmrun', '-T', 'ws', 'stop', vmx, 'soft'],
@@ -218,12 +215,20 @@ class GoadKingdomsVmwareProvider(GoadNomadVmwareProvider):
         except (OSError, subprocess.TimeoutExpired) as exc:
             Log.warning(f'GOAD Kingdoms: VMware soft stop failed for {machine}: {exc}')
         else:
-            if self._wait_machine_stopped(machine, 60):
-                Log.success(f'GOAD Kingdoms: {machine} completed VMware soft shutdown')
-                return True
             detail = soft.stderr.strip() or soft.stdout.strip()
             if detail:
                 Log.warning(f'GOAD Kingdoms: VMware soft stop for {machine}: {detail}')
+
+        # Even a timed-out vmrun may have delivered the shutdown request.
+        if self._wait_machine_stopped(machine, 60):
+            Log.success(f'GOAD Kingdoms: {machine} completed VMware soft shutdown')
+            return True
+        running = self._running_instance_vms()
+        if running is None:
+            Log.error('GOAD Kingdoms: cannot verify VMware state; refusing hard shutdown')
+            return False
+        if machine not in running:
+            return True
 
         Log.warning(
             f'GOAD Kingdoms: {machine} did not stop softly; '
@@ -361,11 +366,44 @@ class GoadKingdomsVmwareProvider(GoadNomadVmwareProvider):
         )
         return True
 
+    def start_vm(self, vm_name):
+        """Start one installed guest, plus its router dependency when needed."""
+        if self.lab_name != 'GOAD':
+            return super().start_vm(vm_name)
+        if vm_name not in self.goad_nomad_windows + ['GOAD-ROUTER']:
+            Log.error(f'GOAD Kingdoms: unknown instance machine: {vm_name}')
+            return False
+        # Share preflight, sudo keepalive and finally-based mode restoration.
+        return self.start(vm_name=vm_name)
+
+    def stop_vm(self, vm_name):
+        """Stop one instance guest locally; preserve routing for live Windows."""
+        if self.lab_name != 'GOAD':
+            return super().stop_vm(vm_name)
+        if vm_name not in self.goad_nomad_windows + ['GOAD-ROUTER']:
+            Log.error(f'GOAD Kingdoms: unknown instance machine: {vm_name}')
+            return False
+        if not getattr(self, '_last_bounded_vagrant_reaped', True):
+            Log.error('GOAD Kingdoms: an earlier Vagrant controller was not reaped; refusing concurrent VM changes')
+            return False
+        running = self._running_instance_vms()
+        if running is None:
+            return False
+        if vm_name not in running:
+            Log.success(f'GOAD Kingdoms: {vm_name} is already stopped')
+            return True
+        if vm_name == 'GOAD-ROUTER' and any(name in running for name in self.goad_nomad_windows):
+            Log.error('GOAD Kingdoms: Windows guests are still running; use stop for the whole range or stop them before the router')
+            return False
+        return self._stop_machine_via_vmware(vm_name)
+
     def stop(self):
-        """Stop GOAD Kingdoms without racing a timed-out Vagrant controller."""
+        """Shut down members, then DCs, then the router without Vagrant NAT."""
         if self.lab_name != 'GOAD':
             return super().stop()
-
+        if not getattr(self, '_last_bounded_vagrant_reaped', True):
+            Log.error('GOAD Kingdoms: an earlier Vagrant controller was not reaped; refusing concurrent VM changes')
+            return False
         running = self._running_instance_vms()
         if running is None:
             return False
@@ -373,57 +411,29 @@ class GoadKingdomsVmwareProvider(GoadNomadVmwareProvider):
             Log.success('GOAD_NOMAD: all instance VMs are already stopped')
             return True
 
-        Log.info(
-            'GOAD_NOMAD: stopping lab gracefully with a bounded controller timeout '
-            f'({", ".join(running)})'
-        )
-        graceful = self._run_vagrant_bounded(['halt'], timeout=180)
-
-        if not graceful and not getattr(self, '_last_bounded_vagrant_reaped', True):
-            Log.error(
-                'GOAD Kingdoms: timed-out Vagrant controller could not be fully reaped; '
-                'refusing shutdown fallback to avoid a per-machine action-lock race'
-            )
-            return False
-
-        remaining = self._running_instance_vms()
-        if remaining is None:
-            return False
-
-        if remaining and not graceful:
-            Log.info(
-                'GOAD Kingdoms: bounded Vagrant halt ended; allowing 30s for '
-                'already-requested guest shutdowns to finish'
-            )
-            deadline = time.time() + 30
-            while remaining and time.time() < deadline:
-                time.sleep(3)
-                remaining = self._running_instance_vms()
-                if remaining is None:
-                    return False
-
-        if remaining:
-            Log.warning(
-                'GOAD Kingdoms: graceful shutdown did not finish for: '
-                + ', '.join(remaining)
-                + '; using lock-free VMware fallback only for those guests'
-            )
-            for machine in list(remaining):
+        Log.info('GOAD Kingdoms: local shutdown; Windows members first, domain controllers next, router last')
+        # The canonical roster lists DCs before member servers/workstations.
+        for machine in reversed(self.goad_nomad_windows):
+            if machine in running:
                 self._stop_machine_via_vmware(machine)
 
         remaining = self._running_instance_vms()
         if remaining is None:
             return False
-        if remaining:
-            Log.error(
-                'GOAD Kingdoms: shutdown incomplete; still running: '
-                + ', '.join(remaining)
-            )
+        windows_remaining = [name for name in remaining if name in self.goad_nomad_windows]
+        if windows_remaining:
+            Log.error('GOAD Kingdoms: Windows shutdown incomplete; keeping router available: ' + ', '.join(windows_remaining))
             return False
+        if 'GOAD-ROUTER' in remaining:
+            self._stop_machine_via_vmware('GOAD-ROUTER')
 
-        Log.success(
-            'GOAD Kingdoms: all instance VMs stopped and VMware state verified'
-        )
+        remaining = self._running_instance_vms()
+        if remaining is None:
+            return False
+        if remaining:
+            Log.error('GOAD Kingdoms: shutdown incomplete; still running: ' + ', '.join(remaining))
+            return False
+        Log.success('GOAD Kingdoms: all instance VMs stopped and VMware state verified (no Vagrant NAT communicator)')
         return True
 
     def install(self):
@@ -498,7 +508,7 @@ class GoadKingdomsVmwareProvider(GoadNomadVmwareProvider):
         )
         return True
 
-    def _start_existing_instance(self):
+    def _start_existing_instance(self, vm_name=None):
         """Power on an installed range without any Vagrant NAT communicator.
 
         Only temporarily open the existing routed management plane. The caller
@@ -507,6 +517,9 @@ class GoadKingdomsVmwareProvider(GoadNomadVmwareProvider):
         """
         if self.get_runtime_mode() not in ('exercise', 'provisioning'):
             Log.error('GOAD Kingdoms: no recorded installed mode; complete installation before using start')
+            return False
+        if vm_name is not None and vm_name not in self.goad_nomad_windows + ['GOAD-ROUTER']:
+            Log.error(f'GOAD Kingdoms: unknown instance machine: {vm_name}')
             return False
         vmxs = {name: self._vmx_path(name) for name in self.goad_nomad_windows}
         if not all(vmxs.values()) or not self._vmx_path('GOAD-ROUTER'):
@@ -518,6 +531,11 @@ class GoadKingdomsVmwareProvider(GoadNomadVmwareProvider):
             return False
         if not self._bring_up_router():
             return False
+
+        if vm_name == 'GOAD-ROUTER':
+            return True
+        if vm_name is not None:
+            vmxs = {vm_name: vmxs[vm_name]}
 
         # Use the router's management NIC to establish routes BEFORE checking
         # protected-zone Windows addresses. Windows NAT settings are untouched.
@@ -548,7 +566,8 @@ class GoadKingdomsVmwareProvider(GoadNomadVmwareProvider):
         if not self._enable_provisioning_routes():
             return False
         deadline = time.monotonic() + 600
-        for machine, host in self.management_hosts.items():
+        for machine in vmxs:
+            host = self.management_hosts[machine]
             remaining = int(deadline - time.monotonic())
             if remaining <= 0:
                 Log.error('GOAD Kingdoms: installed range management readiness budget exhausted')
@@ -556,7 +575,7 @@ class GoadKingdomsVmwareProvider(GoadNomadVmwareProvider):
             Log.info(f'GOAD Kingdoms: verifying {machine} directly at {host}:5986')
             if not self._wait_lab_winrm_ready(machine, host, timeout=min(300, remaining)):
                 return False
-        Log.success('GOAD Kingdoms: all installed guests ready over local management; no NAT communicator used')
+        Log.success('GOAD Kingdoms: requested installed guests ready over local management; no NAT communicator used')
         return True
 
     def _bring_up_router(self):
