@@ -56,12 +56,13 @@ for file in \
  done
 pass "required network-segmentation source files are present"
 
-# lab-mode.sh is the user-facing mode controller and must retain its executable
-# bit in Git. Supporting helpers are deliberately invoked through bash by the
-# project so archive/copy operations cannot break them solely by stripping mode
-# bits.
+# lab-mode.sh and setup-vmware-networks.sh are user-facing entry points and must
+# retain their executable bits in Git. Supporting helpers are deliberately
+# invoked through bash by the project so archive/copy operations cannot break
+# them solely by stripping mode bits.
 [[ -x scripts/lab-mode.sh ]] || fail "scripts/lab-mode.sh is not executable"
-pass "lab-mode.sh executable bit"
+[[ -x scripts/setup-vmware-networks.sh ]] || fail "scripts/setup-vmware-networks.sh is not executable"
+pass "user-facing lifecycle script executable bits"
 
 for file in \
     scripts/lab-mode.sh \
@@ -232,6 +233,47 @@ grep -Fq 'check-vmware-instance-conflicts.sh' goad/provider/vagrant/vmware_kingd
     fail "GOAD Kingdoms VMware provider does not invoke the collision guard"
 grep -Fq 'return super().prepare_install()' goad/provider/vagrant/vmware_kingdoms.py ||
     fail "collision preflight does not return to the validated M1 prepare_install lifecycle"
+python3 - <<'PY'
+import ast
+from pathlib import Path
+
+source = Path('goad/provider/vagrant/vmware_kingdoms.py').read_text()
+tree = ast.parse(source)
+provider = next(
+    node
+    for node in tree.body
+    if isinstance(node, ast.ClassDef) and node.name == 'GoadKingdomsVmwareProvider'
+)
+install = next(
+    node
+    for node in provider.body
+    if isinstance(node, ast.FunctionDef) and node.name == 'install'
+)
+
+preflight_line = None
+first_vagrant_line = None
+for node in ast.walk(install):
+    if isinstance(node, ast.Call):
+        if (
+            isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == 'self'
+            and node.func.attr == 'prepare_install'
+        ):
+            preflight_line = node.lineno
+        if (
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr == 'run_vagrant'
+        ):
+            first_vagrant_line = min(first_vagrant_line or node.lineno, node.lineno)
+
+if preflight_line is None:
+    raise SystemExit('Kingdoms install does not invoke the host-network preflight')
+if first_vagrant_line is None:
+    raise SystemExit('Kingdoms install contains no Vagrant bring-up call')
+if preflight_line >= first_vagrant_line:
+    raise SystemExit('Kingdoms host-network preflight runs after guest bring-up')
+PY
 pass "GOAD Kingdoms provider owns fail-closed pre-start collision policy"
 
 grep -Fq 'name: DNS' ansible/roles/child_domain/tasks/main.yml ||

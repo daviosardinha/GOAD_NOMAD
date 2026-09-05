@@ -25,6 +25,7 @@ readonly REQUIRED=(
     ansible/ws01.yml
     ansible/ws01-lpe-install.yml
     ansible/windows-lpe.yml
+    ansible/roles/settings/enable_nat_adapter/tasks/main.yml
     ad/GOAD/data/config.json
     ad/GOAD/data/inventory
     ad/GOAD/providers/vmware/Vagrantfile
@@ -205,6 +206,30 @@ require_tokens(
 )
 if 'forcing a clean provision cycle' in kingdoms_provider:
     fail('recovery logging still claims the now-graceful recovery cycle is forced')
+
+preflight_call = kingdoms_provider.find('if not self.prepare_install():')
+first_guest_start = kingdoms_provider.find("self.command.run_vagrant(['up', 'GOAD-ROUTER']")
+if preflight_call == -1 or first_guest_start == -1 or preflight_call >= first_guest_start:
+    fail('Kingdoms install must complete host-network preflight before starting GOAD-ROUTER')
+
+nat_enable = Path('ansible/roles/settings/enable_nat_adapter/tasks/main.yml').read_text()
+require_tokens(
+    'NAT adapter WinRM-safe transition',
+    nat_enable,
+    (
+        'Start-Sleep -Seconds 5',
+        'netsh interface set interface',
+        'async: 60',
+        'poll: 0',
+        'ansible.builtin.meta: reset_connection',
+        'ansible.builtin.wait_for_connection:',
+        'timeout: 300',
+        "if ($adapter.AdminStatus -ne 'Up')",
+        'until: nat_adapter_enable_check.rc == 0',
+    ),
+)
+if 'enable_adpter_interface' in nat_enable:
+    fail('NAT adapter enable still retries the expected WinRM transport teardown as a task failure')
 
 # A failed first bring-up must no longer hard-power Windows off as the primary
 # recovery action. Older Server 2016 boxes have demonstrated a fully booted
