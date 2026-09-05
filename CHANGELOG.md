@@ -4,6 +4,11 @@ All notable project changes are documented in this file.
 
 ## [Unreleased] — GOAD Kingdoms
 
+### Fixed
+- Restore the segmented VMware host-network preflight to the active Kingdoms install override so a missing host-address helper or persistence timer is detected before any VM starts.
+- Track `scripts/setup-vmware-networks.sh` as executable so the documented direct invocation works from a fresh clone.
+- Enable the temporary Windows NAT interface asynchronously and wait for WinRM to reconnect, preventing the expected adapter transition from being reported as a failed Ansible task.
+
 ## [v1.1.1] - 2026-09-04
 
 ### Release

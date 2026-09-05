@@ -431,6 +431,18 @@ class GoadKingdomsVmwareProvider(GoadNomadVmwareProvider):
         if self.lab_name != 'GOAD':
             return super().install()
 
+        # This override owns the complete Kingdoms bring-up path, so it must
+        # explicitly retain the inherited host-network preflight.  Without it,
+        # a missing host-address helper/timer was discovered only after every
+        # guest had spent minutes coming up and provisioning routes were finally
+        # enabled.  Fail (or repair the host setup) before touching any VM.
+        if not self.prepare_install():
+            Log.error(
+                'GOAD Kingdoms: segmented VMware host-network preflight failed; '
+                'no guest bring-up was attempted'
+            )
+            return False
+
         if not self._sync_goad_nomad_inventories():
             return False
 

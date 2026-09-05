@@ -1,7 +1,38 @@
-- name: "enable interface {{nat_adapter}}"
-  win_shell: netsh interface set interface "{{nat_adapter}}" enable
-  register: enable_adpter_interface
-  until: "enable_adpter_interface is not failed"
-  retries: 3
-  delay: 120
+- name: "schedule interface {{ nat_adapter }} enable after WinRM returns"
+  ansible.windows.win_shell: |
+    Start-Sleep -Seconds 5
+    netsh interface set interface "{{ nat_adapter }}" enable
+  async: 60
+  poll: 0
+  changed_when: true
+  when: two_adapters
+
+- name: "allow interface {{ nat_adapter }} transition to begin"
+  ansible.builtin.pause:
+    seconds: 10
+  when: two_adapters
+
+- name: "reset the WinRM connection after enabling {{ nat_adapter }}"
+  ansible.builtin.meta: reset_connection
+  when: two_adapters
+
+- name: "wait for WinRM after enabling {{ nat_adapter }}"
+  ansible.builtin.wait_for_connection:
+    connect_timeout: 5
+    sleep: 5
+    timeout: 300
+  when: two_adapters
+
+- name: "verify interface {{ nat_adapter }} is administratively enabled"
+  ansible.windows.win_shell: |
+    $adapter = Get-NetAdapter -Name "{{ nat_adapter }}" -ErrorAction Stop
+    if ($adapter.AdminStatus -ne 'Up') {
+      throw "Interface {{ nat_adapter }} is not administratively enabled"
+    }
+    Write-Output 'GOAD_NAT_ADAPTER_ENABLED'
+  register: nat_adapter_enable_check
+  changed_when: false
+  retries: 12
+  delay: 5
+  until: nat_adapter_enable_check.rc == 0
   when: two_adapters
