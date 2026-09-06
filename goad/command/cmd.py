@@ -191,14 +191,14 @@ class Command:
         # linux only
         pass
 
-    def run_ansible(self, args, path):
+    def run_ansible(self, args, path, env=None):
         result = None
         try:
             command = 'ansible-playbook '
             command += args
             Log.info('CWD: ' + Utils.get_relative_path(str(path)))
             Log.cmd(command)
-            result = subprocess.run(command, cwd=path, stderr=sys.stderr, stdout=sys.stdout, shell=True)
+            result = subprocess.run(command, cwd=path, stderr=sys.stderr, stdout=sys.stdout, shell=True, env=env)
         except subprocess.CalledProcessError as e:
             Log.error(f"An error occurred while running the command: {e}")
             return False
