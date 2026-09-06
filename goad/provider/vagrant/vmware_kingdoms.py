@@ -1,4 +1,6 @@
+import ipaddress
 import os
+import re
 import signal
 import subprocess
 import time
@@ -322,6 +324,110 @@ class GoadKingdomsVmwareProvider(GoadNomadVmwareProvider):
             Log.error(f'GOAD Kingdoms: {machine} is still running after forced halt')
             return False
         return True
+
+    def _ensure_vmware_tools(self, machine):
+        """Allow one reporting repair per Windows installation readiness check.
+
+        Keep the inherited installer and failed-up recovery authoritative. This
+        context is deliberately absent from installed start/stop operations.
+        """
+        if self.lab_name != 'GOAD' or machine not in self.goad_nomad_windows:
+            return super()._ensure_vmware_tools(machine)
+        previous = getattr(self, '_tools_reporting_context', None)
+        self._tools_reporting_context = {'machine': machine, 'restart_attempted': False}
+        try:
+            return super()._ensure_vmware_tools(machine)
+        finally:
+            self._tools_reporting_context = previous
+
+    def _poll_guest_ip_bounded(self, vmx, timeout):
+        """Bound each local query as well as the overall polling window."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            try:
+                result = subprocess.run(
+                    ['vmrun', '-T', 'ws', 'getGuestIPAddress', vmx],
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    text=True, check=False, timeout=min(10, remaining),
+                )
+                if result.returncode == 0:
+                    try:
+                        address = ipaddress.IPv4Address(result.stdout.strip())
+                    except ipaddress.AddressValueError:
+                        pass
+                    else:
+                        if not (address.is_link_local or address.is_loopback
+                                or address.is_unspecified or address.is_multicast):
+                            Log.success(f'GOAD_NOMAD: VMware guest IP reporting healthy ({address})')
+                            return True
+            except subprocess.TimeoutExpired:
+                pass
+            except OSError:
+                return False
+            time.sleep(max(0, min(5, deadline - time.monotonic())))
+        return False
+
+    def _restart_tools_reporting(self, machine, vmx):
+        """Restart the existing guest service over authenticated forwarded WinRM.
+
+        This repairs the observed host/guest reporting disagreement, without
+        assigning a lab IP, provisioning Windows, or accepting a failed up.
+        """
+        try:
+            ports = subprocess.run(
+                [self.command.vagrant_bin, 'port', machine], cwd=self.path,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True, check=False, timeout=15,
+            )
+            match = re.search(r'5985\s+\(guest\)\s+=>\s+(\d+)\s+\(host\)', ports.stdout)
+            if ports.returncode != 0 or match is None:
+                return False
+            port = int(match.group(1))
+            if not 0 < port < 65536:
+                return False
+            Log.warning(
+                f'GOAD Kingdoms: {machine} guest IP reporting stalled; '
+                'trying one VMTools service restart through authenticated WinRM'
+            )
+            result = self._winrm_session(port).run_ps(r'''
+$ErrorActionPreference = 'Stop'
+$svc = Get-Service -Name VMTools -ErrorAction Stop
+if (-not (Test-Path 'C:\Program Files\VMware\VMware Tools\vmtoolsd.exe')) {
+    throw 'VMware Tools executable is missing'
+}
+if ($svc.Status -ne 'Stopped') {
+    $svc.Stop()
+    $svc.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(20))
+}
+$svc.Start()
+$svc.WaitForStatus('Running', [TimeSpan]::FromSeconds(20))
+Write-Output 'GOAD_VMTOOLS_RESTARTED'
+''')
+            if result.status_code != 0 or b'GOAD_VMTOOLS_RESTARTED' not in result.std_out:
+                return False
+            # The guest command must succeed AND the host must observe an IP.
+            # Direct inventory WinRM remains a separate gate before Ansible.
+            if self._poll_guest_ip_bounded(vmx, 60) and self._guest_tools_healthy(port):
+                Log.success(f'GOAD Kingdoms: {machine} VMTools reporting recovered after service restart')
+                return True
+        except Exception as exc:
+            Log.warning(f'GOAD Kingdoms: VMTools reporting repair failed for {machine}: {type(exc).__name__}')
+        return False
+
+    def _wait_guest_ip(self, vmx, timeout=180):
+        context = getattr(self, '_tools_reporting_context', None)
+        if context is None:
+            return super()._wait_guest_ip(vmx, timeout)
+        if self._poll_guest_ip_bounded(vmx, timeout):
+            return True
+        if context['restart_attempted']:
+            return False
+        # Set before invoking WinRM: errors must not allow repeated restarts.
+        context['restart_attempted'] = True
+        return self._restart_tools_reporting(context['machine'], vmx)
 
     def _recover_failed_windows_vagrant_up(self, machine):
         """Recover a failed fresh Windows ``vagrant up`` deterministically.

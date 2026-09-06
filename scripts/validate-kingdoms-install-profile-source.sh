@@ -12,7 +12,11 @@ factory_path = Path('goad/provider/provider_factory.py')
 ansible_path = Path('goad/provisioner/ansible/ansible.py')
 base_path = Path('goad/provider/vagrant/vmware_kingdoms.py')
 
-for path in (profile_path, factory_path, ansible_path, base_path):
+for path in (profile_path, factory_path, ansible_path, base_path,
+             Path('goad/install_profile.py'),
+             Path('goad/provisioner/ansible/local.py'),
+             Path('goad/command/cmd.py'),
+             Path('ansible/callback_plugins/kingdoms_install_timing.py')):
     source = path.read_text(encoding='utf-8')
     compile(source, str(path), 'exec')
 
@@ -51,7 +55,7 @@ for token in required_ansible:
         raise SystemExit(f'missing Ansible timing token: {token}')
 
 # Guard the core fresh-install lifecycle contract while this branch measures it.
-# Optimization belongs in a later change after real timing data exists.
+# A Tools reporting repair must still preserve creation and provisioning.
 required_base = (
     "first_up = self.command.run_vagrant(['up', machine], self.path)",
     'if not self._ensure_vmware_tools(machine):',

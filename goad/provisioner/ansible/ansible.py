@@ -22,31 +22,62 @@ class Ansible(Provisioner):
         if self.lab_name != 'GOAD':
             return None
         profile = getattr(self.provider, '_kingdoms_install_profile', None)
-        return profile if isinstance(profile, dict) else None
+        if isinstance(profile, dict) and profile.get('status') == 'awaiting_ansible':
+            return profile
+        return None
 
-    def _record_kingdoms_ansible_timing(self, phases, label, started):
+    def _record_kingdoms_ansible_timing(self, phases, label, started, outcome, kind):
         elapsed = time.monotonic() - started
-        phases.append({'label': label, 'seconds': elapsed})
+        phases.append({'label': label, 'seconds': elapsed, 'outcome': outcome, 'kind': kind})
         Log.info(
             f'GOAD Kingdoms install timing: {label} = '
-            f'{self._format_install_elapsed(elapsed)}'
+            f'{self._format_install_elapsed(elapsed)} ({outcome})'
         )
+        self.provider._save_install_profile()
         return elapsed
+
+    def _profile_ansible_call(self, profile, label, func, *args, kind='phase', **kwargs):
+        if profile is None:
+            return func(*args, **kwargs)
+        started = time.monotonic()
+        outcome = 'error'
+        try:
+            result = func(*args, **kwargs)
+            outcome = 'failed' if result is False else 'succeeded'
+            return result
+        except KeyboardInterrupt:
+            outcome = 'interrupted'
+            raise
+        finally:
+            self._record_kingdoms_ansible_timing(
+                profile['ansible_phases'], label, started, outcome, kind,
+            )
+
+    def _run_playbook_attempt(self, playbook, attempt, func, *args):
+        # Active only inside this full installation. Standalone playbooks and
+        # subsequent console commands cannot append to a completed attempt.
+        profile = getattr(self, '_active_install_profile', None)
+        return self._profile_ansible_call(
+            profile, f'Playbook attempt {playbook} #{attempt}', func, *args,
+            kind='playbook_attempt',
+        )
 
     def _emit_kingdoms_install_timing(self, profile, ansible_phases, ansible_started, success):
         if profile is None:
             return
 
-        ansible_elapsed = time.monotonic() - ansible_started
+        ansible_elapsed = profile['ansible_elapsed']
         provider_elapsed = profile.get('provider_elapsed')
         overall_started = profile.get('started')
         overall_elapsed = (
-            time.monotonic() - overall_started
+            profile['finished'] - overall_started
             if isinstance(overall_started, (int, float))
             else None
         )
 
         Log.info('=== KINGDOMS INSTALL TIMING SUMMARY ===')
+        Log.info('Attempt: ' + profile['attempt_id'])
+        Log.info('This invocation only. Nested phase timings must not be added to totals.')
         for phase in profile.get('phases', []):
             Log.info(
                 f"  provider | {phase['label']:<52} "
@@ -59,6 +90,8 @@ class Ansible(Provisioner):
             )
 
         for phase in ansible_phases:
+            if phase.get('kind') == 'playbook_attempt':
+                continue  # Attempts are included in their parent playbook row.
             Log.info(
                 f"  ansible  | {phase['label']:<52} "
                 f"{self._format_install_elapsed(phase['seconds'])}"
@@ -145,52 +178,58 @@ class Ansible(Provisioner):
         return playbook_list
 
     def run(self, playbook=None):
-        full_lab_run = playbook is None
-        profile = self._kingdoms_install_profile() if full_lab_run else None
-        ansible_started = time.monotonic() if profile is not None else None
-        ansible_phases = []
+        profile = self._kingdoms_install_profile() if playbook is None else None
+        if profile is None:
+            return self._run(playbook)
+        ansible_started = time.monotonic()
+        profile['status'] = 'ansible_running'
+        previous = getattr(self, '_active_install_profile', None)
+        self._active_install_profile = profile
+        self.provider._save_install_profile()
+        result = False
+        outcome = 'failed'
+        try:
+            result = self._run(playbook, profile)
+            return result
+        except KeyboardInterrupt:
+            outcome = 'interrupted'
+            raise
+        finally:
+            self._active_install_profile = previous
+            profile['finished'] = time.monotonic()
+            profile['ansible_elapsed'] = profile['finished'] - ansible_started
+            profile['status'] = 'completed' if result else outcome
+            if self.provider._save_install_profile():
+                Log.info('GOAD Kingdoms timing saved: ' + profile['_path'])
+            self._emit_kingdoms_install_timing(
+                profile, profile['ansible_phases'], ansible_started, bool(result),
+            )
 
-        def finish_profile(success):
-            if profile is not None:
-                self._emit_kingdoms_install_timing(
-                    profile,
-                    ansible_phases,
-                    ansible_started,
-                    success,
-                )
-            return success
+    def _run(self, playbook=None, profile=None):
+        full_lab_run = playbook is None
 
         # GOAD_NOMAD providers may need to rebuild an out-of-band management
         # plane before a complete Ansible run. For normal providers the hook is
         # absent and upstream behaviour is unchanged.
         if full_lab_run:
-            phase_started = time.monotonic()
-            prepared = self._prepare_provider_provisioning()
-            if profile is not None:
-                self._record_kingdoms_ansible_timing(
-                    ansible_phases,
-                    'Provisioning management-plane preparation',
-                    phase_started,
-                )
+            prepared = self._profile_ansible_call(
+                profile, 'Provisioning management-plane preparation',
+                self._prepare_provider_provisioning,
+            )
             if not prepared:
-                return finish_profile(False)
+                return False
 
         inventory = self.get_inventory(self.lab_name, self.provider_name)
         provision_result = False
         if playbook is None:
             playbooks = self.get_playbook_list(self.lab_name)
             for playbook in playbooks:
-                phase_started = time.monotonic()
-                provision_result = self.run_playbook(playbook, inventory)
-                if profile is not None:
-                    self._record_kingdoms_ansible_timing(
-                        ansible_phases,
-                        f'Playbook {playbook}',
-                        phase_started,
-                    )
+                provision_result = self._profile_ansible_call(
+                    profile, f'Playbook {playbook}', self.run_playbook, playbook, inventory,
+                )
                 if not provision_result:
                     Log.error(f'Something wrong during the provisioning task : {playbook}')
-                    return finish_profile(False)
+                    return False
         else:
             provision_result = self.run_playbook(playbook, inventory)
 
@@ -199,15 +238,10 @@ class Ansible(Provisioner):
         # the lab into its normal exercise/training state before READY is set by
         # the controller.
         if full_lab_run and provision_result:
-            phase_started = time.monotonic()
-            finalized = self._finalize_provider_provisioning()
-            if profile is not None:
-                self._record_kingdoms_ansible_timing(
-                    ansible_phases,
-                    'Final exercise-mode transition',
-                    phase_started,
-                )
-            return finish_profile(finalized)
+            return self._profile_ansible_call(
+                profile, 'Final exercise-mode transition',
+                self._finalize_provider_provisioning,
+            )
 
         return provision_result
 

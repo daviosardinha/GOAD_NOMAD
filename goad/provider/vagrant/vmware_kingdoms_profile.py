@@ -1,5 +1,7 @@
+from pathlib import Path
 import time
 
+from goad.install_profile import new_install_profile, save_install_profile
 from goad.log import Log
 from goad.provider.vagrant.vmware_kingdoms import GoadKingdomsVmwareProvider
 
@@ -22,37 +24,54 @@ class ProfiledGoadKingdomsVmwareProvider(GoadKingdomsVmwareProvider):
             return f'{hours}h {minutes:02d}m {secs:02d}s'
         return f'{minutes}m {secs:02d}s'
 
-    def _record_install_profile(self, label, started):
+    def _record_install_profile(self, label, started, outcome):
         elapsed = time.monotonic() - started
         profile = getattr(self, '_kingdoms_install_profile', None)
         if isinstance(profile, dict):
             profile.setdefault('phases', []).append({
                 'label': label,
                 'seconds': elapsed,
+                'outcome': outcome,
             })
+            self._save_install_profile()
         Log.info(
             f'GOAD Kingdoms install timing: {label} = '
-            f'{self._format_install_elapsed(elapsed)}'
+            f'{self._format_install_elapsed(elapsed)} ({outcome})'
         )
         return elapsed
+
+    def _save_install_profile(self):
+        return save_install_profile(self._kingdoms_install_profile, Log.warning)
 
     def _profile_call(self, label, func, *args, **kwargs):
         if not getattr(self, '_kingdoms_install_profile_active', False):
             return func(*args, **kwargs)
         started = time.monotonic()
+        outcome = 'error'
         try:
-            return func(*args, **kwargs)
+            result = func(*args, **kwargs)
+            outcome = 'failed' if result is False else 'succeeded'
+            return result
+        except KeyboardInterrupt:
+            outcome = 'interrupted'
+            raise
         finally:
-            self._record_install_profile(label, started)
+            self._record_install_profile(label, started, outcome)
 
-    @staticmethod
-    def _vagrant_profile_label(args):
+    def _vagrant_profile_label(self, args):
         if isinstance(args, (list, tuple)):
             rendered = ' '.join(str(part) for part in args)
             if len(args) >= 2 and args[0] == 'up':
                 if '--provision' in args:
                     return f'Vagrant recovery up --provision {args[1]}'
-                return f'Vagrant first up {args[1]}'
+                # Observe local state BEFORE up. A VMX alone does not prove
+                # provisioning; neither state is permission to skip Vagrant.
+                state = Path(self.path) / '.vagrant' / 'machines' / str(args[1]) / 'vmware_desktop'
+                if (state / 'id').exists():
+                    return f'Vagrant up existing VM {args[1]}'
+                if state.exists():
+                    return f'Vagrant up partial state {args[1]}'
+                return f'Vagrant first creation {args[1]}'
             if len(args) >= 2 and args[0] == 'halt':
                 return f'Vagrant halt {args[1]}'
             return f'Vagrant {rendered}'
@@ -62,39 +81,41 @@ class ProfiledGoadKingdomsVmwareProvider(GoadKingdomsVmwareProvider):
         if self.lab_name != 'GOAD':
             return super().install()
 
-        started = time.monotonic()
-        self._kingdoms_install_profile = {
-            'started': started,
-            'phases': [],
-            'provider_success': False,
-        }
+        self._kingdoms_install_profile = new_install_profile(self.path)
+        started = self._kingdoms_install_profile['started']
         self._kingdoms_install_profile_active = True
+        self._save_install_profile()
+        Log.info('GOAD Kingdoms install timing attempt: '
+                 + self._kingdoms_install_profile['attempt_id'])
 
         original_run_vagrant = self.command.run_vagrant
 
         def timed_run_vagrant(*args, **kwargs):
             command_args = args[0] if args else kwargs.get('args')
-            phase_started = time.monotonic()
-            try:
-                return original_run_vagrant(*args, **kwargs)
-            finally:
-                self._record_install_profile(
-                    self._vagrant_profile_label(command_args),
-                    phase_started,
-                )
+            label = self._vagrant_profile_label(command_args)
+            return self._profile_call(label, original_run_vagrant, *args, **kwargs)
 
         self.command.run_vagrant = timed_run_vagrant
         result = False
+        outcome = 'failed'
         try:
             result = super().install()
             return result
+        except KeyboardInterrupt:
+            outcome = 'interrupted'
+            raise
         finally:
             self.command.run_vagrant = original_run_vagrant
             elapsed = time.monotonic() - started
             profile = self._kingdoms_install_profile
             profile['provider_elapsed'] = elapsed
             profile['provider_success'] = bool(result)
+            profile['status'] = 'awaiting_ansible' if result else outcome
+            if not result:
+                profile['finished'] = time.monotonic()
             self._kingdoms_install_profile_active = False
+            if self._save_install_profile():
+                Log.info('GOAD Kingdoms timing saved: ' + profile['_path'])
             message = (
                 'GOAD Kingdoms install timing: provider bring-up total = '
                 f'{self._format_install_elapsed(elapsed)}'
