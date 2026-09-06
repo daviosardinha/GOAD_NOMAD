@@ -5,6 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT}"
 
 python3 - <<'PY'
+import ast
 from pathlib import Path
 
 profile_path = Path('goad/provider/vagrant/vmware_kingdoms_profile.py')
@@ -65,6 +66,13 @@ required_base = (
 for token in required_base:
     if token not in base:
         raise SystemExit(f'fresh-install lifecycle contract changed unexpectedly: {token}')
+
+# A VMware VM can inherit the Vagrant process group. Timeout handling must
+# never signal that entire group, even when the controller has timed out.
+for node in ast.walk(ast.parse(base)):
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+        if node.func.attr == 'killpg':
+            raise SystemExit('Vagrant timeout cleanup must preserve VMware guest processes')
 
 # The profiling wrapper must observe lifecycle calls, not introduce a second
 # VMware controller of its own.

@@ -1,8 +1,9 @@
 # KINGDOMS fresh-install lifecycle profiling
 
-This branch measures GOAD/VMware installation and adds one bounded VMTools
-reporting repair based on the first real-host profiling run. It does not replace
-initial Vagrant creation or skip the existing recovery provision cycle.
+This branch measures GOAD/VMware installation, adds one bounded VMTools
+reporting repair, and protects running VMs during controller timeout cleanup.
+These changes follow the real-host profiling runs. They do not replace initial
+Vagrant creation or skip the existing recovery provision cycle.
 
 The profiling layer is intentionally observational:
 
@@ -142,6 +143,40 @@ gate before Ansible.
 This addresses the observed SRV02 reporting failure. It is not a root-cause fix
 for the initial Vagrant adapter/communicator failure, which still needs a
 real-host trace.
+
+### Timeout cleanup preserves VMware guest processes
+
+The recovery command retains its 600-second limit. Cleanup previously sent
+SIGTERM/SIGKILL to the complete process group created for Vagrant. VMware's
+`vmware-vmx` process can remain in that group after starting the VM, so a
+controller timeout could also terminate the guest's monitor.
+
+Cleanup now inspects the group and signals individual controller PIDs. It
+preserves VM monitors, the graphics sandbox, and their descendants, including
+descendants reparented during cleanup. Executable identity, process creation
+time and group membership are checked before signaling. New controller helpers
+are discovered during the bounded cleanup window; an unknown/unreadable process
+or surviving controller makes cleanup incomplete. A running protected VM does
+not prevent successful controller cleanup. An incomplete cleanup blocks another
+bounded operation or installation attempt in the same provider session, as well
+as the existing local-shutdown paths.
+
+The regression suite covers a VM monitor sharing Vagrant's group, controller
+termination/escalation, protected descendants, unrelated work, process identity
+changes and incomplete-cleanup guards. It also includes a POSIX process test
+using copies of `sleep` as simulated `vmware-vmx` and `vmrun` executables. This
+test runs with GOAD's existing `psutil` dependency and process inspection access;
+it explicitly skips when those prerequisites are unavailable. It does not boot
+or terminate real VMware guests.
+
+The failed `fe65df-goad-vmware` attempt on 2026-09-06 lasted 29m14s overall.
+SRV02's recovery reached the remoting provisioner, then hit its 600-second
+limit. Its VMX log records `Caught signal 15` at approximately 18:01 UTC, matching
+the timeout cleanup, and the next Windows boot recorded an unclean shutdown.
+This strongly implicates group cleanup in the VM's power loss; the log does not
+identify the signal sender. The earlier remoting stall still needs diagnosis.
+This is a failed unattended benchmark, and a resumed run must be labelled as
+such. Preserve the failed attempt's JSON and VMware/Windows logs when resuming.
 
 ## First observed run: 2026-09-06
 
