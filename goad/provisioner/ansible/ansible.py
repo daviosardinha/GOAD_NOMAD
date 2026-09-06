@@ -1,4 +1,5 @@
 import os.path
+import time
 import yaml
 from goad.utils import *
 from goad.log import Log
@@ -7,6 +8,76 @@ from goad.goadpath import GoadPath
 
 
 class Ansible(Provisioner):
+
+    @staticmethod
+    def _format_install_elapsed(seconds):
+        total = max(0, int(round(seconds)))
+        minutes, secs = divmod(total, 60)
+        hours, minutes = divmod(minutes, 60)
+        if hours:
+            return f'{hours}h {minutes:02d}m {secs:02d}s'
+        return f'{minutes}m {secs:02d}s'
+
+    def _kingdoms_install_profile(self):
+        if self.lab_name != 'GOAD':
+            return None
+        profile = getattr(self.provider, '_kingdoms_install_profile', None)
+        return profile if isinstance(profile, dict) else None
+
+    def _record_kingdoms_ansible_timing(self, phases, label, started):
+        elapsed = time.monotonic() - started
+        phases.append({'label': label, 'seconds': elapsed})
+        Log.info(
+            f'GOAD Kingdoms install timing: {label} = '
+            f'{self._format_install_elapsed(elapsed)}'
+        )
+        return elapsed
+
+    def _emit_kingdoms_install_timing(self, profile, ansible_phases, ansible_started, success):
+        if profile is None:
+            return
+
+        ansible_elapsed = time.monotonic() - ansible_started
+        provider_elapsed = profile.get('provider_elapsed')
+        overall_started = profile.get('started')
+        overall_elapsed = (
+            time.monotonic() - overall_started
+            if isinstance(overall_started, (int, float))
+            else None
+        )
+
+        Log.info('=== KINGDOMS INSTALL TIMING SUMMARY ===')
+        for phase in profile.get('phases', []):
+            Log.info(
+                f"  provider | {phase['label']:<52} "
+                f"{self._format_install_elapsed(phase['seconds'])}"
+            )
+        if isinstance(provider_elapsed, (int, float)):
+            Log.info(
+                '  provider | TOTAL'.ljust(65)
+                + self._format_install_elapsed(provider_elapsed)
+            )
+
+        for phase in ansible_phases:
+            Log.info(
+                f"  ansible  | {phase['label']:<52} "
+                f"{self._format_install_elapsed(phase['seconds'])}"
+            )
+        Log.info(
+            '  ansible  | TOTAL'.ljust(65)
+            + self._format_install_elapsed(ansible_elapsed)
+        )
+        if isinstance(overall_elapsed, (int, float)):
+            Log.info(
+                '  measured | END-TO-END'.ljust(65)
+                + self._format_install_elapsed(overall_elapsed)
+            )
+
+        message = 'GOAD Kingdoms installation timing capture complete'
+        if success:
+            Log.success(message)
+        else:
+            Log.warning(message + ' (installation incomplete)')
 
     def _get_lab_inventory(self, lab_name, provider_name):
         inventory = []
@@ -75,22 +146,51 @@ class Ansible(Provisioner):
 
     def run(self, playbook=None):
         full_lab_run = playbook is None
+        profile = self._kingdoms_install_profile() if full_lab_run else None
+        ansible_started = time.monotonic() if profile is not None else None
+        ansible_phases = []
+
+        def finish_profile(success):
+            if profile is not None:
+                self._emit_kingdoms_install_timing(
+                    profile,
+                    ansible_phases,
+                    ansible_started,
+                    success,
+                )
+            return success
 
         # GOAD_NOMAD providers may need to rebuild an out-of-band management
         # plane before a complete Ansible run. For normal providers the hook is
         # absent and upstream behaviour is unchanged.
-        if full_lab_run and not self._prepare_provider_provisioning():
-            return False
+        if full_lab_run:
+            phase_started = time.monotonic()
+            prepared = self._prepare_provider_provisioning()
+            if profile is not None:
+                self._record_kingdoms_ansible_timing(
+                    ansible_phases,
+                    'Provisioning management-plane preparation',
+                    phase_started,
+                )
+            if not prepared:
+                return finish_profile(False)
 
         inventory = self.get_inventory(self.lab_name, self.provider_name)
         provision_result = False
         if playbook is None:
             playbooks = self.get_playbook_list(self.lab_name)
             for playbook in playbooks:
+                phase_started = time.monotonic()
                 provision_result = self.run_playbook(playbook, inventory)
+                if profile is not None:
+                    self._record_kingdoms_ansible_timing(
+                        ansible_phases,
+                        f'Playbook {playbook}',
+                        phase_started,
+                    )
                 if not provision_result:
                     Log.error(f'Something wrong during the provisioning task : {playbook}')
-                    return False
+                    return finish_profile(False)
         else:
             provision_result = self.run_playbook(playbook, inventory)
 
@@ -99,7 +199,15 @@ class Ansible(Provisioner):
         # the lab into its normal exercise/training state before READY is set by
         # the controller.
         if full_lab_run and provision_result:
-            return self._finalize_provider_provisioning()
+            phase_started = time.monotonic()
+            finalized = self._finalize_provider_provisioning()
+            if profile is not None:
+                self._record_kingdoms_ansible_timing(
+                    ansible_phases,
+                    'Final exercise-mode transition',
+                    phase_started,
+                )
+            return finish_profile(finalized)
 
         return provision_result
 
