@@ -274,7 +274,11 @@ class LiveProcessCleanupTests(unittest.TestCase):
                 self.assertIsNotNone(child.poll())
                 self.assertTrue(owned[1].is_running())
                 self.assertNotEqual(owned[1].status(), psutil.STATUS_ZOMBIE)
-                self.assertTrue(not owned[2].is_running() or owned[2].status() == psutil.STATUS_ZOMBIE)
+                try:
+                    helper_running = owned[2].is_running() and owned[2].status() != psutil.STATUS_ZOMBIE
+                except psutil.NoSuchProcess:
+                    helper_running = False
+                self.assertFalse(helper_running)
             finally:
                 for proc in owned:
                     try:
