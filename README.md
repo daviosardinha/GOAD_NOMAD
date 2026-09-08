@@ -2,7 +2,7 @@
 
 # Kingdoms
 
-<img width="1672" height="941" alt="Goad Kingdoms_ Master the Domain" src="https://github.com/user-attachments/assets/f33a1dd8-97e3-4680-9540-b24798c518e0" />
+<img width="1536" height="1024" alt="image" src="https://github.com/user-attachments/assets/a6976fa0-4819-494e-87d0-3cb03a8c5e58" />
 
 ### Segmented Active Directory Red Team Training Range
 
