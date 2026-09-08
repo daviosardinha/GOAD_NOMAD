@@ -1,7 +1,11 @@
+import ipaddress
 import os
+import re
 import signal
 import subprocess
 import time
+
+import psutil
 
 from goad.goadpath import GoadPath
 from goad.log import Log
@@ -74,88 +78,132 @@ class GoadKingdomsVmwareProvider(GoadNomadVmwareProvider):
         return True
 
     @staticmethod
-    def _process_group_alive(pgid):
-        """Return whether a locally-owned process group still has members."""
-        try:
-            os.killpg(pgid, 0)
-        except ProcessLookupError:
-            return False
-        except PermissionError:
-            return True
-        return True
+    def _vagrant_cleanup_members(pgid):
+        """Snapshot live group members, with fresh executable/PID identities.
 
-    def _wait_process_group_gone(self, process, timeout):
-        """Reap the direct child and wait until its whole process group is gone."""
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            process.poll()
-            if not self._process_group_alive(process.pid):
-                return True
-            time.sleep(0.2)
-
-        process.poll()
-        return not self._process_group_alive(process.pid)
-
-    def _reap_vagrant_process_group(self, process, command):
-        """Terminate every process from a timed-out Vagrant controller.
-
-        ``subprocess.run(..., timeout=...)`` only guarantees that Python reaps
-        the direct Vagrant process. Vagrant/Ruby descendants can outlive that
-        parent and retain per-machine action locks. The shutdown fallback must
-        never start while the timed-out controller can still mutate the same VM.
+        A started vmware-vmx can inherit Vagrant's process group. Group
+        membership therefore establishes scope, never permission to signal it.
+        Inspection failures propagate so cleanup cannot guess at a target.
         """
-        rendered = ' '.join(command)
-        pgid = process.pid
+        members = {}
+        for pid in psutil.pids():
+            try:
+                if os.getpgid(pid) != pgid:
+                    continue
+                proc = psutil.Process(pid)
+                if proc.status() == psutil.STATUS_ZOMBIE:
+                    continue
+                name = os.path.basename(proc.exe())
+                if not name:
+                    raise RuntimeError(f'cannot identify executable for PID {pid}')
+                members[pid] = (proc.create_time(), proc.ppid(), name)
+            except (psutil.NoSuchProcess, ProcessLookupError):
+                continue
+        return members
 
-        if not self._process_group_alive(pgid):
-            process.poll()
-            return True
+    @staticmethod
+    def _vagrant_cleanup_targets(members, leader, preserved):
+        """Protect VM monitors and their descendants; allow known controllers."""
+        protected = {
+            pid for pid, (created, _, name) in members.items()
+            if name.startswith('vmware-vmx') or name == 'mksSandbox'
+            or (pid, created) in preserved
+        }
+        while True:
+            children = {pid for pid, (_, parent, _) in members.items()
+                        if parent in protected}
+            if children.issubset(protected):
+                break
+            protected.update(children)
+        preserved.update((pid, members[pid][0]) for pid in protected)
 
-        Log.warning(
-            f'GOAD Kingdoms: terminating timed-out Vagrant process group for: {rendered}'
-        )
+        targets, unknown = {}, []
+        for pid, (created, _, name) in members.items():
+            if pid in protected:
+                continue
+            if (pid == leader or name in ('vagrant', 'vmrun', 'sh', 'bash', 'dash')
+                    or re.fullmatch(r'ruby(?:\d+(?:\.\d+)*)?', name)):
+                targets[pid] = (created, name)
+            else:
+                unknown.append(f'{name} (PID {pid})')
+        return targets, unknown
+
+    @staticmethod
+    def _signal_vagrant_controller(pid, identity, pgid, sig):
+        """Recheck PID age, executable and scope immediately before signaling."""
         try:
-            os.killpg(pgid, signal.SIGTERM)
-        except ProcessLookupError:
-            process.poll()
-            return True
-        except OSError as exc:
-            Log.error(
-                f'GOAD Kingdoms: could not terminate Vagrant process group {pgid}: {exc}'
-            )
-            return False
+            proc = psutil.Process(pid)
+            current = (proc.create_time(), os.path.basename(proc.exe()))
+            if current != identity or os.getpgid(pid) != pgid:
+                raise RuntimeError(f'process identity or group changed for PID {pid}')
+            # psutil also checks PID reuse when sending the signal.
+            proc.send_signal(sig)
+        except (psutil.NoSuchProcess, ProcessLookupError):
+            pass
 
-        if self._wait_process_group_gone(process, 5):
-            Log.success('GOAD Kingdoms: timed-out Vagrant process group fully reaped')
-            return True
+    def _reap_vagrant_controller(self, process, command):
+        """Reap controller/helpers by PID while leaving VMware guests running.
 
+        Unknown/unreadable group members make cleanup incomplete. Never send a
+        group-wide signal: a guest monitor can outlive the Vagrant controller
+        in that very same group. Remember protected identities across scans,
+        including VM descendants that become reparented during cleanup.
+        """
         Log.warning(
-            'GOAD Kingdoms: Vagrant descendants survived SIGTERM; '
-            'sending SIGKILL before any fallback'
+            'GOAD Kingdoms: cleaning up timed-out Vagrant controller by PID '
+            f'(preserving VMware guests): {" ".join(command)}'
         )
-        try:
-            os.killpg(pgid, signal.SIGKILL)
-        except ProcessLookupError:
-            process.poll()
-            return True
-        except OSError as exc:
-            Log.error(
-                f'GOAD Kingdoms: could not kill Vagrant process group {pgid}: {exc}'
-            )
-            return False
-
-        if not self._wait_process_group_gone(process, 5):
-            Log.error(
-                'GOAD Kingdoms: timed-out Vagrant process group is still alive; '
-                'refusing to race a second lifecycle action'
-            )
-            return False
-
-        Log.success('GOAD Kingdoms: timed-out Vagrant process group fully reaped')
-        return True
+        preserved = set()
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            deadline = time.monotonic() + 5
+            signaled = set()
+            while True:
+                try:
+                    process.poll()
+                    members = self._vagrant_cleanup_members(process.pid)
+                    previously_preserved = set(preserved)
+                    targets, unknown = self._vagrant_cleanup_targets(
+                        members, process.pid, preserved,
+                    )
+                    newly_preserved = preserved - previously_preserved
+                    if newly_preserved:
+                        Log.info(
+                            'GOAD Kingdoms: excluding VMware guest processes from cleanup: '
+                            + ', '.join(f'{members[pid][2]} (PID {pid})'
+                                        for pid, _ in sorted(newly_preserved))
+                        )
+                    if unknown:
+                        raise RuntimeError('unrecognized group members: ' + ', '.join(unknown))
+                    if not targets:
+                        if process.poll() is None:
+                            raise RuntimeError('Vagrant leader is still running outside verified cleanup targets')
+                        Log.success(
+                            'GOAD Kingdoms: timed-out Vagrant controller fully reaped; '
+                            'VMware guest processes preserved'
+                        )
+                        return True
+                    for pid, identity in targets.items():
+                        key = (pid, identity)
+                        if key not in signaled:
+                            self._signal_vagrant_controller(pid, identity, process.pid, sig)
+                            signaled.add(key)
+                except (psutil.Error, OSError, RuntimeError) as exc:
+                    Log.error(f'GOAD Kingdoms: Vagrant cleanup incomplete; {exc}')
+                    return False
+                if time.monotonic() >= deadline:
+                    break
+                time.sleep(0.2)
+        Log.error(
+            'GOAD Kingdoms: timed-out Vagrant controller is still alive; '
+            'refusing to race a second lifecycle action'
+        )
+        return False
 
     def _run_vagrant_bounded(self, args, timeout):
-        """Run Vagrant in an isolated process group and fully reap it on timeout."""
+        """Run Vagrant in a dedicated group; selectively reap it on timeout."""
+        if not getattr(self, '_last_bounded_vagrant_reaped', True):
+            Log.error('GOAD Kingdoms: previous Vagrant cleanup is incomplete; refusing another action')
+            return False
         command = [self.command.vagrant_bin] + args
         Log.info(f'GOAD_NOMAD: running bounded command: {" ".join(command)}')
         self._last_bounded_vagrant_reaped = True
@@ -175,9 +223,9 @@ class GoadKingdomsVmwareProvider(GoadNomadVmwareProvider):
         except subprocess.TimeoutExpired:
             Log.warning(
                 f'GOAD_NOMAD: {" ".join(command)} exceeded {timeout}s; '
-                'reaping the entire Vagrant process group before fallback'
+                'cleaning up its controller while preserving VMware guests'
             )
-            self._last_bounded_vagrant_reaped = self._reap_vagrant_process_group(
+            self._last_bounded_vagrant_reaped = self._reap_vagrant_controller(
                 process,
                 command,
             )
@@ -323,6 +371,110 @@ class GoadKingdomsVmwareProvider(GoadNomadVmwareProvider):
             return False
         return True
 
+    def _ensure_vmware_tools(self, machine):
+        """Allow one reporting repair per Windows installation readiness check.
+
+        Keep the inherited installer and failed-up recovery authoritative. This
+        context is deliberately absent from installed start/stop operations.
+        """
+        if self.lab_name != 'GOAD' or machine not in self.goad_nomad_windows:
+            return super()._ensure_vmware_tools(machine)
+        previous = getattr(self, '_tools_reporting_context', None)
+        self._tools_reporting_context = {'machine': machine, 'restart_attempted': False}
+        try:
+            return super()._ensure_vmware_tools(machine)
+        finally:
+            self._tools_reporting_context = previous
+
+    def _poll_guest_ip_bounded(self, vmx, timeout):
+        """Bound each local query as well as the overall polling window."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            try:
+                result = subprocess.run(
+                    ['vmrun', '-T', 'ws', 'getGuestIPAddress', vmx],
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    text=True, check=False, timeout=min(10, remaining),
+                )
+                if result.returncode == 0:
+                    try:
+                        address = ipaddress.IPv4Address(result.stdout.strip())
+                    except ipaddress.AddressValueError:
+                        pass
+                    else:
+                        if not (address.is_link_local or address.is_loopback
+                                or address.is_unspecified or address.is_multicast):
+                            Log.success(f'GOAD_NOMAD: VMware guest IP reporting healthy ({address})')
+                            return True
+            except subprocess.TimeoutExpired:
+                pass
+            except OSError:
+                return False
+            time.sleep(max(0, min(5, deadline - time.monotonic())))
+        return False
+
+    def _restart_tools_reporting(self, machine, vmx):
+        """Restart the existing guest service over authenticated forwarded WinRM.
+
+        This repairs the observed host/guest reporting disagreement, without
+        assigning a lab IP, provisioning Windows, or accepting a failed up.
+        """
+        try:
+            ports = subprocess.run(
+                [self.command.vagrant_bin, 'port', machine], cwd=self.path,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True, check=False, timeout=15,
+            )
+            match = re.search(r'5985\s+\(guest\)\s+=>\s+(\d+)\s+\(host\)', ports.stdout)
+            if ports.returncode != 0 or match is None:
+                return False
+            port = int(match.group(1))
+            if not 0 < port < 65536:
+                return False
+            Log.warning(
+                f'GOAD Kingdoms: {machine} guest IP reporting stalled; '
+                'trying one VMTools service restart through authenticated WinRM'
+            )
+            result = self._winrm_session(port).run_ps(r'''
+$ErrorActionPreference = 'Stop'
+$svc = Get-Service -Name VMTools -ErrorAction Stop
+if (-not (Test-Path 'C:\Program Files\VMware\VMware Tools\vmtoolsd.exe')) {
+    throw 'VMware Tools executable is missing'
+}
+if ($svc.Status -ne 'Stopped') {
+    $svc.Stop()
+    $svc.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(20))
+}
+$svc.Start()
+$svc.WaitForStatus('Running', [TimeSpan]::FromSeconds(20))
+Write-Output 'GOAD_VMTOOLS_RESTARTED'
+''')
+            if result.status_code != 0 or b'GOAD_VMTOOLS_RESTARTED' not in result.std_out:
+                return False
+            # The guest command must succeed AND the host must observe an IP.
+            # Direct inventory WinRM remains a separate gate before Ansible.
+            if self._poll_guest_ip_bounded(vmx, 60) and self._guest_tools_healthy(port):
+                Log.success(f'GOAD Kingdoms: {machine} VMTools reporting recovered after service restart')
+                return True
+        except Exception as exc:
+            Log.warning(f'GOAD Kingdoms: VMTools reporting repair failed for {machine}: {type(exc).__name__}')
+        return False
+
+    def _wait_guest_ip(self, vmx, timeout=180):
+        context = getattr(self, '_tools_reporting_context', None)
+        if context is None:
+            return super()._wait_guest_ip(vmx, timeout)
+        if self._poll_guest_ip_bounded(vmx, timeout):
+            return True
+        if context['restart_attempted']:
+            return False
+        # Set before invoking WinRM: errors must not allow repeated restarts.
+        context['restart_attempted'] = True
+        return self._restart_tools_reporting(context['machine'], vmx)
+
     def _recover_failed_windows_vagrant_up(self, machine):
         """Recover a failed fresh Windows ``vagrant up`` deterministically.
 
@@ -440,6 +592,9 @@ class GoadKingdomsVmwareProvider(GoadNomadVmwareProvider):
         """Bring up a segmented GOAD instance with fail-closed Windows recovery."""
         if self.lab_name != 'GOAD':
             return super().install()
+        if not getattr(self, '_last_bounded_vagrant_reaped', True):
+            Log.error('GOAD Kingdoms: previous Vagrant cleanup is incomplete; refusing guest bring-up')
+            return False
 
         # This override owns the complete Kingdoms bring-up path, so it must
         # explicitly retain the inherited host-network preflight.  Without it,

@@ -43,6 +43,7 @@ bash -n scripts/validate-goad-kingdoms-install-source.sh
 pass 'clean-install gate shell syntax'
 
 python3 - <<'PY'
+import ast
 from pathlib import Path
 import re
 import sys
@@ -248,12 +249,40 @@ if 'self._stop_failed_windows_guest_cleanly(machine)' not in recovery:
 if "self._run_vagrant_bounded(['up', machine, '--provision'], timeout=600)" not in recovery:
     fail('failed-bring-up recovery must use a bounded Vagrant --provision cycle')
 
-# The recovery decision must be driven by the failed first Vagrant bring-up,
-# not only by whether VMware Tools had to be installed. This protects guests
-# where Tools/IP reporting are already healthy while Vagrant guest communication
-# still fails before provisioning completes.
-if 'def _ensure_vmware_tools(self, machine):' in kingdoms_provider:
-    fail('Kingdoms provider must not couple failed-bring-up recovery only to VMware Tools installation')
+# Check the actual dispatch, rather than banning every Tools override by name.
+# A scoped service-reporting repair is legitimate, but failed first-up recovery
+# must remain an independent, mandatory decision in install().
+provider_class = next(n for n in ast.parse(kingdoms_provider).body
+                      if isinstance(n, ast.ClassDef) and n.name == 'GoadKingdomsVmwareProvider')
+methods = {n.name: n for n in provider_class.body if isinstance(n, ast.FunctionDef)}
+
+def matches(node, expression):
+    return ast.dump(node) == ast.dump(ast.parse(expression, mode='eval').body)
+
+guest_loop = next((n for n in methods['install'].body
+                   if isinstance(n, ast.For) and matches(n.iter, 'self.goad_nomad_windows')), None)
+if guest_loop is None:
+    fail('cannot find the independent Windows install loop')
+creation = next((i for i, n in enumerate(guest_loop.body)
+                 if isinstance(n, ast.Assign)
+                 and any(isinstance(t, ast.Name) and t.id == 'first_up' for t in n.targets)
+                 and matches(n.value, "self.command.run_vagrant(['up', machine], self.path)")), -1)
+readiness = next((i for i, n in enumerate(guest_loop.body)
+                  if isinstance(n, ast.If) and matches(n.test, 'not self._ensure_vmware_tools(machine)')), -1)
+dispatch = next((i for i, n in enumerate(guest_loop.body)
+                 if isinstance(n, ast.If) and matches(n.test, 'not first_up')), -1)
+if not 0 <= creation < readiness < dispatch:
+    fail('failed-up recovery must follow creation and Tools readiness independently')
+recovery_guard = next((n for n in guest_loop.body[dispatch].body if isinstance(n, ast.If)
+                       and matches(n.test, 'not self._recover_failed_windows_vagrant_up(machine)')), None)
+if recovery_guard is None or not any(isinstance(n, ast.Return) and matches(n.value, 'False')
+                                     for n in recovery_guard.body):
+    fail('failed Vagrant recovery must stop installation even if Tools are healthy')
+tools_override = methods.get('_ensure_vmware_tools')
+if tools_override is not None and any(
+        isinstance(n, ast.Call) and matches(n, 'self._recover_failed_windows_vagrant_up(machine)')
+        for n in ast.walk(tools_override)):
+    fail('failed-up recovery must not be hidden inside VMware Tools readiness')
 
 provisioner = Path('goad/provisioner/ansible/ansible.py').read_text()
 for token in ('_prepare_provider_provisioning', '_finalize_provider_provisioning', 'get_playbook_list'):
