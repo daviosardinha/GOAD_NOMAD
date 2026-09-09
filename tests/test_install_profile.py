@@ -259,6 +259,49 @@ class ToolsReportingTests(unittest.TestCase):
         self.provider._recover_failed_windows_vagrant_up.assert_called_once_with('GOAD-SRV02')
         self.process.run.assert_not_called()
 
+    def test_authenticated_guest_state_wins_over_broken_vmrun_reporting(self):
+        """Healthy authenticated guest must survive stale VIX telemetry."""
+        self.provider.management_hosts = {'GOAD-SRV02': '10.4.10.22'}
+        self.provider._winrm_forwarded_port = Mock(return_value=2207)
+        self.provider._wait_winrm_ready = Mock(return_value=True)
+        self.provider._vmx_path = Mock(return_value='/guest.vmx')
+        self.provider._poll_guest_ip_bounded = Mock(return_value=False)
+
+        self.session.run_ps.return_value = SimpleNamespace(
+            status_code=0,
+            std_out=b'GOAD_KINGDOMS_GUEST_READY',
+        )
+
+        self.provider.ensure_behavior = Mock(
+            side_effect=AssertionError(
+                'inherited recovery must not run for a proven healthy guest'
+            )
+        )
+
+        self.assertTrue(self.provider._ensure_vmware_tools('GOAD-SRV02'))
+
+        self.provider.ensure_behavior.assert_not_called()
+        self.provider._wait_winrm_ready.assert_called_once_with(2207, 60)
+        self.provider._poll_guest_ip_bounded.assert_called_once_with(
+            '/guest.vmx', 10
+        )
+
+    def test_authenticated_guest_state_requires_expected_kingdoms_ip(self):
+        """Working NAT WinRM alone must not satisfy KINGDOMS readiness."""
+        self.provider.management_hosts = {'GOAD-SRV02': '10.4.10.22'}
+        self.provider._winrm_forwarded_port = Mock(return_value=2207)
+        self.provider._wait_winrm_ready = Mock(return_value=True)
+
+        self.session.run_ps.return_value = SimpleNamespace(
+            status_code=0,
+            std_out=b'',
+        )
+
+        self.provider.ensure_behavior = Mock(return_value=False)
+
+        self.assertFalse(self.provider._ensure_vmware_tools('GOAD-SRV02'))
+        self.provider.ensure_behavior.assert_called_once()
+
     def test_non_goad_uses_inherited_readiness_without_repair_context(self):
         self.provider.lab_name = 'GOAD-Light'
         self.provider.ensure_behavior = lambda: self.provider._wait_guest_ip('/guest.vmx')

@@ -371,18 +371,111 @@ class GoadKingdomsVmwareProvider(GoadNomadVmwareProvider):
             return False
         return True
 
-    def _ensure_vmware_tools(self, machine):
-        """Allow one reporting repair per Windows installation readiness check.
+    def _authenticated_guest_install_ready(self, machine, timeout=60):
+        """Prove guest health independently of VMware host-side IP telemetry.
 
-        Keep the inherited installer and failed-up recovery authoritative. This
-        context is deliberately absent from installed start/stop operations.
+        Workstation/VIX can temporarily report that VMware Tools are not running
+        even while the authenticated Windows guest has a running VMTools service,
+        vmtoolsd.exe, working WinRM, and its canonical KINGDOMS address.
+
+        Host getGuestIPAddress reporting is useful telemetry, but is not the
+        authoritative installation-health signal.
+        """
+        expected = getattr(self, 'management_hosts', {}).get(machine)
+        if not expected:
+            return False
+
+        try:
+            port = self._winrm_forwarded_port(machine)
+        except Exception:
+            return False
+
+        if not port:
+            return False
+
+        if not self._wait_winrm_ready(port, timeout):
+            return False
+
+        try:
+            session = self._winrm_session(port)
+            result = session.run_ps(rf"""
+$ErrorActionPreference = 'Stop'
+
+$svc = Get-Service -Name VMTools -ErrorAction Stop
+$file = Test-Path 'C:\Program Files\VMware\VMware Tools\vmtoolsd.exe'
+$proc = Get-Process -Name vmtoolsd -ErrorAction SilentlyContinue
+$ip = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction Stop |
+    Where-Object {{ $_.IPAddress -eq '{expected}' }} |
+    Select-Object -First 1
+
+if (
+    $svc.Status -eq 'Running' -and
+    $file -and
+    $proc -and
+    $ip
+) {{
+    Write-Output 'GOAD_KINGDOMS_GUEST_READY'
+}}
+""")
+        except Exception as exc:
+            Log.warning(
+                f'GOAD Kingdoms: authenticated guest readiness check failed for '
+                f'{machine}: {type(exc).__name__}'
+            )
+            return False
+
+        return (
+            result.status_code == 0
+            and b'GOAD_KINGDOMS_GUEST_READY' in result.std_out
+        )
+
+    def _ensure_vmware_tools(self, machine):
+        """Use authenticated guest state as authority for KINGDOMS readiness.
+
+        VMware/VIX guest-IP reporting remains advisory. If authenticated WinRM,
+        VMware Tools and the expected KINGDOMS IP are healthy, stale host-side
+        telemetry must not trigger unnecessary Tools reinstall/reboot recovery.
         """
         if self.lab_name != 'GOAD' or machine not in self.goad_nomad_windows:
             return super()._ensure_vmware_tools(machine)
+
         previous = getattr(self, '_tools_reporting_context', None)
-        self._tools_reporting_context = {'machine': machine, 'restart_attempted': False}
+        self._tools_reporting_context = {
+            'machine': machine,
+            'restart_attempted': False,
+        }
+
         try:
-            return super()._ensure_vmware_tools(machine)
+            # Prefer authenticated evidence from the actual Windows guest.
+            if self._authenticated_guest_install_ready(machine):
+                vmx = self._vmx_path(machine)
+                if vmx and not self._poll_guest_ip_bounded(vmx, 10):
+                    Log.warning(
+                        f'GOAD Kingdoms: {machine} authenticated guest state is '
+                        'healthy at its expected KINGDOMS address, but VMware '
+                        'guest-IP reporting remains unavailable; treating host '
+                        'telemetry as advisory'
+                    )
+                return True
+
+            # Guest state is not yet proven. Keep the existing installation and
+            # recovery behavior.
+            if super()._ensure_vmware_tools(machine):
+                return True
+
+            # Recovery may have fixed Windows while VIX telemetry remained stale.
+            # Re-check authenticated guest state before declaring failure.
+            if self._authenticated_guest_install_ready(machine):
+                vmx = self._vmx_path(machine)
+                if vmx and not self._poll_guest_ip_bounded(vmx, 10):
+                    Log.warning(
+                        f'GOAD Kingdoms: {machine} recovered authenticated guest '
+                        'health while VMware guest-IP reporting stayed unavailable; '
+                        'continuing to canonical management-plane validation'
+                    )
+                return True
+
+            return False
         finally:
             self._tools_reporting_context = previous
 

@@ -106,7 +106,7 @@ boxes = [
   {
     :name => "GOAD-ROUTER",
     :hostname => "goad-router",
-    :box => "bento/debian-11",
+    :box => "bento/debian-12",
     :os => "linux",
     :cpus => 1,
     :mem => 768,

@@ -47,16 +47,39 @@
     src: files/sql_conf.ini.{{sql_version}}.j2
     dest: c:\setup\mssql\sql_conf.ini
 
+# KINGDOMS MSSQL 2019 FULL MEDIA FIX
+# SQL Server 2019 Express Advanced media is downloaded directly. The old
+# SSEI bootstrapper is intentionally not reused for ConfigurationFile.ini.
+- name: Set MSSQL installer path
+  set_fact:
+    installer_path: "{{ 'c:\\setup\\mssql\\SQLEXPRADV_x64_ENU.exe' if sql_version == 'MSSQL_2019' else 'c:\\setup\\mssql\\sql_installer.exe' }}"
+
 - name: check downloaded file exists
   win_stat:
-    path: c:\setup\mssql\sql_installer.exe
+    path: "{{ installer_path }}"
   register: installer_file
 
 - name: get the installer
   win_get_url:
-      url: "{{download_url}}"
-      dest: 'c:\setup\mssql\sql_installer.exe'
-  when: not installer_file.stat.exists
+    url: "{{ download_url }}"
+    dest: "{{ installer_path }}"
+    url_timeout: 600
+    force: yes
+  async: 600
+  poll: 10
+  when: >-
+    not installer_file.stat.exists or
+    (sql_version == 'MSSQL_2019' and
+     (installer_file.stat.size | default(0) | int) < 500000000)
+
+- name: Validate MSSQL 2019 full media download
+  win_stat:
+    path: "{{ installer_path }}"
+  register: mssql_2019_media
+  failed_when: >-
+    not mssql_2019_media.stat.exists or
+    (mssql_2019_media.stat.size | default(0) | int) < 500000000
+  when: sql_version == "MSSQL_2019"
 
 - name: Add service account to Log on as a service
   win_user_right:
@@ -86,22 +109,124 @@
 - debug: msg="{{mssql_install_already_done}}"
 
 # Install the database with a domain admin user
-- name: Install the database
+# KINGDOMS MSSQL BOUNDED INSTALL FIX
+# Hard ceilings: download 10m, extraction 5m, setup 20m.
+- name: MSSQL 2019 | Check extracted setup media
+  win_stat:
+    path: c:\setup\mssql\media\SQLEXPRADV_2019\setup.exe
+  register: mssql_2019_setup
+  when: sql_version == "MSSQL_2019"
+
+- name: MSSQL 2019 | Extract Advanced Services media (5 minute ceiling)
+  win_shell: |
+    $ErrorActionPreference = 'Stop'
+
+    $package = 'C:\setup\mssql\SQLEXPRADV_x64_ENU.exe'
+    $extractDir = 'C:\setup\mssql\media\SQLEXPRADV_2019'
+    $setup = Join-Path $extractDir 'setup.exe'
+
+    if (Test-Path $setup) {
+        Write-Output 'GOAD_MSSQL_MEDIA_ALREADY_EXTRACTED'
+        exit 0
+    }
+
+    if (-not (Test-Path $package)) {
+        throw "SQL Server 2019 Advanced media not found: $package"
+    }
+
+    New-Item -ItemType Directory -Path $extractDir -Force | Out-Null
+
+    $process = Start-Process `
+        -FilePath $package `
+        -ArgumentList @('/q', "/x:$extractDir") `
+        -PassThru
+
+    if (-not $process.WaitForExit(300000)) {
+        & "$env:SystemRoot\System32\taskkill.exe" /PID $process.Id /T /F | Out-Null
+        throw 'SQL Server 2019 media extraction exceeded 300 seconds'
+    }
+
+    if ($process.ExitCode -ne 0) {
+        throw "SQL Server 2019 media extraction failed with exit code $($process.ExitCode)"
+    }
+
+    if (-not (Test-Path $setup)) {
+        throw "SQL Server setup.exe was not created: $setup"
+    }
+
+    Write-Output 'GOAD_MSSQL_MEDIA_EXTRACTED'
+  register: mssql_media_extract
+  changed_when: "'GOAD_MSSQL_MEDIA_EXTRACTED' in mssql_media_extract.stdout"
+  when:
+    - sql_version == "MSSQL_2019"
+    - mssql_install_already_done.state is not defined or mssql_install_already_done.name is not defined
+    - not (mssql_2019_setup.stat.exists | default(false))
+
+- name: MSSQL 2019 | Install database from setup.exe (20 minute ceiling)
+  win_shell: |
+    $ErrorActionPreference = 'Stop'
+
+    $setup = 'C:\setup\mssql\media\SQLEXPRADV_2019\setup.exe'
+    $configuration = 'C:\setup\mssql\sql_conf.ini'
+
+    if (-not (Test-Path $setup)) {
+        throw "SQL Server setup.exe not found: $setup"
+    }
+
+    if (-not (Test-Path $configuration)) {
+        throw "SQL Server configuration file not found: $configuration"
+    }
+
+    $arguments = @(
+        '/Q',
+        '/IACCEPTSQLSERVERLICENSETERMS',
+        "/ConfigurationFile=$configuration"
+    )
+
+    $process = Start-Process `
+        -FilePath $setup `
+        -ArgumentList $arguments `
+        -PassThru
+
+    if (-not $process.WaitForExit(1200000)) {
+        & "$env:SystemRoot\System32\taskkill.exe" /PID $process.Id /T /F | Out-Null
+        throw 'SQL Server 2019 installation exceeded 1200 seconds'
+    }
+
+    $exitCode = $process.ExitCode
+    if ($exitCode -notin @(0, 3010)) {
+        throw "SQL Server 2019 setup failed with exit code $exitCode"
+    }
+
+    Write-Output "GOAD_MSSQL_INSTALL_EXIT=$exitCode"
+  vars:
+    ansible_become: yes
+    ansible_become_method: runas
+    ansible_become_user: "{{ domain_admin }}"
+    ansible_become_password: "{{ domain_admin_password }}"
+    ansible_become_flags: logon_type=new_credentials logon_flags=netcredentials_only
+  register: mssqlinstall
+  when:
+    - sql_version == "MSSQL_2019"
+    - mssql_install_already_done.state is not defined or mssql_install_already_done.name is not defined
+
+# Keep the existing SQL 2022/SCCM path, but bound it as well.
+- name: MSSQL non-2019 | Install database (20 minute ceiling)
   win_command: c:\setup\mssql\sql_installer.exe /configurationfile=c:\setup\mssql\sql_conf.ini /IACCEPTSQLSERVERLICENSETERMS /MEDIAPATH=c:\setup\mssql\media /QUIET /HIDEPROGRESSBAR
   args:
     chdir: c:\setup
   vars:
     ansible_become: yes
     ansible_become_method: runas
-    ansible_become_user: "{{domain_admin}}"
-    ansible_become_password: "{{domain_admin_password}}"
+    ansible_become_user: "{{ domain_admin }}"
+    ansible_become_password: "{{ domain_admin_password }}"
     ansible_become_flags: logon_type=new_credentials logon_flags=netcredentials_only
-  register: mssqlinstall
-  until: "mssqlinstall is not failed"
-  retries: 3
-  delay: 120
-  when: mssql_install_already_done.state is not defined or mssql_install_already_done.name is not defined
-#  when: not mssql_install_already_done.stat.exists
+  register: mssqlinstall_non2019
+  async: 1200
+  poll: 15
+  when:
+    - sql_version != "MSSQL_2019"
+    - mssql_install_already_done.state is not defined or mssql_install_already_done.name is not defined
 
 # sql server 2022
 - name: Add or update registry for ip port
