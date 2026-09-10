@@ -4,6 +4,30 @@
     Set-NetIPInterface -InterfaceAlias "{{domain_adapter}}" -InterfaceMetric 10
   when: two_adapters
 
+- name: "Ensure the lab gateway is persistent on {{domain_adapter}}"
+  ansible.windows.win_shell: |
+    $ErrorActionPreference = 'Stop'
+    $adapter = Get-NetAdapter -Name "{{domain_adapter}}" -ErrorAction Stop
+    $gateway = "{{lab_gateway}}"
+    $existing = Get-NetRoute -InterfaceIndex $adapter.ifIndex -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue |
+      Where-Object { $_.NextHop -eq $gateway } |
+      Select-Object -First 1
+
+    if ($null -ne $existing) {
+      Write-Output 'GOAD_GATEWAY_PRESENT'
+      exit 0
+    }
+
+    & route.exe -p add 0.0.0.0 mask 0.0.0.0 $gateway metric 10 if $adapter.ifIndex
+    if ($LASTEXITCODE -ne 0) {
+      throw "Failed to add persistent default route through $gateway on interface $($adapter.ifIndex)"
+    }
+
+    Write-Output 'GOAD_GATEWAY_ADDED'
+  register: lab_gateway_result
+  changed_when: "'GOAD_GATEWAY_ADDED' in lab_gateway_result.stdout"
+  when: lab_gateway is defined
+
 - name: "Set configure dns to {{dns_domain}}"
   win_dns_client:
     adapter_names: "{{domain_adapter}}"
@@ -21,8 +45,28 @@
   register: domain_state
 
 - name: Reboot if needed
-  win_reboot:    
+  win_reboot:
     reboot_timeout: 1500
     post_reboot_delay: 100
   when: domain_state.reboot_required
 
+- name: "Validate domain-authenticated network profile"
+  ansible.windows.win_shell: |
+    $ErrorActionPreference = 'Stop'
+    $deadline = (Get-Date).AddSeconds(180)
+
+    do {
+      $profile = Get-NetConnectionProfile -InterfaceAlias "{{domain_adapter}}" -ErrorAction SilentlyContinue
+      if ($profile -and $profile.NetworkCategory -eq 'DomainAuthenticated') {
+        Write-Output 'GOAD_DOMAIN_PROFILE_READY'
+        exit 0
+      }
+      Start-Sleep -Seconds 5
+    } while ((Get-Date) -lt $deadline)
+
+    if ($profile) {
+      throw "{{domain_adapter}} remained $($profile.NetworkCategory) instead of DomainAuthenticated"
+    }
+    throw "No network profile found for {{domain_adapter}}"
+  changed_when: false
+  when: lab_gateway is defined
