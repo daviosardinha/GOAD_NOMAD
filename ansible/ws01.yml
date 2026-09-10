@@ -8,6 +8,9 @@
 - import_playbook: data.yml
   vars:
     data_path: "../ad/{{domain_name}}/data/"
+    # This is a targeted workstation playbook. Do not gather facts from every
+    # domain/server in protected zones just to initialize WS01's data context.
+    data_hosts: ws01
   tags: 'data'
 
 - name: Prepare the WS01 Windows client baseline
