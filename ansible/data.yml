@@ -1,6 +1,9 @@
 ---
 - name: "Read data files"
-  hosts: domain:linux_domain:extensions
+  # Most playbooks need the complete lab inventory. Targeted maintenance
+  # playbooks can override data_hosts so this setup phase does not contact
+  # unrelated protected-zone machines just to initialize host facts.
+  hosts: "{{ data_hosts | default('domain:linux_domain:extensions') }}"
   connection: local
   vars_files:
     - "{{data_path}}/config.json"
