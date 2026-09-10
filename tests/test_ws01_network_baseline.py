@@ -5,6 +5,8 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 WS01_PLAYBOOK = ROOT / "ansible" / "ws01.yml"
 DATA_PLAYBOOK = ROOT / "ansible" / "data.yml"
+WORKSTATION_ROLE = ROOT / "ansible" / "roles" / "commonwkstn" / "tasks" / "main.yml"
+VMWARE_INVENTORY = ROOT / "ad" / "GOAD" / "providers" / "vmware" / "inventory"
 
 
 class Ws01NetworkBaselineTests(unittest.TestCase):
@@ -34,6 +36,30 @@ class Ws01NetworkBaselineTests(unittest.TestCase):
 
         self.assertIn("data_hosts: ws01", ws01)
         self.assertIn("hosts: \"{{ data_hosts | default('domain:linux_domain:extensions') }}\"", data)
+
+    def test_ws01_inventory_defines_north_gateway(self):
+        inventory = VMWARE_INVENTORY.read_text()
+        ws01_line = next(line for line in inventory.splitlines() if line.startswith("ws01 "))
+
+        self.assertIn("ansible_host=10.4.10.31", ws01_line)
+        self.assertIn("lab_gateway=10.4.10.1", ws01_line)
+
+    def test_workstation_role_persists_gateway_before_domain_join(self):
+        text = WORKSTATION_ROLE.read_text()
+
+        gateway_task = text.index('Ensure the lab gateway is persistent')
+        domain_join = text.index('Add workstation to {{member_domain}}')
+        self.assertLess(gateway_task, domain_join)
+        self.assertIn("route.exe -p add 0.0.0.0 mask 0.0.0.0", text)
+        self.assertIn("GOAD_GATEWAY_ADDED", text)
+        self.assertIn("changed_when: \"'GOAD_GATEWAY_ADDED' in lab_gateway_result.stdout\"", text)
+
+    def test_workstation_role_requires_domain_authenticated_profile(self):
+        text = WORKSTATION_ROLE.read_text()
+
+        self.assertIn("NetworkCategory -eq 'DomainAuthenticated'", text)
+        self.assertIn("GOAD_DOMAIN_PROFILE_READY", text)
+        self.assertIn("remained $($profile.NetworkCategory) instead of DomainAuthenticated", text)
 
 
 if __name__ == "__main__":
