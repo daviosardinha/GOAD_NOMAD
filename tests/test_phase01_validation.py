@@ -14,8 +14,32 @@ spec = importlib.util.spec_from_file_location("phase01", ROOT / "scripts/validat
 phase01 = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(phase01)
 
+WINTERFELL_NULL = (
+    'Reconnecting with SMB1 for workgroup listing.\n'
+    'Unable to connect with SMB1 -- no workgroup available\n'
+    'do_connect: Connection to 10.4.10.11 failed (Error NT_STATUS_RESOURCE_NAME_NOT_FOUND)\n'
+)
+CASTELBLACK_NULL = 'session setup failed: NT_STATUS_ACCESS_DENIED\n'
+
 
 class EvidenceTests(unittest.TestCase):
+    def test_live_null_results_are_not_share_access(self):
+        self.assertEqual(phase01.share_listing_result(0, WINTERFELL_NULL), 'no share names returned')
+        self.assertEqual(phase01.share_listing_result(1, CASTELBLACK_NULL), 'rejected')
+
+    def test_share_rows_remain_required_for_available(self):
+        self.assertEqual(phase01.share_listing_result(0, 'Disk|all|Public share\n'), 'available')
+        self.assertEqual(phase01.share_listing_result(0, 'Disk|all|Public share\n' + WINTERFELL_NULL), 'available')
+        self.assertEqual(phase01.share_listing_result(0, 'Sharename Type Comment\n'), 'inconclusive')
+
+    def test_network_failure_and_empty_output_are_not_expected_denial_or_no_names(self):
+        cases = [(0, ''), (1, 'NT_STATUS_IO_TIMEOUT'), (1, WINTERFELL_NULL),
+                 (124, CASTELBLACK_NULL), (127, CASTELBLACK_NULL),
+                 (0, CASTELBLACK_NULL), (0, 'Error returning browse list\n' + WINTERFELL_NULL)]
+        for rc, text in cases:
+            with self.subTest(rc=rc, text=text):
+                self.assertEqual(phase01.share_listing_result(rc, text), 'inconclusive')
+
     def test_sid_echo_and_unknown_are_not_resolution(self):
         sid = "S-1-5-21-1-2-3-500"
         self.assertFalse(phase01.sid_resolved("lookupsids " + sid, sid))
@@ -82,6 +106,10 @@ class EvidenceTests(unittest.TestCase):
             elif command[0] == 'smbclient':
                 if command[-1] == 'ls':
                     text = '123 blocks of size 4096. 42 blocks available\n'
+                elif command[-1] == '//10.4.10.11' and '%' in command:
+                    text = WINTERFELL_NULL
+                elif command[-1] == '//10.4.10.22' and '%' in command:
+                    rc, text = 1, CASTELBLACK_NULL
                 elif command[-1] == '//10.4.10.31' or (command[-1] == '//10.4.10.11' and 'Guest%' in command):
                     rc, text = 1, 'session setup failed: NT_STATUS_ACCOUNT_DISABLED\n'
                 else:

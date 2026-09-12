@@ -19,6 +19,30 @@ ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 DENIED = re.compile(r"NT_STATUS_(?:LOGON_FAILURE|ACCOUNT_DISABLED|ACCESS_DENIED|ACCOUNT_RESTRICTION)", re.I)
 
 
+def share_listing_result(rc, text):
+    """Classify share-list evidence without equating exit zero with visibility.
+
+    smbclient can return zero and proceed to legacy workgroup discovery without
+    printing any share rows. That is a no-names observation, not proof of share
+    access or of the identity assigned to the SMB session.
+    """
+    if rc in (124, 127) or rc < 0:
+        return "inconclusive"
+    if DENIED.search(text):
+        return "rejected" if rc != 0 else "inconclusive"
+    if rc != 0:
+        return "inconclusive"
+    if re.search(r"session setup failed|tree connect failed|Error returning browse list", text, re.I):
+        return "inconclusive"
+    if re.search(r"^(?:Disk|IPC|Printer)\|[^|]+\|", text, re.M):
+        return "available"
+    # Require evidence that smbclient reached its separate workgroup phase.
+    # Empty output, missing tools and generic network failures cannot pass.
+    if "Reconnecting with SMB1 for workgroup listing." in text:
+        return "no share names returned"
+    return "inconclusive"
+
+
 def ldif_records(text):
     """Parse requested LDAP attributes, including folded and base64 values."""
     unfolded = re.sub(r"\r?\n ", "", text.replace("\r\n", "\n"))
@@ -136,16 +160,18 @@ def main(argv=None):
 
     # Explicitly empty username AND password. -N alone can use the local login.
     # These checks identify requested auth modes, not the server's session flags.
-    for label, host, null_allowed, guest_allowed in [
-        ("WINTERFELL", args.dc, True, False),
-        ("CASTELBLACK", args.server, True, True),
-        ("WS01", args.ws01, False, False),
+    # Live explicit-NULL evidence corrected the initial baseline's assumptions.
+    # NULL RPC availability does not imply that SMB share names are exposed.
+    for label, host, null_expected, guest_expected in [
+        ("WINTERFELL", args.dc, "no share names returned", "rejected"),
+        ("CASTELBLACK", args.server, "rejected", "available"),
+        ("WS01", args.ws01, "rejected", "rejected"),
     ]:
-        for mode, credential, allowed in [("NULL", "%", null_allowed), ("Guest", "Guest%", guest_allowed)]:
+        for mode, credential, expected in [("NULL", "%", null_expected), ("Guest", "Guest%", guest_expected)]:
             rc, text = v.run(f"smb_{label}_{mode}", ["smbclient", "-g", "-N", "-U", credential, "-L", "//" + host])
-            listed = bool(re.search(r"^(?:Disk|IPC|Printer)\|[^|]+\|", text, re.M))
-            ok = rc == 0 and listed if allowed else rc not in (0, 124, 127) and bool(DENIED.search(text))
-            v.result(f"{label} {mode} share listing {'available' if allowed else 'rejected'}", ok)
+            observed = share_listing_result(rc, text)
+            v.result(f"{label} {mode} share listing: {expected}", observed == expected,
+                     "" if observed == expected else f"Observed: {observed}; exit_code={rc}")
     rc, text = v.run("guest_read", ["smbclient", "-N", "-U", "Guest%", "//" + args.server + "/all", "-c", "ls"])
     v.result("CASTELBLACK Guest can list files in all", rc == 0 and bool(re.search(r"\bblocks of size\b", text)) and not DENIED.search(text), "No write probe performed")
 

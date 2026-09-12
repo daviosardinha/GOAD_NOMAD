@@ -88,6 +88,26 @@ private `~/kingdoms-phase01-TIMESTAMP/` with raw evidence, `results.json` and
 `SUMMARY.txt`. Send `SUMMARY.txt` first. A missing tool, timeout, partial LDAP
 result or inconclusive denial fails readiness; no stale output is reused.
 
+### Corrected live SMB baseline (12 September 2026)
+
+The initial validator incorrectly required NULL share names from both servers.
+Explicit empty-username/password probes produced the following evidence:
+
+| Host | NULL share-list request | Explicit Guest share-list request |
+| --- | --- | --- |
+| WINTERFELL | No share rows; exit zero, followed by failed SMB1 workgroup discovery | Rejected |
+| CASTELBLACK | Session setup rejected with `NT_STATUS_ACCESS_DENIED` | Share names available |
+| WS01 | Rejected | Rejected |
+
+WINTERFELL's no-names result is an observation only; it does not prove access to
+shares or the identity assigned to the SMB session. Anonymous domain SID and
+SID/name translation are independently verified by RPC. The legacy SMB1
+workgroup lookup is separate from share visibility and is not a readiness
+requirement. No SMB1 enablement or Windows policy change follows from these
+results. The classifier requires share rows for visibility, explicit rejection
+for denied access, and evidence of the workgroup phase for the no-names result.
+Empty output and network/tool failures remain inconclusive and fail the check.
+
 Checks cover real RID mapping, RootDSE, user/group attributes, Samwell's exact
 seeded description, the expected NULL/Guest share-listing matrix, Guest listing
 files on `all`, public HTTP, the internal authentication boundary, NTLM identity
