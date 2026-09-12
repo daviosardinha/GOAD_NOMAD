@@ -178,6 +178,9 @@ Manual `mode provisioning` and `mode exercise` commands exist for maintenance, d
 
 ## `goad.sh` is the control plane
 
+For the Phase 01 enumeration provisioning and its single-command readiness
+workflow, see [Phase 01 enumeration](docs/phase01-enumeration.md).
+
 GOAD Kingdoms keeps the familiar GOAD interactive console and extends it so the normal workflow remains centered on:
 
 ```bash

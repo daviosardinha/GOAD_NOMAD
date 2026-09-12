@@ -1,0 +1,25 @@
+---
+# GOAD Kingdoms only. Existing NORTH ACLs must already have been provisioned.
+- name: Load Phase 01 scenario data without contacting other zones
+  hosts: dc02:srv02
+  gather_facts: false
+  tasks:
+    - name: Require the Kingdoms scenario
+      ansible.builtin.assert:
+        that: domain_name == 'GOAD'
+        fail_msg: Phase 01 is specific to GOAD Kingdoms.
+    - name: Load canonical Kingdoms data
+      ansible.builtin.include_vars:
+        file: ../ad/GOAD/data/config.json
+
+- name: Provision WINTERFELL enumeration lessons
+  hosts: dc02
+  gather_facts: false
+  roles:
+    - role: phase01/dc
+
+- name: Provision CASTELBLACK HTTP authentication boundary
+  hosts: srv02
+  gather_facts: false
+  roles:
+    - role: phase01/iis
