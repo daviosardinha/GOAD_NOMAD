@@ -1,0 +1,37 @@
+---
+- name: Verify the live CASTELBLACK member server before changing IIS
+  ansible.windows.win_powershell:
+    script: |
+      [CmdletBinding(SupportsShouldProcess)]
+      param()
+      $Ansible.Changed = $false
+      $system = Get-CimInstance Win32_ComputerSystem
+      if ($system.Name -ine 'CASTELBLACK' -or
+          $system.Domain -ine 'north.sevenkingdoms.local' -or
+          $system.DomainRole -ne 3) {
+          throw 'Phase 01 IIS provisioning requires CASTELBLACK in NORTH.'
+      }
+
+- name: Ensure the Windows Authentication role service exists
+  ansible.windows.win_feature:
+    name: Web-Windows-Auth
+    state: present
+  register: phase01_windows_auth
+
+- name: Complete the role service installation if required
+  ansible.windows.win_reboot:
+  when: phase01_windows_auth.reboot_required
+
+- name: Ensure internal website directory exists
+  ansible.windows.win_file:
+    path: C:\inetpub\wwwroot\internal
+    state: directory
+
+- name: Install the internal landing page
+  ansible.windows.win_copy:
+    src: index.html
+    dest: C:\inetpub\wwwroot\internal\index.html
+
+- name: Configure authentication only at the internal path
+  ansible.windows.win_powershell:
+    script: "{{ lookup('file', role_path + '/files/internal-auth.ps1') }}"

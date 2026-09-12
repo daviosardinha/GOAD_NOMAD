@@ -56,4 +56,7 @@
 # specifics vulns linked to the scenario are here
 - import_playbook: vulnerabilities.yml
 
+- import_playbook: phase01.yml
+  when: domain_name == 'GOAD'
+
 - import_playbook: reboot.yml

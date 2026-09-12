@@ -97,6 +97,8 @@ GOAD:
   - servers.yml
   - security.yml
   - vulnerabilities.yml
+  # Phase 01 follows ACLs and existing IIS content/security provisioning.
+  - phase01.yml
   # Seed all 20 promoted Windows LPE techniques as the final install stage.
   - ws01-lpe-install.yml
 

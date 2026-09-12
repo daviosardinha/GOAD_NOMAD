@@ -1,0 +1,31 @@
+---
+- name: Verify the live NORTH domain controller before changing policy
+  ansible.windows.win_powershell:
+    script: |
+      [CmdletBinding(SupportsShouldProcess)]
+      param()
+      $Ansible.Changed = $false
+      $system = Get-CimInstance Win32_ComputerSystem
+      if ($system.Name -ine 'WINTERFELL' -or
+          $system.Domain -ine 'north.sevenkingdoms.local' -or
+          $system.DomainRole -lt 4) {
+          throw 'Phase 01 DC provisioning requires WINTERFELL in NORTH.'
+      }
+
+- name: Enable only anonymous SID and name translation on WINTERFELL
+  community.windows.win_security_policy:
+    section: System Access
+    key: LSAAnonymousNameLookup
+    value: '1'
+
+- name: Permit ACL-authorized anonymous directory operations in the forest
+  ansible.windows.win_powershell:
+    script: "{{ lookup('file', role_path + '/files/anonymous-ldap.ps1') }}"
+  # Configuration NC is forest-wide. Use the existing forest-root administrator,
+  # not the child-domain administrator, and perform the write on WINTERFELL.
+  become: true
+  become_method: runas
+  become_user: "{{ admin_user }}@sevenkingdoms.local"
+  vars:
+    ansible_become_password: "{{ lab.domains['sevenkingdoms.local'].domain_password }}"
+  no_log: true
