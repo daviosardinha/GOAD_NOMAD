@@ -24,6 +24,11 @@
 
 - name: Refresh WINTERFELL computer policy after Phase 01 GPO changes
   ansible.windows.win_command: gpupdate.exe /target:computer /force
+  become: true
+  become_method: runas
+  become_user: "{{ admin_user }}@north.sevenkingdoms.local"
+  vars:
+    ansible_become_password: "{{ lab.domains['north.sevenkingdoms.local'].domain_password }}"
   changed_when: false
   when: not ansible_check_mode
 
@@ -49,6 +54,11 @@
       } finally {
           Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
       }
+  become: true
+  become_method: runas
+  become_user: "{{ admin_user }}@north.sevenkingdoms.local"
+  vars:
+    ansible_become_password: "{{ lab.domains['north.sevenkingdoms.local'].domain_password }}"
   changed_when: false
   when: not ansible_check_mode
 
