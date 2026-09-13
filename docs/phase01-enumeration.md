@@ -7,7 +7,7 @@ only `dc02` and `srv02`; it does not gather facts from WS01 or other zones.
 
 | Change | Location | Intended result |
 | --- | --- | --- |
-| `LSAAnonymousNameLookup=1` | WINTERFELL local security policy | Anonymous SID/name translation |
+| `LSAAnonymousNameLookup=1` | Dedicated `Kingdoms - Phase 01 - Anonymous SID Translation` GPO linked to the NORTH Domain Controllers OU at link order 1 | Anonymous SID/name translation that survives Group Policy refresh |
 | Seventh `dSHeuristics` character set to `2` | Sevenkingdoms forest configuration, written on WINTERFELL | Anonymous operations authorized by existing ACLs |
 | Windows Authentication enabled; anonymous disabled | CASTELBLACK `Default Web Site/internal` | HTTP 401 with Negotiate and NTLM; NTLM identity metadata |
 | Kerbrute v1.0.3, pinned commit | Operator `~/.local/bin/kerbrute` | Kerberos username enumeration |
@@ -23,19 +23,29 @@ claim a per-user or per-attribute allowlist. The forest-root administrator is
 used for this operation, with the existing scenario password suppressed in logs.
 All other characters, including long-value validation markers, are preserved.
 
+Anonymous SID/name translation is deliberately managed through a dedicated
+NORTH Group Policy object instead of WINTERFELL's local security database. The
+policy is linked to `OU=Domain Controllers,DC=north,DC=sevenkingdoms,DC=local`
+at link order `1`, giving the intentionally vulnerable setting precedence over
+other policy at the same OU. The role does not modify Default Domain Policy or
+Default Domain Controllers Policy. The GPO contains only the Security Settings
+client-side extension and the `LSAAnonymousNameLookup=1` security-template entry.
+
 Live hostname, domain and machine-role checks precede mutations. The scripts
 compare current state, support Ansible check mode, and only commit differences.
-The LDAP write is read back. Run the targeted playbook a second time to prove
-live idempotence: expect `changed=0`, `failed=0`, `unreachable=0`. Check mode before
-the IIS role service exists cannot fully validate its configuration sections.
+The GPO content, Security Settings extension metadata and link state are all
+idempotent. After provisioning, WINTERFELL performs a computer-policy refresh and
+exports the merged security policy; provisioning fails unless the effective
+value remains `LSAAnonymousNameLookup=1`. The LDAP write is also read back. Run
+the targeted playbook a second time to prove live idempotence: expect
+`changed=0`, `failed=0`, `unreachable=0`. Check mode skips the live policy refresh
+and effective-policy assertion because it performs no changes.
 
 The IIS script writes only the `/internal` location in ApplicationHost.config.
 It retains the public root and existing Web.config. If the public root's
 anonymous setting has drifted, it fails rather than silently reconfiguring it.
 It does not enable WebDAV, alter share permissions, enable Guest, or change
-LDAP signing, channel binding or IIS extended protection. An existing domain
-GPO can override a local SID/name policy; a later failed readiness check is a
-reason to inspect effective policy, not to weaken unrelated settings.
+LDAP signing, channel binding or IIS extended protection.
 
 ## Apply to an installed lab
 
@@ -53,6 +63,13 @@ then executes the runtime validator. Ansible failures stop the command. NORTH is
 directly reachable in exercise mode; this command does not switch router modes. Omit
 `--install-prerequisites` when system packages are already present. There is no
 Windows rebuild or full-install replay.
+
+During the targeted playbook, the dedicated NORTH GPO is created or repaired,
+linked at highest precedence on the NORTH Domain Controllers OU, followed by
+`gpupdate /target:computer /force` on WINTERFELL. The playbook then verifies the
+merged security policy before moving on. This specifically prevents the earlier
+failure mode where a later Group Policy refresh reset a local
+`LSAAnonymousNameLookup=1` value back to `0`.
 
 The first operator setup requires Internet access for apt, git and Go modules.
 Kerbrute is built from upstream commit
@@ -72,8 +89,10 @@ ANSIBLE_CONFIG="$PWD/ansible/ansible.cfg" "$HOME/.goad/.venv/bin/ansible-playboo
 ```
 
 Remove `--check --diff` to apply directly. The LDAP task suppresses output because
-it uses the existing forest credential. Changes need no forced AD replication or
-global IIS restart; allow normal forest replication before checking other DCs.
+it uses the existing forest credential. The GPO task suppresses output because
+it uses the NORTH domain administrator credential. The policy refresh is local
+to WINTERFELL; allow normal forest replication before checking other DCs for the
+separate forest-wide LDAP setting.
 
 ## Final readiness check
 
@@ -87,6 +106,11 @@ Run from the Kali/operator network with NORTH reachable. Defaults are WINTERFELL
 private `~/kingdoms-phase01-TIMESTAMP/` with raw evidence, `results.json` and
 `SUMMARY.txt`. Send `SUMMARY.txt` first. A missing tool, timeout, partial LDAP
 result or inconclusive denial fails readiness; no stale output is reused.
+
+The persistence regression for anonymous SID/name translation is: apply Phase 01,
+force a computer Group Policy refresh on WINTERFELL, and rerun the validator.
+`Anonymous SID-to-name translation` must remain `PASS`; a refresh must not return
+the effective policy to `LSAAnonymousNameLookup=0`.
 
 ### Corrected live SMB baseline (12 September 2026)
 
@@ -125,6 +149,7 @@ second-run idempotence and fresh-install readiness require the VMware lab.
 
 - [Microsoft: anonymous LDAP operations and preservation of dSHeuristics](https://learn.microsoft.com/en-us/troubleshoot/windows-server/active-directory/anonymous-ldap-operations-active-directory-disabled)
 - [Microsoft: anonymous SID/name translation](https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-server-2012-r2-and-2012/jj852193(v=ws.11))
+- [Microsoft: Group Policy Security Settings CSE identifiers](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-gpsb/55bb803e-b35f-4ce8-b558-4c1e92ad77a4)
 - [Microsoft: IIS Windows Authentication](https://learn.microsoft.com/en-us/iis/configuration/system.webserver/security/authentication/windowsauthentication/)
 - [Nmap: HTTP NTLM information and the root path argument](https://nmap.org/nsedoc/scripts/http-ntlm-info.html)
 - [Kerbrute upstream v1.0.3 source](https://github.com/ropnop/kerbrute/tree/9dad6e171abdc7491f587c793aa05411264a3393)
