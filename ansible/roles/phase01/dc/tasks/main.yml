@@ -12,11 +12,45 @@
           throw 'Phase 01 DC provisioning requires WINTERFELL in NORTH.'
       }
 
-- name: Enable only anonymous SID and name translation on WINTERFELL
-  community.windows.win_security_policy:
-    section: System Access
-    key: LSAAnonymousNameLookup
-    value: '1'
+- name: Persist anonymous SID and name translation through a dedicated NORTH GPO
+  ansible.windows.win_powershell:
+    script: "{{ lookup('file', role_path + '/files/anonymous-sid-translation-gpo.ps1') }}"
+  become: true
+  become_method: runas
+  become_user: "{{ admin_user }}@north.sevenkingdoms.local"
+  vars:
+    ansible_become_password: "{{ lab.domains['north.sevenkingdoms.local'].domain_password }}"
+  no_log: true
+
+- name: Refresh WINTERFELL computer policy after Phase 01 GPO changes
+  ansible.windows.win_command: gpupdate.exe /target:computer /force
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Verify effective anonymous SID and name translation after Group Policy refresh
+  ansible.windows.win_powershell:
+    script: |
+      [CmdletBinding(SupportsShouldProcess)]
+      param()
+      $Ansible.Changed = $false
+      $path = Join-Path $env:TEMP 'kingdoms-phase01-effective-policy.inf'
+      try {
+          $process = Start-Process -FilePath secedit.exe -ArgumentList @(
+              '/export', '/cfg', $path, '/mergedpolicy', '/areas', 'SECURITYPOLICY'
+          ) -Wait -PassThru -WindowStyle Hidden
+          if ($process.ExitCode -ne 0) {
+              throw "secedit export failed with exit code $($process.ExitCode)."
+          }
+          $match = Select-String -LiteralPath $path -Pattern '^LSAAnonymousNameLookup\s*=\s*(\d+)\s*$'
+          if ($null -eq $match -or $match.Matches.Count -ne 1 -or $match.Matches[0].Groups[1].Value -ne '1') {
+              throw 'Effective policy does not have LSAAnonymousNameLookup=1 after gpupdate.'
+          }
+          $Ansible.Result = @{ LSAAnonymousNameLookup = 1 }
+      } finally {
+          Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+      }
+  changed_when: false
+  when: not ansible_check_mode
 
 - name: Permit ACL-authorized anonymous directory operations in the forest
   ansible.windows.win_powershell:
