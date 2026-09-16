@@ -47,6 +47,15 @@ class EvidenceTests(unittest.TestCase):
         self.assertFalse(phase01.sid_resolved("NT_STATUS_ACCESS_DENIED", sid))
         self.assertTrue(phase01.sid_resolved(sid + " NORTH\\RenamedAdmin (1)", sid))
 
+    def test_rpc_enum_names_require_real_rpcclient_rows(self):
+        text = (
+            'user:[samwell.tarly] rid:[0x456]\n'
+            'user:[sql_svc] rid:[0x457]\n'
+            'echo user:[fake] rid:[0x999]\n'
+        )
+        self.assertEqual(phase01.rpc_enum_names(text, 'user'), {'samwell.tarly', 'sql_svc'})
+        self.assertEqual(phase01.rpc_enum_names('NT_STATUS_ACCESS_DENIED\n', 'user'), set())
+
     def test_http_requires_status_and_both_schemes(self):
         headers = "WWW-Authenticate: Negotiate\nWWW-Authenticate: NTLM\n"
         self.assertTrue(phase01.http_boundary("HTTP/1.1 401 Unauthorized\n" + headers))
@@ -94,8 +103,31 @@ class EvidenceTests(unittest.TestCase):
         def response(command, **kwargs):
             rc = 0
             if command[0] == 'rpcclient':
-                text = ('Domain Sid: S-1-5-21-1-2-3\n' if command[-1] == 'lsaquery'
-                        else 'S-1-5-21-1-2-3-500 NORTH\\Administrator (1)\n')
+                rpc_command = command[-1]
+                if rpc_command == 'lsaquery':
+                    text = 'Domain Name: NORTH\nDomain Sid: S-1-5-21-1-2-3\n'
+                elif rpc_command.startswith('lookupsids '):
+                    text = 'S-1-5-21-1-2-3-500 NORTH\\Administrator (1)\n'
+                elif rpc_command == 'enumdomusers':
+                    text = (
+                        'user:[samwell.tarly] rid:[0x456]\n'
+                        'user:[brandon.stark] rid:[0x457]\n'
+                        'user:[sql_svc] rid:[0x458]\n'
+                    )
+                elif rpc_command == 'queryuser 0x1f5':
+                    text = 'user_name             : Guest\ngroup_rid             : 0x202\n'
+                elif rpc_command == 'enumdomgroups':
+                    text = (
+                        'group:[Domain Admins] rid:[0x200]\n'
+                        'group:[Domain Users] rid:[0x201]\n'
+                        'group:[Domain Guests] rid:[0x202]\n'
+                    )
+                elif rpc_command == 'querygroup 0x202':
+                    text = 'group_name            : Domain Guests\nnum_members           : 1\n'
+                elif rpc_command == 'getdompwinfo':
+                    text = 'min_password_length: 5\npassword_properties: 0x00000000\n'
+                else:
+                    raise AssertionError('unexpected rpcclient command: ' + rpc_command)
             elif command[0] == 'ldapsearch':
                 if command[-1] == 'defaultNamingContext':
                     text = 'dn:\ndefaultNamingContext: DC=north,DC=sevenkingdoms,DC=local\n'
@@ -129,7 +161,10 @@ class EvidenceTests(unittest.TestCase):
             with patch.object(phase01.subprocess, 'run', side_effect=response), contextlib.redirect_stdout(io.StringIO()):
                 result = phase01.main(['--out', str(Path(temp) / 'results')])
             self.assertEqual(result, 0)
-            self.assertIn('FAIL: 0', (Path(temp) / 'results/SUMMARY.txt').read_text())
+            summary = (Path(temp) / 'results/SUMMARY.txt').read_text()
+            self.assertIn('Anonymous SAMR user enumeration', summary)
+            self.assertIn('Anonymous SAMR password policy', summary)
+            self.assertIn('FAIL: 0', summary)
 
 
 if __name__ == "__main__":
