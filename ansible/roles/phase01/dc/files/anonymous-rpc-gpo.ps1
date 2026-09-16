@@ -12,7 +12,8 @@ $domainDn = 'DC=north,DC=sevenkingdoms,DC=local'
 $dcFqdn = 'winterfell.north.sevenkingdoms.local'
 $targetOu = 'OU=Domain Controllers,DC=north,DC=sevenkingdoms,DC=local'
 $gpoName = 'Kingdoms - Phase 01 - Anonymous RPC Exposure'
-$registryKey = 'HKLM\System\CurrentControlSet\Services\LanmanServer\Parameters'
+$serverRegistryKey = 'HKLM\System\CurrentControlSet\Services\LanmanServer\Parameters'
+$lsaRegistryKey = 'HKLM\System\CurrentControlSet\Control\Lsa'
 $desiredPipes = [string[]]@('samr', 'lsarpc')
 
 $system = Get-CimInstance Win32_ComputerSystem
@@ -38,22 +39,27 @@ if ($null -eq $gpo) {
         }
         return
     }
-    $gpo = New-GPO -Name $gpoName -Domain $domain -Server $dcFqdn -Comment 'Kingdoms Phase 01 intentionally exposes only SAMR and LSARPC to the anonymous RPC curriculum path while normal null-session shares remain restricted.'
+    $gpo = New-GPO -Name $gpoName -Domain $domain -Server $dcFqdn -Comment 'Kingdoms Phase 01 intentionally exposes the anonymous RPC curriculum path while normal null-session shares remain restricted.'
 }
 
 function Get-ConfiguredRegistryValue {
-    param([Parameter(Mandatory=$true)][string]$ValueName)
+    param(
+        [Parameter(Mandatory=$true)][string]$Key,
+        [Parameter(Mandatory=$true)][string]$ValueName
+    )
     try {
-        return Get-GPRegistryValue -Guid $gpo.Id -Domain $domain -Server $dcFqdn -Key $registryKey -ValueName $ValueName -ErrorAction Stop
+        return Get-GPRegistryValue -Guid $gpo.Id -Domain $domain -Server $dcFqdn -Key $Key -ValueName $ValueName -ErrorAction Stop
     } catch {
         return $null
     }
 }
 
-$restrict = Get-ConfiguredRegistryValue -ValueName 'RestrictNullSessAccess'
-$pipes = Get-ConfiguredRegistryValue -ValueName 'NullSessionPipes'
+$restrict = Get-ConfiguredRegistryValue -Key $serverRegistryKey -ValueName 'RestrictNullSessAccess'
+$pipes = Get-ConfiguredRegistryValue -Key $serverRegistryKey -ValueName 'NullSessionPipes'
+$everyoneAnonymous = Get-ConfiguredRegistryValue -Key $lsaRegistryKey -ValueName 'EveryoneIncludesAnonymous'
 
 $restrictChanged = $null -eq $restrict -or [int]$restrict.Value -ne 1
+$everyoneChanged = $null -eq $everyoneAnonymous -or [int]$everyoneAnonymous.Value -ne 1
 $currentPipes = @()
 if ($null -ne $pipes) {
     $currentPipes = @($pipes.Value | ForEach-Object { [string]$_ } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
@@ -67,18 +73,22 @@ $inheritance = Get-GPInheritance -Target $targetOu -Domain $domain -Server $dcFq
 $link = @($inheritance.GpoLinks | Where-Object { $_.GpoId -eq $gpo.Id }) | Select-Object -First 1
 $linkChanged = $null -eq $link -or -not [bool]$link.Enabled -or [int]$link.Order -ne 2 -or [bool]$link.Enforced
 
-if ($restrictChanged -or $pipesChanged -or $linkChanged) {
+if ($restrictChanged -or $pipesChanged -or $everyoneChanged -or $linkChanged) {
     $Ansible.Changed = $true
 }
 
 if (-not $Ansible.CheckMode) {
     if ($restrictChanged) {
         Set-GPRegistryValue -Guid $gpo.Id -Domain $domain -Server $dcFqdn `
-            -Key $registryKey -ValueName 'RestrictNullSessAccess' -Type DWord -Value 1 | Out-Null
+            -Key $serverRegistryKey -ValueName 'RestrictNullSessAccess' -Type DWord -Value 1 | Out-Null
     }
     if ($pipesChanged) {
         Set-GPRegistryValue -Guid $gpo.Id -Domain $domain -Server $dcFqdn `
-            -Key $registryKey -ValueName 'NullSessionPipes' -Type MultiString -Value ([string[]]$desiredPipes) | Out-Null
+            -Key $serverRegistryKey -ValueName 'NullSessionPipes' -Type MultiString -Value ([string[]]$desiredPipes) | Out-Null
+    }
+    if ($everyoneChanged) {
+        Set-GPRegistryValue -Guid $gpo.Id -Domain $domain -Server $dcFqdn `
+            -Key $lsaRegistryKey -ValueName 'EveryoneIncludesAnonymous' -Type DWord -Value 1 | Out-Null
     }
 
     if ($null -eq $link) {
@@ -93,6 +103,7 @@ $Ansible.Result = @{
     id = $gpo.Id.ToString()
     target = $targetOu
     link_order = 2
+    EveryoneIncludesAnonymous = 1
     RestrictNullSessAccess = 1
     NullSessionPipes = $desiredPipes
 }
