@@ -52,6 +52,60 @@
   changed_when: false
   when: not ansible_check_mode
 
+# LSA anonymous-access policy and the compatibility-group membership are consumed
+# by long-lived security services. A Group Policy refresh proves the registry/GPO
+# state but does not prove that new anonymous logon tokens use it. Reboot exactly
+# once for this Phase 01 policy generation, then persist a marker so replays stay
+# idempotent. Bump the marker suffix if a future change requires another reboot.
+- name: Check whether the Phase 01 anonymous RPC reboot has already completed
+  ansible.windows.win_stat:
+    path: C:\ProgramData\GOAD-Kingdoms\phase01-anonymous-rpc-reboot-v1.marker
+  register: phase01_rpc_reboot_marker
+  when: not ansible_check_mode
+
+- name: Reboot WINTERFELL once so LSA and anonymous group membership become active
+  ansible.windows.win_reboot:
+    reboot_timeout: 600
+    post_reboot_delay: 30
+  when:
+    - not ansible_check_mode
+    - not phase01_rpc_reboot_marker.stat.exists
+
+- name: Wait for WINTERFELL directory services after the Phase 01 reboot
+  ansible.windows.win_powershell:
+    script: |
+      [CmdletBinding(SupportsShouldProcess)]
+      param()
+      $Ansible.Changed = $false
+      Import-Module ActiveDirectory
+      $domain = Get-ADDomain -Identity 'north.sevenkingdoms.local' -Server 'winterfell.north.sevenkingdoms.local' -ErrorAction Stop
+      if ($domain.DNSRoot -ine 'north.sevenkingdoms.local') {
+          throw "Unexpected domain after reboot: $($domain.DNSRoot)"
+      }
+  register: phase01_rpc_post_reboot_ready
+  until: phase01_rpc_post_reboot_ready is succeeded
+  retries: 12
+  delay: 10
+  when:
+    - not ansible_check_mode
+    - not phase01_rpc_reboot_marker.stat.exists
+
+- name: Create Phase 01 anonymous RPC reboot marker directory
+  ansible.windows.win_file:
+    path: C:\ProgramData\GOAD-Kingdoms
+    state: directory
+  when:
+    - not ansible_check_mode
+    - not phase01_rpc_reboot_marker.stat.exists
+
+- name: Record completion of the Phase 01 anonymous RPC reboot
+  ansible.windows.win_copy:
+    content: "phase01-anonymous-rpc-reboot-v1\r\n"
+    dest: C:\ProgramData\GOAD-Kingdoms\phase01-anonymous-rpc-reboot-v1.marker
+  when:
+    - not ansible_check_mode
+    - not phase01_rpc_reboot_marker.stat.exists
+
 - name: Verify effective Phase 01 anonymous security settings after Group Policy refresh
   ansible.windows.win_powershell:
     script: |
