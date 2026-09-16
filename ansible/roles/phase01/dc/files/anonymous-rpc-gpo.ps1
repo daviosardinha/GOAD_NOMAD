@@ -13,7 +13,7 @@ $dcFqdn = 'winterfell.north.sevenkingdoms.local'
 $targetOu = 'OU=Domain Controllers,DC=north,DC=sevenkingdoms,DC=local'
 $gpoName = 'Kingdoms - Phase 01 - Anonymous RPC Exposure'
 $registryKey = 'HKLM\System\CurrentControlSet\Services\LanmanServer\Parameters'
-$desiredPipes = @('samr', 'lsarpc')
+$desiredPipes = [string[]]@('samr', 'lsarpc')
 
 $system = Get-CimInstance Win32_ComputerSystem
 if ($system.Name -ine 'WINTERFELL' -or
@@ -78,7 +78,7 @@ if (-not $Ansible.CheckMode) {
     }
     if ($pipesChanged) {
         Set-GPRegistryValue -Guid $gpo.Id -Domain $domain -Server $dcFqdn `
-            -Key $registryKey -ValueName 'NullSessionPipes' -Type MultiString -Value $desiredPipes | Out-Null
+            -Key $registryKey -ValueName 'NullSessionPipes' -Type MultiString -Value ([string[]]$desiredPipes) | Out-Null
     }
 
     if ($null -eq $link) {
