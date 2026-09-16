@@ -53,3 +53,8 @@
 
           $Ansible.Result = $result
       changed_when: false
+      register: phase01_rpc_diag
+
+    - name: Print effective anonymous-access controls and recent Remote SAM events
+      ansible.builtin.debug:
+        var: phase01_rpc_diag.result
