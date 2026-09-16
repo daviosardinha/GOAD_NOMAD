@@ -39,7 +39,7 @@ if ($null -eq $gpo) {
         }
         return
     }
-    $gpo = New-GPO -Name $gpoName -Domain $domain -Server $dcFqdn -Comment 'Kingdoms Phase 01 intentionally exposes the anonymous RPC curriculum path while normal null-session shares remain restricted.'
+    $gpo = New-GPO -Name $gpoName -Domain $domain -Server $dcFqdn -Comment 'Kingdoms Phase 01 intentionally exposes the anonymous RPC curriculum path while normal null-session shares and general Everyone permissions remain restricted.'
 }
 
 function Get-ConfiguredRegistryValue {
@@ -59,7 +59,7 @@ $pipes = Get-ConfiguredRegistryValue -Key $serverRegistryKey -ValueName 'NullSes
 $everyoneAnonymous = Get-ConfiguredRegistryValue -Key $lsaRegistryKey -ValueName 'EveryoneIncludesAnonymous'
 
 $restrictChanged = $null -eq $restrict -or [int]$restrict.Value -ne 1
-$everyoneChanged = $null -eq $everyoneAnonymous -or [int]$everyoneAnonymous.Value -ne 1
+$everyoneChanged = $null -eq $everyoneAnonymous -or [int]$everyoneAnonymous.Value -ne 0
 $currentPipes = @()
 if ($null -ne $pipes) {
     $currentPipes = @($pipes.Value | ForEach-Object { [string]$_ } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
@@ -88,7 +88,7 @@ if (-not $Ansible.CheckMode) {
     }
     if ($everyoneChanged) {
         Set-GPRegistryValue -Guid $gpo.Id -Domain $domain -Server $dcFqdn `
-            -Key $lsaRegistryKey -ValueName 'EveryoneIncludesAnonymous' -Type DWord -Value 1 | Out-Null
+            -Key $lsaRegistryKey -ValueName 'EveryoneIncludesAnonymous' -Type DWord -Value 0 | Out-Null
     }
 
     if ($null -eq $link) {
@@ -103,7 +103,7 @@ $Ansible.Result = @{
     id = $gpo.Id.ToString()
     target = $targetOu
     link_order = 2
-    EveryoneIncludesAnonymous = 1
+    EveryoneIncludesAnonymous = 0
     RestrictNullSessAccess = 1
     NullSessionPipes = $desiredPipes
 }
