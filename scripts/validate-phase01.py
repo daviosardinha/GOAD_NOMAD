@@ -71,6 +71,15 @@ def sid_resolved(text, sid):
     return bool(re.search(r"^" + re.escape(sid) + r"\s+[^\s\\]+\\[^\r\n]+\s+\([125]\)\s*$", text, re.M))
 
 
+def rpc_named_rids(text, prefix):
+    """Return rpcclient enumdomusers/enumdomgroups names mapped to integer RIDs."""
+    pattern = re.compile(
+        r"^" + re.escape(prefix) + r":\[([^\]]+)\]\s+rid:\[(0x[0-9a-f]+)\]\s*$",
+        re.M | re.I,
+    )
+    return {name.lower(): int(rid, 16) for name, rid in pattern.findall(text)}
+
+
 def http_boundary(text):
     statuses = re.findall(r"^HTTP/\S+\s+(\d{3})", text, re.M)
     auth = re.findall(r"^WWW-Authenticate:\s*([^\r\n]+)", text, re.M | re.I)
@@ -135,6 +144,8 @@ def main(argv=None):
     out.mkdir(parents=True, exist_ok=False)
     v = Validator(out, args.timeout)
 
+    # Curriculum contract: anonymous LSA/SID translation and selected SAMR calls
+    # must work while normal SMB share listing remains restricted below.
     rc, text = v.run("rid_domain", ["rpcclient", "-U", "%", "-N", args.dc, "-c", "lsaquery"])
     sid = re.search(r"^Domain Sid:\s*(S-1-5-21-\d+-\d+-\d+)\s*$", text, re.M | re.I)
     v.result("Anonymous domain SID", rc == 0 and sid is not None)
@@ -144,6 +155,43 @@ def main(argv=None):
         v.result("Anonymous SID-to-name translation", rc == 0 and sid_resolved(text, target))
     else:
         v.result("Anonymous SID-to-name translation", False, "No domain SID; lookup not run")
+
+    rc, text = v.run("samr_users", ["rpcclient", "-U", "%", "-N", args.dc, "-c", "enumdomusers"])
+    samr_users = rpc_named_rids(text, "user")
+    v.result(
+        "Anonymous SAMR user enumeration",
+        rc == 0 and {"guest", "samwell.tarly", "sql_svc"} <= set(samr_users),
+        "Expected Guest, samwell.tarly and sql_svc",
+    )
+
+    rc, text = v.run("samr_groups", ["rpcclient", "-U", "%", "-N", args.dc, "-c", "enumdomgroups"])
+    samr_groups = rpc_named_rids(text, "group")
+    v.result(
+        "Anonymous SAMR group enumeration",
+        rc == 0 and {"domain users", "domain guests", "night watch"} <= set(samr_groups),
+        "Expected Domain Users, Domain Guests and Night Watch",
+    )
+
+    rc, text = v.run("samr_queryuser", ["rpcclient", "-U", "%", "-N", args.dc, "-c", "queryuser 0x1f5"])
+    v.result(
+        "Anonymous SAMR individual user query",
+        rc == 0 and bool(re.search(r"\bGuest\b", text, re.I)) and not DENIED.search(text),
+        "Built-in Guest RID 0x1f5",
+    )
+
+    rc, text = v.run("samr_querygroup", ["rpcclient", "-U", "%", "-N", args.dc, "-c", "querygroup 0x202"])
+    v.result(
+        "Anonymous SAMR individual group query",
+        rc == 0 and bool(re.search(r"\bDomain Guests\b", text, re.I)) and not DENIED.search(text),
+        "Built-in Domain Guests RID 0x202",
+    )
+
+    rc, text = v.run("samr_passpol", ["rpcclient", "-U", "%", "-N", args.dc, "-c", "getdompwinfo"])
+    v.result(
+        "Anonymous SAMR password policy",
+        rc == 0 and bool(re.search(r"^min_password_length:\s*5\s*$", text, re.M | re.I)) and not DENIED.search(text),
+        "Expected NORTH minimum password length 5",
+    )
 
     ldap = ["ldapsearch", "-LLL", "-x", "-o", "nettimeout=10", "-l", "20", "-H", "ldap://" + args.dc]
     rc, text = v.run("ldap_rootdse", ldap + ["-s", "base", "-b", "", "defaultNamingContext"])
@@ -160,8 +208,7 @@ def main(argv=None):
 
     # Explicitly empty username AND password. -N alone can use the local login.
     # These checks identify requested auth modes, not the server's session flags.
-    # Live explicit-NULL evidence corrected the initial baseline's assumptions.
-    # NULL RPC availability does not imply that SMB share names are exposed.
+    # Selected RPC pipes are intentionally exposed; normal share names are not.
     for label, host, null_expected, guest_expected in [
         ("WINTERFELL", args.dc, "no share names returned", "rejected"),
         ("CASTELBLACK", args.server, "rejected", "available"),
