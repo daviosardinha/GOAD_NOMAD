@@ -61,6 +61,12 @@
               throw 'Effective policy does not have LSAAnonymousNameLookup=1 after gpupdate.'
           }
 
+          $lsa = Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa'
+          $everyoneAnonymous = [int]$lsa.EveryoneIncludesAnonymous
+          if ($everyoneAnonymous -ne 1) {
+              throw "Effective EveryoneIncludesAnonymous is $everyoneAnonymous; expected 1 for the Phase 01 anonymous RPC curriculum."
+          }
+
           $serverParameters = Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters'
           $restrict = [int]$serverParameters.RestrictNullSessAccess
           $pipes = @($serverParameters.NullSessionPipes |
@@ -85,6 +91,7 @@
 
           $Ansible.Result = @{
               LSAAnonymousNameLookup = 1
+              EveryoneIncludesAnonymous = $everyoneAnonymous
               RestrictNullSessAccess = $restrict
               NullSessionPipes = $pipes
               NullSessionShares = $shares
