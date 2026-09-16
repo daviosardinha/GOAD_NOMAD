@@ -17,6 +17,11 @@ import sys
 
 ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 DENIED = re.compile(r"NT_STATUS_(?:LOGON_FAILURE|ACCOUNT_DISABLED|ACCESS_DENIED|ACCOUNT_RESTRICTION)", re.I)
+NETWORK_FILTERED = re.compile(
+    r"NT_STATUS_(?:IO_TIMEOUT|HOST_UNREACHABLE|NETWORK_UNREACHABLE|CONNECTION_REFUSED)|"
+    r"Connection to .* failed .*timed out|No route to host|Connection refused",
+    re.I,
+)
 
 
 def share_listing_result(rc, text):
@@ -30,6 +35,8 @@ def share_listing_result(rc, text):
         return "inconclusive"
     if DENIED.search(text):
         return "rejected" if rc != 0 else "inconclusive"
+    if NETWORK_FILTERED.search(text):
+        return "filtered/unreachable" if rc != 0 else "inconclusive"
     if rc != 0:
         return "inconclusive"
     if re.search(r"session setup failed|tree connect failed|Error returning browse list", text, re.I):
@@ -209,10 +216,12 @@ def main(argv=None):
     # Explicitly empty username AND password. -N alone can use the local login.
     # These checks identify requested auth modes, not the server's session flags.
     # Selected RPC pipes are intentionally exposed; normal share names are not.
+    # WS01 intentionally keeps inbound SMB filtered by its host firewall, so a
+    # connection timeout is the expected negative-control result there.
     for label, host, null_expected, guest_expected in [
         ("WINTERFELL", args.dc, "no share names returned", "rejected"),
         ("CASTELBLACK", args.server, "rejected", "available"),
-        ("WS01", args.ws01, "rejected", "rejected"),
+        ("WS01", args.ws01, "filtered/unreachable", "filtered/unreachable"),
     ]:
         for mode, credential, expected in [("NULL", "%", null_expected), ("Guest", "Guest%", guest_expected)]:
             rc, text = v.run(f"smb_{label}_{mode}", ["smbclient", "-g", "-N", "-U", credential, "-L", "//" + host])
