@@ -71,6 +71,18 @@ def sid_resolved(text, sid):
     return bool(re.search(r"^" + re.escape(sid) + r"\s+[^\s\\]+\\[^\r\n]+\s+\([125]\)\s*$", text, re.M))
 
 
+def rpc_enum_names(text, object_type):
+    """Return names from rpcclient enumdomusers/enumdomgroups output."""
+    return {
+        name.strip().lower()
+        for name in re.findall(
+            rf"^{re.escape(object_type)}:\[([^\]]+)\]\s+rid:\[0x[0-9a-f]+\]\s*$",
+            text,
+            re.M | re.I,
+        )
+    }
+
+
 def http_boundary(text):
     statuses = re.findall(r"^HTTP/\S+\s+(\d{3})", text, re.M)
     auth = re.findall(r"^WWW-Authenticate:\s*([^\r\n]+)", text, re.M | re.I)
@@ -135,15 +147,56 @@ def main(argv=None):
     out.mkdir(parents=True, exist_ok=False)
     v = Validator(out, args.timeout)
 
-    rc, text = v.run("rid_domain", ["rpcclient", "-U", "%", "-N", args.dc, "-c", "lsaquery"])
+    # Curriculum contract: selected LSA/SAMR RPC operations must work anonymously
+    # while normal SMB share listing remains restricted later in this validator.
+    rc, text = v.run("rpc_lsa_domain", ["rpcclient", "-U", "%", "-N", args.dc, "-c", "lsaquery"])
     sid = re.search(r"^Domain Sid:\s*(S-1-5-21-\d+-\d+-\d+)\s*$", text, re.M | re.I)
-    v.result("Anonymous domain SID", rc == 0 and sid is not None)
+    v.result("Anonymous LSARPC domain SID", rc == 0 and sid is not None)
     if rc == 0 and sid:
         target = sid.group(1) + "-500"
-        rc, text = v.run("rid_name", ["rpcclient", "-U", "%", "-N", args.dc, "-c", "lookupsids " + target])
+        rc, text = v.run("rpc_sid_name", ["rpcclient", "-U", "%", "-N", args.dc, "-c", "lookupsids " + target])
         v.result("Anonymous SID-to-name translation", rc == 0 and sid_resolved(text, target))
     else:
         v.result("Anonymous SID-to-name translation", False, "No domain SID; lookup not run")
+
+    rc, text = v.run("rpc_samr_users", ["rpcclient", "-U", "%", "-N", args.dc, "-c", "enumdomusers"])
+    rpc_users = rpc_enum_names(text, "user")
+    required_users = {"samwell.tarly", "brandon.stark", "sql_svc"}
+    missing_users = sorted(required_users - rpc_users)
+    v.result(
+        "Anonymous SAMR user enumeration",
+        rc == 0 and not missing_users,
+        "" if rc == 0 and not missing_users else "Missing expected users: " + ", ".join(missing_users),
+    )
+
+    rc, text = v.run("rpc_samr_guest", ["rpcclient", "-U", "%", "-N", args.dc, "-c", "queryuser 0x1f5"])
+    v.result(
+        "Anonymous SAMR individual user query",
+        rc == 0 and bool(re.search(r"^\s*user_name\s*:\s*Guest\s*$", text, re.M | re.I)),
+    )
+
+    rc, text = v.run("rpc_samr_groups", ["rpcclient", "-U", "%", "-N", args.dc, "-c", "enumdomgroups"])
+    rpc_groups = rpc_enum_names(text, "group")
+    required_groups = {"domain admins", "domain users", "domain guests"}
+    missing_groups = sorted(required_groups - rpc_groups)
+    v.result(
+        "Anonymous SAMR group enumeration",
+        rc == 0 and not missing_groups,
+        "" if rc == 0 and not missing_groups else "Missing expected groups: " + ", ".join(missing_groups),
+    )
+
+    rc, text = v.run("rpc_samr_domain_guests", ["rpcclient", "-U", "%", "-N", args.dc, "-c", "querygroup 0x202"])
+    v.result(
+        "Anonymous SAMR individual group query",
+        rc == 0 and bool(re.search(r"^\s*group_name\s*:\s*Domain Guests\s*$", text, re.M | re.I)),
+    )
+
+    rc, text = v.run("rpc_samr_passpol", ["rpcclient", "-U", "%", "-N", args.dc, "-c", "getdompwinfo"])
+    passpol = (
+        bool(re.search(r"^\s*min_password_length\s*:\s*\d+\s*$", text, re.M | re.I))
+        and bool(re.search(r"^\s*password_properties\s*:", text, re.M | re.I))
+    )
+    v.result("Anonymous SAMR password policy", rc == 0 and passpol)
 
     ldap = ["ldapsearch", "-LLL", "-x", "-o", "nettimeout=10", "-l", "20", "-H", "ldap://" + args.dc]
     rc, text = v.run("ldap_rootdse", ldap + ["-s", "base", "-b", "", "defaultNamingContext"])
@@ -160,8 +213,8 @@ def main(argv=None):
 
     # Explicitly empty username AND password. -N alone can use the local login.
     # These checks identify requested auth modes, not the server's session flags.
-    # Live explicit-NULL evidence corrected the initial baseline's assumptions.
-    # NULL RPC availability does not imply that SMB share names are exposed.
+    # Selected anonymous RPC paths are intentionally available on WINTERFELL;
+    # that must not be confused with normal share-listing authorization.
     for label, host, null_expected, guest_expected in [
         ("WINTERFELL", args.dc, "no share names returned", "rejected"),
         ("CASTELBLACK", args.server, "rejected", "available"),
