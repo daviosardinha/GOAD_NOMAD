@@ -10,6 +10,8 @@
           param()
           $Ansible.Changed = $false
 
+          Import-Module ActiveDirectory
+
           function Read-RegistryValue {
               param(
                   [Parameter(Mandatory=$true)][string]$Path,
@@ -34,6 +36,10 @@
               Sort-Object TimeCreated |
               Select-Object TimeCreated, Id, ProviderName, Message
           )
+          $preWin2000 = @(
+              Get-ADGroupMember -Identity 'Pre-Windows 2000 Compatible Access' -Server 'winterfell.north.sevenkingdoms.local' -ErrorAction Stop |
+              Select-Object Name, SamAccountName, SID, ObjectClass
+          )
 
           $result = [ordered]@{
               ComputerName = $env:COMPUTERNAME
@@ -48,6 +54,7 @@
                   NullSessionPipes = @(Read-RegistryValue -Path $server -Name 'NullSessionPipes')
                   NullSessionShares = @(Read-RegistryValue -Path $server -Name 'NullSessionShares')
               }
+              PreWindows2000CompatibleAccess = $preWin2000
               RemoteSamEvents = $events
           }
 
