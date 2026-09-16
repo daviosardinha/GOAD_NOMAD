@@ -31,9 +31,9 @@ class Phase01GpoSourceTests(unittest.TestCase):
         self.assertIn("OU=Domain Controllers,DC=north,DC=sevenkingdoms,DC=local", text)
         self.assertIn("RestrictNullSessAccess", text)
         self.assertIn("NullSessionPipes", text)
-        self.assertIn("@('samr', 'lsarpc')", text)
+        self.assertIn("[string[]]@('samr', 'lsarpc')", text)
         self.assertIn("-Type DWord -Value 1", text)
-        self.assertIn("-Type MultiString -Value $desiredPipes", text)
+        self.assertIn("-Type MultiString -Value ([string[]]$desiredPipes)", text)
         self.assertIn("-Order 2", text)
         self.assertNotIn("NullSessionShares' -Type MultiString", text)
 
