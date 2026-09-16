@@ -22,6 +22,16 @@
     ansible_become_password: "{{ lab.domains['north.sevenkingdoms.local'].domain_password }}"
   no_log: true
 
+- name: Persist scoped anonymous SAMR and LSARPC access through a dedicated NORTH GPO
+  ansible.windows.win_powershell:
+    script: "{{ lookup('file', role_path + '/files/anonymous-rpc-gpo.ps1') }}"
+  become: true
+  become_method: runas
+  become_user: "{{ admin_user }}@north.sevenkingdoms.local"
+  vars:
+    ansible_become_password: "{{ lab.domains['north.sevenkingdoms.local'].domain_password }}"
+  no_log: true
+
 - name: Refresh WINTERFELL computer policy after Phase 01 GPO changes
   ansible.windows.win_command: gpupdate.exe /target:computer /force
   become: true
@@ -32,7 +42,7 @@
   changed_when: false
   when: not ansible_check_mode
 
-- name: Verify effective anonymous SID and name translation after Group Policy refresh
+- name: Verify effective Phase 01 anonymous security settings after Group Policy refresh
   ansible.windows.win_powershell:
     script: |
       [CmdletBinding(SupportsShouldProcess)]
@@ -50,7 +60,35 @@
           if ($null -eq $match -or $match.Matches.Count -ne 1 -or $match.Matches[0].Groups[1].Value -ne '1') {
               throw 'Effective policy does not have LSAAnonymousNameLookup=1 after gpupdate.'
           }
-          $Ansible.Result = @{ LSAAnonymousNameLookup = 1 }
+
+          $serverParameters = Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters'
+          $restrict = [int]$serverParameters.RestrictNullSessAccess
+          $pipes = @($serverParameters.NullSessionPipes |
+              ForEach-Object { [string]$_ } |
+              Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+              ForEach-Object { $_.Trim().ToLowerInvariant() } |
+              Sort-Object -Unique)
+          $shares = @($serverParameters.NullSessionShares |
+              ForEach-Object { [string]$_ } |
+              Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+          $wanted = @('lsarpc', 'samr')
+
+          if ($restrict -ne 1) {
+              throw "Effective RestrictNullSessAccess is $restrict; expected 1."
+          }
+          if ($pipes.Count -ne $wanted.Count -or @($wanted | Where-Object { $_ -notin $pipes }).Count -ne 0) {
+              throw "Effective NullSessionPipes is '$($pipes -join ',')'; expected only samr and lsarpc."
+          }
+          if ($shares.Count -ne 0) {
+              throw "Effective NullSessionShares unexpectedly exposes: $($shares -join ',')."
+          }
+
+          $Ansible.Result = @{
+              LSAAnonymousNameLookup = 1
+              RestrictNullSessAccess = $restrict
+              NullSessionPipes = $pipes
+              NullSessionShares = $shares
+          }
       } finally {
           Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
       }
