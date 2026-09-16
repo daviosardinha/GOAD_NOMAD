@@ -32,6 +32,16 @@
     ansible_become_password: "{{ lab.domains['north.sevenkingdoms.local'].domain_password }}"
   no_log: true
 
+- name: Grant ANONYMOUS LOGON the documented Pre-Windows 2000 compatibility read path
+  ansible.windows.win_powershell:
+    script: "{{ lookup('file', role_path + '/files/anonymous-rpc-access-group.ps1') }}"
+  become: true
+  become_method: runas
+  become_user: "{{ admin_user }}@north.sevenkingdoms.local"
+  vars:
+    ansible_become_password: "{{ lab.domains['north.sevenkingdoms.local'].domain_password }}"
+  no_log: true
+
 - name: Refresh WINTERFELL computer policy after Phase 01 GPO changes
   ansible.windows.win_command: gpupdate.exe /target:computer /force
   become: true
@@ -48,6 +58,7 @@
       [CmdletBinding(SupportsShouldProcess)]
       param()
       $Ansible.Changed = $false
+      Import-Module ActiveDirectory
       $path = Join-Path $env:TEMP 'kingdoms-phase01-effective-policy.inf'
       try {
           $process = Start-Process -FilePath secedit.exe -ArgumentList @(
@@ -63,8 +74,8 @@
 
           $lsa = Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa'
           $everyoneAnonymous = [int]$lsa.EveryoneIncludesAnonymous
-          if ($everyoneAnonymous -ne 1) {
-              throw "Effective EveryoneIncludesAnonymous is $everyoneAnonymous; expected 1 for the Phase 01 anonymous RPC curriculum."
+          if ($everyoneAnonymous -ne 0) {
+              throw "Effective EveryoneIncludesAnonymous is $everyoneAnonymous; expected 0 so ordinary Everyone permissions do not broadly apply to anonymous users."
           }
 
           $serverParameters = Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters'
@@ -89,12 +100,20 @@
               throw "Effective NullSessionShares unexpectedly exposes: $($shares -join ',')."
           }
 
+          $preWin = Get-ADGroup -Identity 'S-1-5-32-554' -Server 'winterfell.north.sevenkingdoms.local' -ErrorAction Stop
+          $members = @(Get-ADGroupMember -Identity $preWin.DistinguishedName -Server 'winterfell.north.sevenkingdoms.local' -ErrorAction Stop)
+          $anonymousMember = @($members | Where-Object { $_.SID -and $_.SID.Value -eq 'S-1-5-7' }).Count -gt 0
+          if (-not $anonymousMember) {
+              throw 'ANONYMOUS LOGON (S-1-5-7) is not a member of Pre-Windows 2000 Compatible Access.'
+          }
+
           $Ansible.Result = @{
               LSAAnonymousNameLookup = 1
               EveryoneIncludesAnonymous = $everyoneAnonymous
               RestrictNullSessAccess = $restrict
               NullSessionPipes = $pipes
               NullSessionShares = $shares
+              AnonymousPreWindows2000CompatibleAccess = $anonymousMember
           }
       } finally {
           Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
