@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One operator entry point: prerequisites, targeted provisioning, then evidence.
+# One operator entry point: source gate, regressions, prerequisites, provisioning, evidence.
 set -Eeuo pipefail
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
@@ -25,6 +25,7 @@ fi
     exit 1
 }
 bash scripts/verify-test-source.sh
+python3 -m unittest tests.test_phase01_gpo_source tests.test_phase01_validation
 bash scripts/setup-phase01-tools.sh "${prerequisites[@]}"
 # NORTH is directly reachable in the Kingdoms exercise network. Use the same
 # inventories as other maintenance scripts, and propagate Ansible's exit code.
