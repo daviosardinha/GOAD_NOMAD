@@ -50,19 +50,29 @@ class Phase01GpoSourceTests(unittest.TestCase):
         self.assertIn("net.exe localgroup", text)
         self.assertIn("Get-ADGroupMember", text)
 
-    def test_effective_policy_is_verified_after_refresh(self):
+    def test_policy_activation_has_one_time_reboot_gate(self):
+        text = TASKS.read_text()
+        self.assertIn("ansible.windows.win_reboot", text)
+        self.assertIn("phase01-anonymous-rpc-reboot-v1.marker", text)
+        self.assertIn("post_reboot_delay: 30", text)
+        self.assertIn("Wait for WINTERFELL directory services after the Phase 01 reboot", text)
+        self.assertIn("Get-ADDomain -Identity 'north.sevenkingdoms.local'", text)
+
+    def test_effective_policy_is_verified_after_refresh_and_reboot(self):
         text = TASKS.read_text()
         refresh = text.index("gpupdate.exe /target:computer /force")
+        reboot = text.index("ansible.windows.win_reboot")
         sid_verify = text.index("Effective policy does not have LSAAnonymousNameLookup=1")
         everyone_verify = text.index("Effective EveryoneIncludesAnonymous")
         pipe_verify = text.index("expected only samr and lsarpc")
         share_verify = text.index("Effective NullSessionShares unexpectedly exposes")
         compat_verify = text.index("ANONYMOUS LOGON (S-1-5-7) is not a member")
-        self.assertLess(refresh, sid_verify)
-        self.assertLess(refresh, everyone_verify)
-        self.assertLess(refresh, pipe_verify)
-        self.assertLess(refresh, share_verify)
-        self.assertLess(refresh, compat_verify)
+        self.assertLess(refresh, reboot)
+        self.assertLess(reboot, sid_verify)
+        self.assertLess(reboot, everyone_verify)
+        self.assertLess(reboot, pipe_verify)
+        self.assertLess(reboot, share_verify)
+        self.assertLess(reboot, compat_verify)
 
 
 if __name__ == "__main__":
