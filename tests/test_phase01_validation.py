@@ -20,22 +20,25 @@ WINTERFELL_NULL = (
     'do_connect: Connection to 10.4.10.11 failed (Error NT_STATUS_RESOURCE_NAME_NOT_FOUND)\n'
 )
 CASTELBLACK_NULL = 'session setup failed: NT_STATUS_ACCESS_DENIED\n'
+WS01_FILTERED = 'do_connect: Connection to 10.4.10.31 failed (Error NT_STATUS_IO_TIMEOUT)\n'
 
 
 class EvidenceTests(unittest.TestCase):
     def test_live_null_results_are_not_share_access(self):
         self.assertEqual(phase01.share_listing_result(0, WINTERFELL_NULL), 'no share names returned')
         self.assertEqual(phase01.share_listing_result(1, CASTELBLACK_NULL), 'rejected')
+        self.assertEqual(phase01.share_listing_result(1, WS01_FILTERED), 'filtered/unreachable')
 
     def test_share_rows_remain_required_for_available(self):
         self.assertEqual(phase01.share_listing_result(0, 'Disk|all|Public share\n'), 'available')
         self.assertEqual(phase01.share_listing_result(0, 'Disk|all|Public share\n' + WINTERFELL_NULL), 'available')
         self.assertEqual(phase01.share_listing_result(0, 'Sharename Type Comment\n'), 'inconclusive')
 
-    def test_network_failure_and_empty_output_are_not_expected_denial_or_no_names(self):
-        cases = [(0, ''), (1, 'NT_STATUS_IO_TIMEOUT'), (1, WINTERFELL_NULL),
+    def test_generic_failures_and_empty_output_remain_inconclusive(self):
+        cases = [(0, ''), (1, WINTERFELL_NULL),
                  (124, CASTELBLACK_NULL), (127, CASTELBLACK_NULL),
-                 (0, CASTELBLACK_NULL), (0, 'Error returning browse list\n' + WINTERFELL_NULL)]
+                 (0, CASTELBLACK_NULL), (0, WS01_FILTERED),
+                 (0, 'Error returning browse list\n' + WINTERFELL_NULL)]
         for rc, text in cases:
             with self.subTest(rc=rc, text=text):
                 self.assertEqual(phase01.share_listing_result(rc, text), 'inconclusive')
@@ -145,7 +148,9 @@ class EvidenceTests(unittest.TestCase):
                     text = WINTERFELL_NULL
                 elif command[-1] == '//10.4.10.22' and '%' in command:
                     rc, text = 1, CASTELBLACK_NULL
-                elif command[-1] == '//10.4.10.31' or (command[-1] == '//10.4.10.11' and 'Guest%' in command):
+                elif command[-1] == '//10.4.10.31':
+                    rc, text = 1, WS01_FILTERED
+                elif command[-1] == '//10.4.10.11' and 'Guest%' in command:
                     rc, text = 1, 'session setup failed: NT_STATUS_ACCOUNT_DISABLED\n'
                 else:
                     text = 'IPC|IPC$|Remote IPC\nDisk|all|\n'
@@ -166,6 +171,7 @@ class EvidenceTests(unittest.TestCase):
             self.assertEqual(result, 0)
             summary = (Path(temp) / 'results/SUMMARY.txt').read_text()
             self.assertIn('Anonymous SAMR password policy', summary)
+            self.assertIn('WS01 NULL share listing: filtered/unreachable', summary)
             self.assertIn('FAIL: 0', summary)
 
 
