@@ -22,6 +22,16 @@
     ansible_become_password: "{{ lab.domains['north.sevenkingdoms.local'].domain_password }}"
   no_log: true
 
+- name: Persist scoped anonymous RPC exposure required by the Phase 01 curriculum
+  ansible.windows.win_powershell:
+    script: "{{ lookup('file', role_path + '/files/anonymous-rpc-exposure-gpo.ps1') }}"
+  become: true
+  become_method: runas
+  become_user: "{{ admin_user }}@north.sevenkingdoms.local"
+  vars:
+    ansible_become_password: "{{ lab.domains['north.sevenkingdoms.local'].domain_password }}"
+  no_log: true
+
 - name: Refresh WINTERFELL computer policy after Phase 01 GPO changes
   ansible.windows.win_command: gpupdate.exe /target:computer /force
   become: true
@@ -53,6 +63,51 @@
           $Ansible.Result = @{ LSAAnonymousNameLookup = 1 }
       } finally {
           Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+      }
+  become: true
+  become_method: runas
+  become_user: "{{ admin_user }}@north.sevenkingdoms.local"
+  vars:
+    ansible_become_password: "{{ lab.domains['north.sevenkingdoms.local'].domain_password }}"
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Verify effective scoped anonymous RPC settings after Group Policy refresh
+  ansible.windows.win_powershell:
+    script: |
+      [CmdletBinding(SupportsShouldProcess)]
+      param()
+      $Ansible.Changed = $false
+
+      $lsa = Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa'
+      $server = Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters'
+      $actualPipes = @($server.NullSessionPipes)
+      $wantedPipes = @('samr', 'lsarpc')
+
+      if ([int]$lsa.RestrictAnonymous -ne 0) {
+          throw 'Effective policy does not have RestrictAnonymous=0 after gpupdate.'
+      }
+      if ([int]$lsa.RestrictAnonymousSAM -ne 0) {
+          throw 'Effective policy does not have RestrictAnonymousSAM=0 after gpupdate.'
+      }
+      if ([int]$lsa.EveryoneIncludesAnonymous -ne 0) {
+          throw 'Effective policy does not have EveryoneIncludesAnonymous=0 after gpupdate.'
+      }
+      if ([int]$server.RestrictNullSessAccess -ne 1) {
+          throw 'Effective policy does not have RestrictNullSessAccess=1 after gpupdate.'
+      }
+      if ($actualPipes.Count -ne $wantedPipes.Count -or
+          @($actualPipes | Where-Object { $_ -notin $wantedPipes }).Count -ne 0 -or
+          @($wantedPipes | Where-Object { $_ -notin $actualPipes }).Count -ne 0) {
+          throw "Effective NullSessionPipes must contain only samr and lsarpc; found: $($actualPipes -join ', ')"
+      }
+
+      $Ansible.Result = @{
+          RestrictAnonymous = 0
+          RestrictAnonymousSAM = 0
+          EveryoneIncludesAnonymous = 0
+          RestrictNullSessAccess = 1
+          NullSessionPipes = $actualPipes
       }
   become: true
   become_method: runas
