@@ -22,6 +22,26 @@
     ansible_become_password: "{{ lab.domains['north.sevenkingdoms.local'].domain_password }}"
   no_log: true
 
+- name: Persist scoped anonymous SAMR and LSARPC access through a dedicated NORTH GPO
+  ansible.windows.win_powershell:
+    script: "{{ lookup('file', role_path + '/files/anonymous-rpc-gpo.ps1') }}"
+  become: true
+  become_method: runas
+  become_user: "{{ admin_user }}@north.sevenkingdoms.local"
+  vars:
+    ansible_become_password: "{{ lab.domains['north.sevenkingdoms.local'].domain_password }}"
+  no_log: true
+
+- name: Grant ANONYMOUS LOGON the documented Pre-Windows 2000 compatibility read path
+  ansible.windows.win_powershell:
+    script: "{{ lookup('file', role_path + '/files/anonymous-rpc-access-group.ps1') }}"
+  become: true
+  become_method: runas
+  become_user: "{{ admin_user }}@north.sevenkingdoms.local"
+  vars:
+    ansible_become_password: "{{ lab.domains['north.sevenkingdoms.local'].domain_password }}"
+  no_log: true
+
 - name: Refresh WINTERFELL computer policy after Phase 01 GPO changes
   ansible.windows.win_command: gpupdate.exe /target:computer /force
   become: true
@@ -32,12 +52,67 @@
   changed_when: false
   when: not ansible_check_mode
 
-- name: Verify effective anonymous SID and name translation after Group Policy refresh
+# LSA anonymous-access policy and the compatibility-group membership are consumed
+# by long-lived security services. A Group Policy refresh proves the registry/GPO
+# state but does not prove that new anonymous logon tokens use it. Reboot exactly
+# once for this Phase 01 policy generation, then persist a marker so replays stay
+# idempotent. Bump the marker suffix if a future change requires another reboot.
+- name: Check whether the Phase 01 anonymous RPC reboot has already completed
+  ansible.windows.win_stat:
+    path: C:\ProgramData\GOAD-Kingdoms\phase01-anonymous-rpc-reboot-v1.marker
+  register: phase01_rpc_reboot_marker
+  when: not ansible_check_mode
+
+- name: Reboot WINTERFELL once so LSA and anonymous group membership become active
+  ansible.windows.win_reboot:
+    reboot_timeout: 600
+    post_reboot_delay: 30
+  when:
+    - not ansible_check_mode
+    - not phase01_rpc_reboot_marker.stat.exists
+
+- name: Wait for WINTERFELL directory services after the Phase 01 reboot
   ansible.windows.win_powershell:
     script: |
       [CmdletBinding(SupportsShouldProcess)]
       param()
       $Ansible.Changed = $false
+      Import-Module ActiveDirectory
+      $domain = Get-ADDomain -Identity 'north.sevenkingdoms.local' -Server 'winterfell.north.sevenkingdoms.local' -ErrorAction Stop
+      if ($domain.DNSRoot -ine 'north.sevenkingdoms.local') {
+          throw "Unexpected domain after reboot: $($domain.DNSRoot)"
+      }
+  register: phase01_rpc_post_reboot_ready
+  until: phase01_rpc_post_reboot_ready is succeeded
+  retries: 12
+  delay: 10
+  when:
+    - not ansible_check_mode
+    - not phase01_rpc_reboot_marker.stat.exists
+
+- name: Create Phase 01 anonymous RPC reboot marker directory
+  ansible.windows.win_file:
+    path: C:\ProgramData\GOAD-Kingdoms
+    state: directory
+  when:
+    - not ansible_check_mode
+    - not phase01_rpc_reboot_marker.stat.exists
+
+- name: Record completion of the Phase 01 anonymous RPC reboot
+  ansible.windows.win_copy:
+    content: "phase01-anonymous-rpc-reboot-v1\r\n"
+    dest: C:\ProgramData\GOAD-Kingdoms\phase01-anonymous-rpc-reboot-v1.marker
+  when:
+    - not ansible_check_mode
+    - not phase01_rpc_reboot_marker.stat.exists
+
+- name: Verify effective Phase 01 anonymous security settings after Group Policy refresh
+  ansible.windows.win_powershell:
+    script: |
+      [CmdletBinding(SupportsShouldProcess)]
+      param()
+      $Ansible.Changed = $false
+      Import-Module ActiveDirectory
       $path = Join-Path $env:TEMP 'kingdoms-phase01-effective-policy.inf'
       try {
           $process = Start-Process -FilePath secedit.exe -ArgumentList @(
@@ -50,7 +125,50 @@
           if ($null -eq $match -or $match.Matches.Count -ne 1 -or $match.Matches[0].Groups[1].Value -ne '1') {
               throw 'Effective policy does not have LSAAnonymousNameLookup=1 after gpupdate.'
           }
-          $Ansible.Result = @{ LSAAnonymousNameLookup = 1 }
+
+          $lsa = Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa'
+          $everyoneAnonymous = [int]$lsa.EveryoneIncludesAnonymous
+          if ($everyoneAnonymous -ne 0) {
+              throw "Effective EveryoneIncludesAnonymous is $everyoneAnonymous; expected 0 so ordinary Everyone permissions do not broadly apply to anonymous users."
+          }
+
+          $serverParameters = Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters'
+          $restrict = [int]$serverParameters.RestrictNullSessAccess
+          $pipes = @($serverParameters.NullSessionPipes |
+              ForEach-Object { [string]$_ } |
+              Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+              ForEach-Object { $_.Trim().ToLowerInvariant() } |
+              Sort-Object -Unique)
+          $shares = @($serverParameters.NullSessionShares |
+              ForEach-Object { [string]$_ } |
+              Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+          $wanted = @('lsarpc', 'samr')
+
+          if ($restrict -ne 1) {
+              throw "Effective RestrictNullSessAccess is $restrict; expected 1."
+          }
+          if ($pipes.Count -ne $wanted.Count -or @($wanted | Where-Object { $_ -notin $pipes }).Count -ne 0) {
+              throw "Effective NullSessionPipes is '$($pipes -join ',')'; expected only samr and lsarpc."
+          }
+          if ($shares.Count -ne 0) {
+              throw "Effective NullSessionShares unexpectedly exposes: $($shares -join ',')."
+          }
+
+          $preWin = Get-ADGroup -Identity 'S-1-5-32-554' -Server 'winterfell.north.sevenkingdoms.local' -ErrorAction Stop
+          $members = @(Get-ADGroupMember -Identity $preWin.DistinguishedName -Server 'winterfell.north.sevenkingdoms.local' -ErrorAction Stop)
+          $anonymousMember = @($members | Where-Object { $_.SID -and $_.SID.Value -eq 'S-1-5-7' }).Count -gt 0
+          if (-not $anonymousMember) {
+              throw 'ANONYMOUS LOGON (S-1-5-7) is not a member of Pre-Windows 2000 Compatible Access.'
+          }
+
+          $Ansible.Result = @{
+              LSAAnonymousNameLookup = 1
+              EveryoneIncludesAnonymous = $everyoneAnonymous
+              RestrictNullSessAccess = $restrict
+              NullSessionPipes = $pipes
+              NullSessionShares = $shares
+              AnonymousPreWindows2000CompatibleAccess = $anonymousMember
+          }
       } finally {
           Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
       }

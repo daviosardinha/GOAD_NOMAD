@@ -1,0 +1,67 @@
+---
+- name: Collect read-only Phase 01 RPC diagnostics from WINTERFELL
+  hosts: dc02
+  gather_facts: false
+  tasks:
+    - name: Read effective anonymous-access controls and recent Remote SAM events
+      ansible.windows.win_powershell:
+        script: |
+          [CmdletBinding(SupportsShouldProcess)]
+          param()
+          $Ansible.Changed = $false
+
+          Import-Module ActiveDirectory
+
+          function Read-RegistryValue {
+              param(
+                  [Parameter(Mandatory=$true)][string]$Path,
+                  [Parameter(Mandatory=$true)][string]$Name
+              )
+              try {
+                  return (Get-ItemProperty -LiteralPath $Path -Name $Name -ErrorAction Stop).$Name
+              } catch {
+                  return $null
+              }
+          }
+
+          $lsa = 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa'
+          $server = 'HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters'
+          $since = (Get-Date).AddHours(-4)
+          $events = @(
+              Get-WinEvent -FilterHashtable @{
+                  LogName = 'System'
+                  Id = 16962,16963,16964,16965,16966,16967,16968,16969
+                  StartTime = $since
+              } -ErrorAction SilentlyContinue |
+              Sort-Object TimeCreated |
+              Select-Object TimeCreated, Id, ProviderName, Message
+          )
+          $preWin2000 = @(
+              Get-ADGroupMember -Identity 'Pre-Windows 2000 Compatible Access' -Server 'winterfell.north.sevenkingdoms.local' -ErrorAction Stop |
+              Select-Object Name, SamAccountName, SID, ObjectClass
+          )
+
+          $result = [ordered]@{
+              ComputerName = $env:COMPUTERNAME
+              LSA = [ordered]@{
+                  RestrictAnonymous = Read-RegistryValue -Path $lsa -Name 'RestrictAnonymous'
+                  RestrictAnonymousSAM = Read-RegistryValue -Path $lsa -Name 'RestrictAnonymousSAM'
+                  EveryoneIncludesAnonymous = Read-RegistryValue -Path $lsa -Name 'EveryoneIncludesAnonymous'
+                  RestrictRemoteSam = Read-RegistryValue -Path $lsa -Name 'RestrictRemoteSam'
+              }
+              LanmanServer = [ordered]@{
+                  RestrictNullSessAccess = Read-RegistryValue -Path $server -Name 'RestrictNullSessAccess'
+                  NullSessionPipes = @(Read-RegistryValue -Path $server -Name 'NullSessionPipes')
+                  NullSessionShares = @(Read-RegistryValue -Path $server -Name 'NullSessionShares')
+              }
+              PreWindows2000CompatibleAccess = $preWin2000
+              RemoteSamEvents = $events
+          }
+
+          $Ansible.Result = $result
+      changed_when: false
+      register: phase01_rpc_diag
+
+    - name: Print effective anonymous-access controls and recent Remote SAM events
+      ansible.builtin.debug:
+        var: phase01_rpc_diag.result

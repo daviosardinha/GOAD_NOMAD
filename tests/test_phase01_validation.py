@@ -20,22 +20,25 @@ WINTERFELL_NULL = (
     'do_connect: Connection to 10.4.10.11 failed (Error NT_STATUS_RESOURCE_NAME_NOT_FOUND)\n'
 )
 CASTELBLACK_NULL = 'session setup failed: NT_STATUS_ACCESS_DENIED\n'
+WS01_FILTERED = 'do_connect: Connection to 10.4.10.31 failed (Error NT_STATUS_IO_TIMEOUT)\n'
 
 
 class EvidenceTests(unittest.TestCase):
     def test_live_null_results_are_not_share_access(self):
         self.assertEqual(phase01.share_listing_result(0, WINTERFELL_NULL), 'no share names returned')
         self.assertEqual(phase01.share_listing_result(1, CASTELBLACK_NULL), 'rejected')
+        self.assertEqual(phase01.share_listing_result(1, WS01_FILTERED), 'filtered/unreachable')
 
     def test_share_rows_remain_required_for_available(self):
         self.assertEqual(phase01.share_listing_result(0, 'Disk|all|Public share\n'), 'available')
         self.assertEqual(phase01.share_listing_result(0, 'Disk|all|Public share\n' + WINTERFELL_NULL), 'available')
         self.assertEqual(phase01.share_listing_result(0, 'Sharename Type Comment\n'), 'inconclusive')
 
-    def test_network_failure_and_empty_output_are_not_expected_denial_or_no_names(self):
-        cases = [(0, ''), (1, 'NT_STATUS_IO_TIMEOUT'), (1, WINTERFELL_NULL),
+    def test_generic_failures_and_empty_output_remain_inconclusive(self):
+        cases = [(0, ''), (1, WINTERFELL_NULL),
                  (124, CASTELBLACK_NULL), (127, CASTELBLACK_NULL),
-                 (0, CASTELBLACK_NULL), (0, 'Error returning browse list\n' + WINTERFELL_NULL)]
+                 (0, CASTELBLACK_NULL), (0, WS01_FILTERED),
+                 (0, 'Error returning browse list\n' + WINTERFELL_NULL)]
         for rc, text in cases:
             with self.subTest(rc=rc, text=text):
                 self.assertEqual(phase01.share_listing_result(rc, text), 'inconclusive')
@@ -46,6 +49,18 @@ class EvidenceTests(unittest.TestCase):
         self.assertFalse(phase01.sid_resolved(sid + " *unknown*\\*unknown* (8)", sid))
         self.assertFalse(phase01.sid_resolved("NT_STATUS_ACCESS_DENIED", sid))
         self.assertTrue(phase01.sid_resolved(sid + " NORTH\\RenamedAdmin (1)", sid))
+
+    def test_rpc_named_rids_requires_real_enum_rows(self):
+        text = (
+            'user:[Guest] rid:[0x1f5]\n'
+            'user:[samwell.tarly] rid:[0x457]\n'
+            'echo user:[fake] rid:[0x999]\n'
+        )
+        self.assertEqual(
+            phase01.rpc_named_rids(text, 'user'),
+            {'guest': 0x1F5, 'samwell.tarly': 0x457},
+        )
+        self.assertEqual(phase01.rpc_named_rids('NT_STATUS_ACCESS_DENIED\n', 'user'), {})
 
     def test_http_requires_status_and_both_schemes(self):
         headers = "WWW-Authenticate: Negotiate\nWWW-Authenticate: NTLM\n"
@@ -94,8 +109,31 @@ class EvidenceTests(unittest.TestCase):
         def response(command, **kwargs):
             rc = 0
             if command[0] == 'rpcclient':
-                text = ('Domain Sid: S-1-5-21-1-2-3\n' if command[-1] == 'lsaquery'
-                        else 'S-1-5-21-1-2-3-500 NORTH\\Administrator (1)\n')
+                rpc_command = command[-1]
+                if rpc_command == 'lsaquery':
+                    text = 'Domain Sid: S-1-5-21-1-2-3\n'
+                elif rpc_command.startswith('lookupsids '):
+                    text = 'S-1-5-21-1-2-3-500 NORTH\\Administrator (1)\n'
+                elif rpc_command == 'enumdomusers':
+                    text = (
+                        'user:[Guest] rid:[0x1f5]\n'
+                        'user:[samwell.tarly] rid:[0x457]\n'
+                        'user:[sql_svc] rid:[0x45c]\n'
+                    )
+                elif rpc_command == 'enumdomgroups':
+                    text = (
+                        'group:[Domain Users] rid:[0x201]\n'
+                        'group:[Domain Guests] rid:[0x202]\n'
+                        'group:[Night Watch] rid:[0x44f]\n'
+                    )
+                elif rpc_command == 'queryuser 0x1f5':
+                    text = 'User Name   : Guest\nDescription : Built-in account for guest access\n'
+                elif rpc_command == 'querygroup 0x202':
+                    text = 'Group Name: Domain Guests\nNum Members: 1\n'
+                elif rpc_command == 'getdompwinfo':
+                    text = 'min_password_length: 5\npassword_properties: 0x00000000\n'
+                else:
+                    raise AssertionError('unexpected rpcclient command: ' + rpc_command)
             elif command[0] == 'ldapsearch':
                 if command[-1] == 'defaultNamingContext':
                     text = 'dn:\ndefaultNamingContext: DC=north,DC=sevenkingdoms,DC=local\n'
@@ -110,7 +148,9 @@ class EvidenceTests(unittest.TestCase):
                     text = WINTERFELL_NULL
                 elif command[-1] == '//10.4.10.22' and '%' in command:
                     rc, text = 1, CASTELBLACK_NULL
-                elif command[-1] == '//10.4.10.31' or (command[-1] == '//10.4.10.11' and 'Guest%' in command):
+                elif command[-1] == '//10.4.10.31':
+                    rc, text = 1, WS01_FILTERED
+                elif command[-1] == '//10.4.10.11' and 'Guest%' in command:
                     rc, text = 1, 'session setup failed: NT_STATUS_ACCOUNT_DISABLED\n'
                 else:
                     text = 'IPC|IPC$|Remote IPC\nDisk|all|\n'
@@ -129,7 +169,10 @@ class EvidenceTests(unittest.TestCase):
             with patch.object(phase01.subprocess, 'run', side_effect=response), contextlib.redirect_stdout(io.StringIO()):
                 result = phase01.main(['--out', str(Path(temp) / 'results')])
             self.assertEqual(result, 0)
-            self.assertIn('FAIL: 0', (Path(temp) / 'results/SUMMARY.txt').read_text())
+            summary = (Path(temp) / 'results/SUMMARY.txt').read_text()
+            self.assertIn('Anonymous SAMR password policy', summary)
+            self.assertIn('WS01 NULL share listing: filtered/unreachable', summary)
+            self.assertIn('FAIL: 0', summary)
 
 
 if __name__ == "__main__":
