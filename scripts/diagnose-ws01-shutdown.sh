@@ -13,8 +13,13 @@ pass() {
     printf '[PASS] %s\n' "$*"
 }
 
-readonly PROVIDER_DIR="${GOAD_PROVIDER_DIR:-}"
-[[ -n "${PROVIDER_DIR}" ]] || fail 'GOAD_PROVIDER_DIR is required'
+provider_dir="${GOAD_PROVIDER_DIR:-}"
+if [[ -z "${provider_dir}" ]]; then
+    mapfile -t ws01_ids < <(find "${ROOT}/workspace" -type f -path '*/provider/.vagrant/machines/GOAD-WS01/vmware_desktop/id' -print)
+    [[ ${#ws01_ids[@]} -eq 1 ]] || fail 'Cannot select one installed Kingdoms instance; set GOAD_PROVIDER_DIR explicitly.'
+    provider_dir="${ws01_ids[0]%%/.vagrant/*}"
+fi
+readonly PROVIDER_DIR="${provider_dir}"
 [[ -d "${PROVIDER_DIR}" ]] || fail "GOAD_PROVIDER_DIR does not exist: ${PROVIDER_DIR}"
 
 readonly INSTANCE_DIR="$(dirname "${PROVIDER_DIR}")"
