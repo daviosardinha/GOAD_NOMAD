@@ -170,6 +170,19 @@ class RdpAccessContractTests(unittest.TestCase):
         self.assertIn('WTSQuerySessionInformationW', self.text('scripts/rdp-host-evidence.ps1'))
         self.assertIn('Existing session evidence may predate', self.text('scripts/validate-rdp-runtime.sh'))
 
+    def test_directory_transport_explicitly_preserves_json_text(self):
+        text = self.text('ansible/validate-kingdoms-rdp.yml')
+        self.assertIn("hostvars['dc02'].rdp_directory.output[0] | from_json | to_json", text)
+        self.assertIn('exactly the six expected identities', self.text('scripts/rdp-host-evidence.ps1'))
+
+    @unittest.skipUnless(shutil.which('pwsh'), 'PowerShell required for host policy fixtures')
+    def test_host_collector_fixture_matrix(self):
+        result = subprocess.run(
+            ['pwsh', '-NoProfile', '-NonInteractive', '-File',
+             str(ROOT / 'tests/test_rdp_host_evidence.ps1')],
+            capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_guacamole_does_not_merge_legacy_ws01_over_kingdoms(self):
         text = self.text('extensions/guacamole/ansible/install.yml')
         self.assertIn("not (item == 'ws01' and 'ws01' in lab.hosts)", text)

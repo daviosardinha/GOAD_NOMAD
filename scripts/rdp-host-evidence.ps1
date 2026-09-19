@@ -7,6 +7,25 @@ param(
     [bool]$RequireSessions = $false
 )
 $ErrorActionPreference = 'Stop'
+try {
+    $directory = $DirectoryJson | ConvertFrom-Json -ErrorAction Stop
+} catch {
+    throw "Invalid directory evidence JSON; check the Ansible parameter handoff: $($_.Exception.Message)"
+}
+$requiredUsers = @('hodor','brandon.stark','jon.snow','samwell.tarly','rickon.stark','robb.stark')
+$evidenceUsers = @($directory.users.psobject.Properties.Name | Sort-Object)
+if (($evidenceUsers -join ',') -cne (($requiredUsers | Sort-Object) -join ',')) {
+    throw 'Directory evidence must contain exactly the six expected identities'
+}
+foreach ($name in $requiredUsers) {
+    $sidValues = @($directory.users.$name)
+    if ($sidValues.Count -lt 2) { throw "Incomplete directory SID evidence for $name" }
+    foreach ($value in $sidValues) {
+        if ($value -isnot [string] -or $value -cnotmatch '^S-1-[0-9]+(-[0-9]+)+$') {
+            throw "Invalid directory SID evidence for $name"
+        }
+    }
+}
 $cs = Get-CimInstance Win32_ComputerSystem
 if ($cs.Name -ine $ExpectedHost -or $cs.Domain -ine 'north.sevenkingdoms.local') {
     throw 'Unexpected machine/domain; refusing to validate the wrong target'
@@ -104,7 +123,6 @@ public static class KingdomsRdpReadOnly {
 '@
 }
 
-$directory = $DirectoryJson | ConvertFrom-Json
 $allow = @([KingdomsRdpReadOnly]::ReadRight('SeRemoteInteractiveLogonRight') | Sort-Object)
 $deny = @([KingdomsRdpReadOnly]::ReadRight('SeDenyRemoteInteractiveLogonRight') | Sort-Object)
 if (($allow -join ',') -ne 'S-1-5-32-544,S-1-5-32-555') {

@@ -34,7 +34,7 @@ if ${SOURCE_ONLY} && { ${REQUIRE_SESSIONS} || ${PHASE01} || [[ "${TARGET_HOSTS}"
 fi
 cd "${ROOT}"
 bash scripts/verify-test-source.sh
-python3 -m unittest discover -s tests -p 'test_rdp_access_contract.py'
+python3 -m unittest discover -s tests -p 'test_rdp_*.py'
 if ${SOURCE_ONLY}; then
     printf '[PASS] RDP source contract only; Windows runtime has NOT been tested.\n'
     exit 0

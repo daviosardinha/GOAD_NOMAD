@@ -36,7 +36,8 @@
         script: "{{ lookup('file', '../scripts/rdp-host-evidence.ps1') }}"
         parameters:
           ExpectedHost: "{{ lab.hosts[dict_key].hostname }}"
-          DirectoryJson: "{{ hostvars['dc02'].rdp_directory.output[0] }}"
+          # Preserve a JSON string through Ansible's native-type conversion.
+          DirectoryJson: "{{ hostvars['dc02'].rdp_directory.output[0] | from_json | to_json }}"
           RequireSessions: "{{ rdp_require_sessions | default(false) | bool }}"
       changed_when: false
       register: rdp_evidence

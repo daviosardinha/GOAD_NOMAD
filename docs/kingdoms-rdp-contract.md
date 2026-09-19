@@ -106,6 +106,24 @@ The Python suite runs this regression when `pwsh` is available. On Linux, its
 explicitly reported typed stand-in tests dispatch and constructor argument
 binding only; it does not validate Windows SID APIs or live AD behavior.
 
+`tests/test_rdp_transport.py` also uses the installed Ansible templating engine
+in normal and native modes, JSON-encodes the resulting module parameters and
+passes them to the host collector fixtures through PowerShell's
+`AddScript`/`AddParameters` invocation. The final `from_json | to_json` filter
+is intentional: without it, Ansible can turn JSON-looking text into a dictionary,
+which binds to a PowerShell string as `System.Collections.Hashtable`.
+
+`tests/test_rdp_host_evidence.ps1` exercises the production host-policy logic for
+all three hosts, the six identities, twenty rejection cases and required-session
+checks. Windows I/O (LSA, ADSI, account lookup, service/registry/task/session and
+GPO reads) is replaced with explicit fixtures; this does not verify those native
+APIs. Ansible/PowerShell-dependent tests report a skip if their runtime is absent.
+Run the full offline integration suite from an environment with both installed:
+
+```bash
+python3 -m unittest discover -s tests -p 'test_rdp_*.py'
+```
+
 `RDP_POLICY_CONTRACT=...:PASS` proves the inspected authorization configuration;
 it does **not** prove that a fresh desktop session can be opened. Existing session
 evidence can predate a policy change. The script deliberately reports
