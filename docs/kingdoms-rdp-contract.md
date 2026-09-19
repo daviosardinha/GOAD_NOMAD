@@ -93,6 +93,19 @@ evidence logs are not persistent lab-configuration changes.
 
 ### Evidence boundaries
 
+The offline collector regression (`tests/test_rdp_directory_evidence.ps1`) checks
+base-scope queries, typed/binary/string SID values, duplicate removal and invalid
+evidence rejection. AD calls are mocked; it needs no domain or credentials. On
+Windows, run it with Windows PowerShell 5.1 to exercise native SID constructors:
+
+```powershell
+powershell.exe -NoProfile -NonInteractive -File tests/test_rdp_directory_evidence.ps1
+```
+
+The Python suite runs this regression when `pwsh` is available. On Linux, its
+explicitly reported typed stand-in tests dispatch and constructor argument
+binding only; it does not validate Windows SID APIs or live AD behavior.
+
 `RDP_POLICY_CONTRACT=...:PASS` proves the inspected authorization configuration;
 it does **not** prove that a fresh desktop session can be opened. Existing session
 evidence can predate a policy change. The script deliberately reports

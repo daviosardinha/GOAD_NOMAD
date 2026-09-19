@@ -117,12 +117,12 @@ $aliases = @{}
 $machine = [ADSI]("WinNT://" + $env:COMPUTERNAME + ',computer')
 foreach ($group in @($machine.psbase.Children | Where-Object { $_.SchemaClassName -eq 'group' })) {
     $groupBytes = $group.InvokeGet('objectSID')
-    $sid = (New-Object System.Security.Principal.SecurityIdentifier([byte[]]$groupBytes, 0)).Value
+    $sid = [System.Security.Principal.SecurityIdentifier]::new([byte[]]$groupBytes, 0).Value
     $members = @()
     foreach ($rawMember in @($group.psbase.Invoke('Members'))) {
         $member = [ADSI]$rawMember
         $bytes = $member.InvokeGet('objectSID')
-        $members += (New-Object System.Security.Principal.SecurityIdentifier([byte[]]$bytes, 0)).Value
+        $members += [System.Security.Principal.SecurityIdentifier]::new([byte[]]$bytes, 0).Value
     }
     $aliases[$sid] = $members
 }
@@ -130,7 +130,7 @@ if (-not $aliases.ContainsKey('S-1-5-32-555') -or -not $aliases.ContainsKey('S-1
     throw 'Cannot resolve built-in RDP and Administrators memberships'
 }
 $expectedSids = @($expected | ForEach-Object {
-    (New-Object System.Security.Principal.NTAccount($_)).Translate([System.Security.Principal.SecurityIdentifier]).Value
+    [System.Security.Principal.NTAccount]::new([string]$_).Translate([System.Security.Principal.SecurityIdentifier]).Value
 } | Sort-Object)
 $actualSids = @($aliases['S-1-5-32-555'] | Sort-Object)
 if (($expectedSids -join ',') -ne ($actualSids -join ',')) {

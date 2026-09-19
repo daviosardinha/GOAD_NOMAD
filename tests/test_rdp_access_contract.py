@@ -145,8 +145,17 @@ class RdpAccessContractTests(unittest.TestCase):
         self.assertIn('-SearchBase $resolved.DistinguishedName -SearchScope Base', text)
         self.assertIn('-Server $cs.Name -Properties tokenGroups,Enabled', text)
         self.assertIn('$matches.Count -ne 1', text)
-        self.assertIn('$user.SID.Value -ne $resolved.SID.Value', text)
+        self.assertIn('$userSid -ne (ConvertTo-KingdomsSidValue $resolved.SID)', text)
         self.assertNotIn('-Identity $name -Properties tokenGroups', text)
+
+    def test_sid_conversion_is_type_aware(self):
+        text = self.text('scripts/rdp-directory-evidence.ps1')
+        self.assertIn('$Sid -is [System.Security.Principal.SecurityIdentifier]', text)
+        self.assertIn('$Sid -is [byte[]]', text)
+        self.assertIn('$Sid -is [string]', text)
+        self.assertIn('Unsupported directory SID representation', text)
+        for path in ('scripts/rdp-directory-evidence.ps1', 'scripts/rdp-host-evidence.ps1'):
+            self.assertNotIn('New-Object System.Security.Principal', self.text(path))
 
     @unittest.skipUnless(shutil.which('pwsh'), 'PowerShell required for mocked directory queries')
     def test_directory_collector_mocked_queries(self):
