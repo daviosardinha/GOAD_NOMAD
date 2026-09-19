@@ -26,17 +26,21 @@
         - exchange
         - lx01
         - ws01
+      # Kingdoms owns ws01 in its base data; the legacy extension is CasterlyRock.
+      when: not (item == 'ws01' and 'ws01' in lab.hosts)
       register: included_vars
 
     - name: Debug included configs
       debug:
         var: item.ansible_facts.ext_config
       loop: "{{ included_vars.results }}"
+      when: item.ansible_facts is defined
 
     - name: Merge all included configs into lab
       set_fact:
         lab: "{{ lab | combine(item.ansible_facts.ext_config.lab_extension, recursive=True) }}"
       loop: "{{ included_vars.results }}"
+      when: item.ansible_facts is defined
 
     - name: Debug final merged lab variable
       debug:

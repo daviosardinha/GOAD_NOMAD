@@ -14,6 +14,7 @@
     - { role: "settings/user_rights", tags: 'adjust_rights'}
   vars:
     local_groups: "{{lab.hosts[dict_key].local_groups  | default({}) }}"
+    exact_local_groups: "{{lab.hosts[dict_key].exact_local_groups | default([]) }}"
 
 
 # doesen't work see : https://github.com/ansible-collections/community.windows/blob/main/plugins/modules/win_domain_group_membership.ps1

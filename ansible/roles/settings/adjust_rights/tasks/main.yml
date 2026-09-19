@@ -1,7 +1,16 @@
 ---
-- name: Add domain users to local groups
-  win_group_membership:
+- name: Validate narrowly scoped exact membership opt-in
+  ansible.builtin.assert:
+    that:
+      - (exact_local_groups | default([]) | difference(['Remote Desktop Users']) | length) == 0
+      - (exact_local_groups | default([]) | difference(local_groups.keys() | list) | length) == 0
+    fail_msg: Exact membership is supported only for an explicitly declared Remote Desktop Users group.
+
+# Empty lists are intentional: state=pure also reconciles already-deployed hosts.
+# Administrators and all other inherited groups retain additive semantics.
+- name: Reconcile domain users in local groups
+  ansible.windows.win_group_membership:
     name: "{{item.key}}"
     members: "{{ item.value }}"
-    state: present
+    state: "{{ 'pure' if item.key in (exact_local_groups | default([])) else 'present' }}"
   with_dict: "{{ local_groups }}"

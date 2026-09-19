@@ -67,3 +67,4 @@
     - { role: 'settings/user_rights', tags: 'adjust_rights' }
   vars:
     local_groups: "{{lab.hosts[dict_key].local_groups | default({}) }}"
+    exact_local_groups: "{{lab.hosts[dict_key].exact_local_groups | default([]) }}"

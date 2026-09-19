@@ -1,4 +1,8 @@
-- name: Create Local admin connections group 
+- name: Reset generated connection permissions for this run
+  set_fact:
+    connection_list: []
+
+- name: Create Local admin connections group
   scicore.guacamole.guacamole_connections_group:
     base_url: "{{guac_url}}"
     auth_username: "{{guacadmin_username}}"
@@ -6,6 +10,20 @@
     group_name: "{{domain_name}}-LOCAL"
 
 # LOCAL ADMIN
+- name: Remove generated legacy CasterlyRock local admin connection from Kingdoms
+  scicore.guacamole.guacamole_connection:
+    base_url: "{{guac_url}}"
+    auth_username: "{{guacadmin_username}}"
+    auth_password: "{{guacadmin_password}}"
+    connection_name: RDP-ws01-casterlyrock-localadmin
+    group_name: "{{domain_name}}-LOCAL"
+    protocol: rdp
+    validate_certs: false
+    state: absent
+  when:
+    - "'ws01' in hosts"
+    - "'Remote Desktop Users' in hosts.ws01.get('exact_local_groups', [])"
+
 - name: Add Local RDP Admin connection
   scicore.guacamole.guacamole_connection:
     base_url: "{{guac_url}}"
@@ -17,7 +35,7 @@
     hostname: "{{hostvars[item.key].ansible_host}}"
     port: "3389"
     username: "{{admin_user}}"
-    password: "{{ item.value.local_admin_password }}"
+    password: "{{ item.value.local_admin_password | default(domains[item.value.domain].domain_password) }}"
     rdp_server_layout: "{{layout}}"
     rdp_ignore_server_certs: true
     validate_certs: false
