@@ -146,12 +146,34 @@ inventory = Path('ad/GOAD/data/inventory').read_text()
 if not re.search(r'(?m)^ws01\s*$', inventory):
     fail('GOAD lab inventory does not include ws01')
 
-provider_inventory = Path('ad/GOAD/providers/vmware/inventory').read_text()
-if not re.search(
-    r'(?m)^ws01\s+ansible_host=10\.4\.10\.31\s+dns_domain=dc02\s+dict_key=ws01\s*$',
-    provider_inventory,
-):
-    fail('GOAD VMware provider inventory does not pin ws01 to 10.4.10.31')
+provider_inventory = Path('ad/GOAD/providers/vmware/inventory').read_text().splitlines()
+ws01_lines = [
+    line.strip()
+    for line in provider_inventory
+    if re.match(r'^\s*ws01(?:\s|$)', line)
+]
+if len(ws01_lines) != 1:
+    fail(f'Kingdoms VMware provider inventory must define exactly one ws01 entry: {ws01_lines}')
+
+parts = ws01_lines[0].split()
+ws01_vars = dict(
+    token.split('=', 1)
+    for token in parts[1:]
+    if '=' in token
+)
+
+expected_ws01_vars = {
+    'ansible_host': '10.4.10.31',
+    'dns_domain': 'dc02',
+    'dict_key': 'ws01',
+}
+for key, expected_value in expected_ws01_vars.items():
+    actual_value = ws01_vars.get(key)
+    if actual_value != expected_value:
+        fail(
+            f'Kingdoms VMware ws01 {key} mismatch: '
+            f'expected={expected_value!r} actual={actual_value!r}'
+        )
 
 provider_factory = Path('goad/provider/provider_factory.py').read_text()
 if 'GoadKingdomsVmwareProvider' not in provider_factory:
