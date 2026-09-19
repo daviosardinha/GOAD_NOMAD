@@ -262,7 +262,7 @@ fi
 
 section '9. MSSQL — SERVER ROLE CONTRACT'
 if [[ -n "$MSSQLCLIENT" ]]; then
-  for user in jon.snow samwell.tarly brandon.stark; do
+  for user in hodor brandon.stark jon.snow samwell.tarly rickon.stark; do
     log="$EVIDENCE/mssql-role-$user.log"
     printf "SELECT SYSTEM_USER;\nSELECT IS_SRVROLEMEMBER('sysadmin');\nexit\n" | \
       timeout 45 env PATH=/usr/bin:/bin "$MSSQLCLIENT" "$DOMAIN_NB/$user:${PASSWD[$user]}@$CASTELBLACK" -windows-auth \
