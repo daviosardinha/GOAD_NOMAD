@@ -90,6 +90,8 @@ for key, value in expected.items():
 rdp_users = ws01.get('local_groups', {}).get('Remote Desktop Users', [])
 if rdp_users != ['north\\rickon.stark']:
     fail(f'WS01 RDP foothold must be exactly NORTH\\rickon.stark: {rdp_users!r}')
+if ws01.get('exact_local_groups') != ['Remote Desktop Users']:
+    fail('WS01 RDP membership must be reconciled exactly, including existing deployments')
 
 admins = [
     value.lower()
