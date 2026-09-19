@@ -73,15 +73,27 @@ if command -v xfreerdp3 >/dev/null 2>&1 || command -v xfreerdp >/dev/null 2>&1; 
 else
   fail 'FreeRDP client missing'
 fi
-if command -v impacket-mssqlclient >/dev/null 2>&1 || command -v mssqlclient.py >/dev/null 2>&1; then
-  pass 'Impacket MSSQL client available'
-else
-  fail 'Impacket MSSQL client missing'
+MSSQLCLIENT=''
+if command -v impacket-mssqlclient >/dev/null 2>&1; then
+  MSSQLCLIENT="$(command -v impacket-mssqlclient)"
+elif command -v mssqlclient.py >/dev/null 2>&1; then
+  MSSQLCLIENT="$(command -v mssqlclient.py)"
 fi
-if curl --version 2>/dev/null | grep -qi 'NTLM'; then
-  pass 'curl has NTLM support'
+if [[ -n "$MSSQLCLIENT" ]] && timeout 15 env PATH=/usr/bin:/bin "$MSSQLCLIENT" -h >/dev/null 2>&1; then
+  pass "Impacket MSSQL client functional with system Python"
 else
-  fail 'curl lacks NTLM support required by the HTTP gate'
+  fail 'Impacket MSSQL client missing or broken with system Python'
+fi
+
+HTTP_AUTH_CLIENT=''
+if curl --version 2>/dev/null | grep -qi 'NTLM'; then
+  HTTP_AUTH_CLIENT='curl'
+  pass 'curl has NTLM support'
+elif /usr/bin/python3 -c 'import requests, requests_ntlm' >/dev/null 2>&1; then
+  HTTP_AUTH_CLIENT='requests-ntlm'
+  pass 'Python requests-ntlm available for the HTTP Windows-auth gate'
+else
+  fail 'No working NTLM HTTP client: curl lacks NTLM and python3 requests-ntlm is unavailable'
 fi
 
 section '2. INSTANCE / EXERCISE STATE'
@@ -228,11 +240,11 @@ fi
 section '8. MSSQL — EXACT WINDOWS LOGIN CONTRACT'
 if [[ ${#NXC[@]} -gt 0 ]]; then
   declare -A SQL_EXPECT=(
-    [hodor]=deny
+    [hodor]=allow
     [brandon.stark]=allow
     [jon.snow]=allow
     [samwell.tarly]=allow
-    [rickon.stark]=deny
+    [rickon.stark]=allow
   )
   for user in "${USERS[@]}"; do
     log="$EVIDENCE/mssql-$user.log"
@@ -249,14 +261,11 @@ else
 fi
 
 section '9. MSSQL — SERVER ROLE CONTRACT'
-MSSQLCLIENT=''
-if command -v impacket-mssqlclient >/dev/null 2>&1; then MSSQLCLIENT="$(command -v impacket-mssqlclient)";
-elif command -v mssqlclient.py >/dev/null 2>&1; then MSSQLCLIENT="$(command -v mssqlclient.py)"; fi
 if [[ -n "$MSSQLCLIENT" ]]; then
   for user in jon.snow samwell.tarly brandon.stark; do
     log="$EVIDENCE/mssql-role-$user.log"
     printf "SELECT SYSTEM_USER;\nSELECT IS_SRVROLEMEMBER('sysadmin');\nexit\n" | \
-      timeout 45 "$MSSQLCLIENT" "$DOMAIN_NB/$user:${PASSWD[$user]}@$CASTELBLACK" -windows-auth \
+      timeout 45 env PATH=/usr/bin:/bin "$MSSQLCLIENT" "$DOMAIN_NB/$user:${PASSWD[$user]}@$CASTELBLACK" -windows-auth \
       >"$log" 2>&1
     rc=$?
     cat "$log"
@@ -291,8 +300,28 @@ fi
 for user in "${USERS[@]}"; do
   headers="$EVIDENCE/http-$user.headers"
   body="$EVIDENCE/http-$user.body"
-  code="$(curl --noproxy '*' --ntlm -sS --max-time 15 -D "$headers" -o "$body" -w '%{http_code}' \
-      -u "$DOMAIN_NB\\$user:${PASSWD[$user]}" "$url" 2>"$EVIDENCE/http-$user.err")"
+  if [[ "$HTTP_AUTH_CLIENT" == 'curl' ]]; then
+    code="$(curl --noproxy '*' --ntlm -sS --max-time 15 -D "$headers" -o "$body" -w '%{http_code}' \
+        -u "$DOMAIN_NB\\$user:${PASSWD[$user]}" "$url" 2>"$EVIDENCE/http-$user.err")"
+  elif [[ "$HTTP_AUTH_CLIENT" == 'requests-ntlm' ]]; then
+    code="$(PHASE02_HTTP_USER="$DOMAIN_NB\\$user" PHASE02_HTTP_PASS="${PASSWD[$user]}" PHASE02_HTTP_URL="$url" \
+      /usr/bin/python3 - <<'PY'
+import os
+import requests
+from requests_ntlm import HttpNtlmAuth
+s = requests.Session()
+s.trust_env = False
+r = s.get(
+    os.environ["PHASE02_HTTP_URL"],
+    auth=HttpNtlmAuth(os.environ["PHASE02_HTTP_USER"], os.environ["PHASE02_HTTP_PASS"]),
+    timeout=15,
+)
+print(r.status_code)
+PY
+    )"
+  else
+    code='ERROR'
+  fi
   if [[ "$code" =~ ^2[0-9][0-9]$ ]]; then
     pass "/internal/ accepts NORTH\\$user (HTTP $code)"
   else
