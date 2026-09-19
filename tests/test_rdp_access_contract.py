@@ -4,6 +4,7 @@ import hashlib
 import importlib.util
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import unittest
 
@@ -137,6 +138,23 @@ class RdpAccessContractTests(unittest.TestCase):
                               'gpupdate', 'secedit.exe', 'logoff.exe'):
                 with self.subTest(path=path, forbidden=forbidden):
                     self.assertNotIn(forbidden, text)
+
+    def test_directory_token_groups_use_explicit_base_search(self):
+        text = self.text('scripts/rdp-directory-evidence.ps1')
+        self.assertIn('Get-ADUser -Identity $name -Server $cs.Name', text)
+        self.assertIn('-SearchBase $resolved.DistinguishedName -SearchScope Base', text)
+        self.assertIn('-Server $cs.Name -Properties tokenGroups,Enabled', text)
+        self.assertIn('$matches.Count -ne 1', text)
+        self.assertIn('$user.SID.Value -ne $resolved.SID.Value', text)
+        self.assertNotIn('-Identity $name -Properties tokenGroups', text)
+
+    @unittest.skipUnless(shutil.which('pwsh'), 'PowerShell required for mocked directory queries')
+    def test_directory_collector_mocked_queries(self):
+        result = subprocess.run(
+            ['pwsh', '-NoProfile', '-NonInteractive', '-File',
+             str(ROOT / 'tests/test_rdp_directory_evidence.ps1')],
+            capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_runtime_never_claims_real_logins(self):
         self.assertIn('DESKTOP_LOGON_MATRIX=NOT_EXECUTED', self.text('scripts/rdp-host-evidence.ps1'))
