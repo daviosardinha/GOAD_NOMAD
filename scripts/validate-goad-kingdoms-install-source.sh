@@ -23,6 +23,7 @@ readonly REQUIRED=(
     goad/provider/vagrant/vmware_kingdoms.py
     playbooks.yml
     ansible/ws01.yml
+    ansible/phase01.yml
     ansible/ws01-lpe-install.yml
     ansible/windows-lpe.yml
     ansible/roles/settings/enable_nat_adapter/tasks/main.yml
@@ -95,6 +96,7 @@ expected = [
     'servers.yml',
     'security.yml',
     'vulnerabilities.yml',
+    'phase01.yml',
     'ws01-lpe-install.yml',
 ]
 actual = playbooks.get('GOAD')
@@ -102,6 +104,10 @@ if actual != expected:
     fail(f'GOAD clean-install playbook sequence mismatch:\nexpected={expected}\nactual={actual}')
 if actual.index('ws01.yml') <= actual.index('ad-data.yml'):
     fail('ws01.yml must run after ad-data.yml so NORTH\\rickon.stark exists')
+if actual.index('phase01.yml') <= actual.index('vulnerabilities.yml'):
+    fail('phase01.yml must run after vulnerabilities.yml')
+if actual.index('phase01.yml') >= actual.index('ws01-lpe-install.yml'):
+    fail('phase01.yml must run before final WS01 LPE seeding')
 if actual[-1] != 'ws01-lpe-install.yml':
     fail('WS01 full LPE seeding must be the final GOAD Ansible stage')
 
