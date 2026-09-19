@@ -118,6 +118,11 @@ all three hosts, the six identities, twenty rejection cases and required-session
 checks. Windows I/O (LSA, ADSI, account lookup, service/registry/task/session and
 GPO reads) is replaced with explicit fixtures; this does not verify those native
 APIs. Ansible/PowerShell-dependent tests report a skip if their runtime is absent.
+The root `\connect_bot` task's run-as identity is resolved to a SID and compared
+with the SID of `NORTH\robb.stark`, not matched against a name-format regex.
+The collector reports the stored principal, resolved SID and expected SID;
+unresolved or different identities still fail. Fixture tests cover equivalent
+name/SID representations and wrong-domain or same-name/different-SID accounts.
 Run the full offline integration suite from an environment with both installed:
 
 ```bash

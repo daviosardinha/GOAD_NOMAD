@@ -9,6 +9,25 @@ $inputParameters = if ($FromStdin) { [Console]::In.ReadToEnd() | ConvertFrom-Jso
 
 Add-Type -TypeDefinition @'
 using System;
+using System.Collections.Generic;
+public sealed class KingdomsFixtureSid {
+    public string Value { get; private set; }
+    public KingdomsFixtureSid(string value) {
+        if (value == null || !System.Text.RegularExpressions.Regex.IsMatch(value, @"^S-1-\d+(-\d+)+$"))
+            throw new ArgumentException("Invalid SID fixture");
+        Value = value;
+    }
+}
+public sealed class KingdomsFixtureAccount {
+    public static Dictionary<string, string> Accounts = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    private string name;
+    public KingdomsFixtureAccount(string name) { this.name = name; }
+    public KingdomsFixtureSid Translate(Type target) {
+        if (target != typeof(KingdomsFixtureSid) || !Accounts.ContainsKey(name))
+            throw new ArgumentException("Account not mapped in fixture");
+        return new KingdomsFixtureSid(Accounts[name]);
+    }
+}
 public static class KingdomsRdpReadOnly {
     public static string[] Allow;
     public static string[] Deny;
@@ -33,9 +52,6 @@ foreach ($statement in $ast.EndBlock.Statements) {
         switch ($statement.Left.Extent.Text) {
             '$aliases' { $replacement = '$aliases = $fixture.Aliases' }
             '$machine' { $replacement = '' }
-            '$expectedSids' {
-                $replacement = '$expectedSids = @($expected | ForEach-Object { if (-not $fixture.NamedSids.ContainsKey($_)) { throw "Unexpected account $_" }; $fixture.NamedSids[$_] } | Sort-Object)'
-            }
         }
     } elseif ($statement -is [System.Management.Automation.Language.ForEachStatementAst] -and
               $statement.Variable.VariablePath.UserPath -eq 'group') {
@@ -45,10 +61,13 @@ foreach ($statement in $ast.EndBlock.Statements) {
         $edits += @{ Start = $statement.Extent.StartOffset; Length = $statement.Extent.EndOffset - $statement.Extent.StartOffset; Text = $replacement }
     }
 }
-if ($edits.Count -ne 4) { throw 'Native read boundaries changed; update the integration fixture deliberately' }
+if ($edits.Count -ne 3) { throw 'Native read boundaries changed; update the integration fixture deliberately' }
 foreach ($edit in $edits | Sort-Object Start -Descending) {
     $source = $source.Remove($edit.Start, $edit.Length).Insert($edit.Start, $edit.Text)
 }
+# Keep the production account-resolution branches; mock only native API types.
+$source = $source.Replace('[System.Security.Principal.NTAccount]', '[KingdomsFixtureAccount]').Replace(
+    '[System.Security.Principal.SecurityIdentifier]', '[KingdomsFixtureSid]')
 function Invoke-HostCollector {
     param([hashtable]$Parameters)
     # Use win_powershell's actual AddScript/AddParameters invocation pattern.
@@ -68,8 +87,8 @@ function Invoke-HostCollector {
 function Get-CimInstance { param($ClassName) [pscustomobject]@{ Name = $fixture.Host; Domain = $fixture.Domain } }
 function Get-Service { param($Name) [pscustomobject]@{ Status = $fixture.Service } }
 function Get-ItemProperty { param($Path) [pscustomobject]@{ fDenyTSConnections = $fixture.ListenerDisabled; UserAuthentication = $fixture.Nla } }
-function Get-ScheduledTask { param($TaskName) [pscustomobject]@{ State = $fixture.TaskState; Principal = [pscustomobject]@{ UserId = $fixture.TaskOwner } } }
-function Get-ScheduledTaskInfo { param($TaskName) [pscustomobject]@{ LastTaskResult = $fixture.TaskResult } }
+function Get-ScheduledTask { param($TaskName, $TaskPath) if ($TaskPath -ne '\') { throw 'Expected root task path' }; [pscustomobject]@{ State = $fixture.TaskState; Principal = [pscustomobject]@{ UserId = $fixture.TaskOwner } } }
+function Get-ScheduledTaskInfo { param($TaskName, $TaskPath) if ($TaskPath -ne '\') { throw 'Expected root task path' }; [pscustomobject]@{ LastTaskResult = $fixture.TaskResult } }
 function gpresult.exe { $global:LASTEXITCODE = $fixture.GpExit; 'MOCK_GPRESULT' }
 
 function New-HostFixture {
@@ -77,6 +96,14 @@ function New-HostFixture {
     [KingdomsRdpReadOnly]::Allow = @('S-1-5-32-544','S-1-5-32-555')
     [KingdomsRdpReadOnly]::Deny = @()
     [KingdomsRdpReadOnly]::Sessions = @()
+    [KingdomsFixtureAccount]::Accounts.Clear()
+    foreach ($name in @('NORTH\robb.stark', 'north.sevenkingdoms.local\robb.stark',
+                       'robb.stark@north.sevenkingdoms.local', 'robb.stark')) {
+        [KingdomsFixtureAccount]::Accounts[$name] = 'S-1-5-21-1-2-3-1106'
+    }
+    [KingdomsFixtureAccount]::Accounts['NORTH\rickon.stark'] = 'S-1-5-21-1-2-3-1105'
+    [KingdomsFixtureAccount]::Accounts['NORTH\other'] = 'S-1-5-21-1-2-3-9999'
+    [KingdomsFixtureAccount]::Accounts['OTHER\robb.stark'] = 'S-1-5-21-9-9-9-1106'
     $aliases = @{ 'S-1-5-32-544' = @('S-1-5-21-1-2-3-9999'); 'S-1-5-32-555' = @() }
     switch ($HostName) {
         WINTERFELL { $aliases['S-1-5-32-544'] = @('S-1-5-21-1-2-3-1106') }
@@ -85,7 +112,6 @@ function New-HostFixture {
     }
     @{
         Host = $HostName; Domain = 'north.sevenkingdoms.local'; Aliases = $aliases
-        NamedSids = @{ 'NORTH\rickon.stark' = 'S-1-5-21-1-2-3-1105'; 'NORTH\robb.stark' = 'S-1-5-21-1-2-3-1106' }
         Service = 'Running'; ListenerDisabled = 0; Nla = 1; GpExit = 0
         TaskState = 'Ready'; TaskResult = 0; TaskOwner = 'NORTH\robb.stark'
     }
@@ -131,7 +157,7 @@ $failures = @{
     missing_session = 'Required existing RDP session not observed'
     failed_gpresult = 'Cannot read resultant computer Group Policy'
     broken_bot = 'connect_bot health check failed'
-    wrong_bot_owner = 'connect_bot is not owned by'
+    wrong_bot_owner = 'connect_bot runs as unexpected account'
 }
 foreach ($case in $failures.Keys) {
     $hostName = if ($case -in @('broken_bot','wrong_bot_owner')) { 'WINTERFELL' } else { 'WS01' }
@@ -169,4 +195,38 @@ foreach ($hostName in @('CASTELBLACK','WS01')) {
     $output = @(Invoke-HostCollector @{ ExpectedHost = $hostName; DirectoryJson = $directoryJson; RequireSessions = $true })
     if ($output -notcontains "RDP_POLICY_CONTRACT=${hostName}:PASS") { throw 'Expected observed-session acceptance' }
 }
-Write-Output 'PASS: three-host policy matrix, twenty negative cases, and required-session checks (Windows reads mocked)'
+foreach ($identity in @('NORTH\robb.stark', 'north\ROBB.STARK', 'north.sevenkingdoms.local\robb.stark',
+                       'robb.stark@north.sevenkingdoms.local', 'robb.stark', 'S-1-5-21-1-2-3-1106')) {
+    $fixture = New-HostFixture 'WINTERFELL'
+    $fixture.TaskOwner = $identity
+    $output = @(Invoke-HostCollector @{ ExpectedHost = 'WINTERFELL'; DirectoryJson = $directoryJson })
+    if ($output -notcontains 'CONNECT_BOT_PRINCIPAL_CHECK=PASS' -or
+        $output -notcontains 'RDP_POLICY_CONTRACT=WINTERFELL:PASS') { throw "Equivalent identity rejected: $identity" }
+}
+$principalFailures = @{
+    'OTHER\robb.stark' = 'connect_bot runs as unexpected account'
+    'S-1-5-21-9-9-9-1106' = 'connect_bot runs as unexpected account'
+    'S-1-5-32-544' = 'connect_bot runs as unexpected account'
+    'unmapped.user' = 'Cannot resolve connect_bot principal'
+    'S-1-invalid' = 'Cannot resolve connect_bot principal'
+    '' = 'Cannot resolve connect_bot principal'
+}
+foreach ($identity in $principalFailures.Keys) {
+    $fixture = New-HostFixture 'WINTERFELL'
+    $fixture.TaskOwner = $identity
+    $failure = $null
+    try { $null = Invoke-HostCollector @{ ExpectedHost = 'WINTERFELL'; DirectoryJson = $directoryJson } }
+    catch { $failure = $_.Exception.Message }
+    if (-not $failure -or -not $failure.StartsWith($principalFailures[$identity])) {
+        throw "Expected principal rejection for '$identity'; got: $failure"
+    }
+}
+# A bare username must not be accepted if Windows resolves it to another SID.
+$fixture = New-HostFixture 'WINTERFELL'
+$fixture.TaskOwner = 'robb.stark'
+[KingdomsFixtureAccount]::Accounts['robb.stark'] = 'S-1-5-21-9-9-9-1106'
+$failure = $null
+try { $null = Invoke-HostCollector @{ ExpectedHost = 'WINTERFELL'; DirectoryJson = $directoryJson } }
+catch { $failure = $_.Exception.Message }
+if (-not $failure -or -not $failure.StartsWith('connect_bot runs as unexpected account')) { throw 'Bare-name SID collision was not rejected' }
+Write-Output 'PASS: three-host matrix, twenty negative cases, sessions, six equivalent principal formats and seven principal rejections (Windows APIs mocked)'

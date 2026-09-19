@@ -175,6 +175,13 @@ class RdpAccessContractTests(unittest.TestCase):
         self.assertIn("hostvars['dc02'].rdp_directory.output[0] | from_json | to_json", text)
         self.assertIn('exactly the six expected identities', self.text('scripts/rdp-host-evidence.ps1'))
 
+    def test_bot_principal_is_compared_by_sid_not_name_format(self):
+        text = self.text('scripts/rdp-host-evidence.ps1')
+        self.assertIn("Resolve-KingdomsAccountSid 'NORTH\\robb.stark'", text)
+        self.assertIn('$actualBotSid -ne $expectedBotSid', text)
+        self.assertIn('CONNECT_BOT_PRINCIPAL=$taskIdentity', text)
+        self.assertNotIn('$task.Principal.UserId -inotmatch', text)
+
     @unittest.skipUnless(shutil.which('pwsh'), 'PowerShell required for host policy fixtures')
     def test_host_collector_fixture_matrix(self):
         result = subprocess.run(

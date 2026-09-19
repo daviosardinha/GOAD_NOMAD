@@ -7,6 +7,16 @@ param(
     [bool]$RequireSessions = $false
 )
 $ErrorActionPreference = 'Stop'
+function Resolve-KingdomsAccountSid {
+    param([AllowEmptyString()][string]$Identity)
+    if ([string]::IsNullOrWhiteSpace($Identity)) { throw 'Account identity is empty' }
+    if ($Identity -match '^S-[0-9]+-') {
+        return [System.Security.Principal.SecurityIdentifier]::new($Identity).Value
+    }
+    return [System.Security.Principal.NTAccount]::new($Identity).Translate(
+        [System.Security.Principal.SecurityIdentifier]).Value
+}
+
 try {
     $directory = $DirectoryJson | ConvertFrom-Json -ErrorAction Stop
 } catch {
@@ -205,14 +215,29 @@ if ($requiredSession -and $sessions -notcontains $requiredSession) {
     Write-Output "SESSION_EVIDENCE=PENDING:$requiredSession"
 }
 if ($ExpectedHost -ieq 'WINTERFELL') {
-    $task = Get-ScheduledTask -TaskName connect_bot
-    $info = Get-ScheduledTaskInfo -TaskName connect_bot
+    $task = Get-ScheduledTask -TaskName connect_bot -TaskPath '\'
+    $info = Get-ScheduledTaskInfo -TaskName connect_bot -TaskPath '\'
     if ($task.State.ToString() -notin @('Ready','Running') -or $info.LastTaskResult -ne 0) {
         throw 'connect_bot health check failed'
     }
-    if ($task.Principal.UserId -inotmatch '(^NORTH\\|^north\.sevenkingdoms\.local\\)robb\.stark$') {
-        throw 'connect_bot is not owned by NORTH\robb.stark'
+    # Compare account identities, not Task Scheduler's display/storage format.
+    $taskIdentity = [string]$task.Principal.UserId
+    Write-Output "CONNECT_BOT_PRINCIPAL=$taskIdentity"
+    try {
+        $expectedBotSid = Resolve-KingdomsAccountSid 'NORTH\robb.stark'
+        $actualBotSid = Resolve-KingdomsAccountSid $taskIdentity
+    } catch {
+        throw "Cannot resolve connect_bot principal '$taskIdentity' or expected NORTH\robb.stark: $($_.Exception.Message)"
     }
+    Write-Output "CONNECT_BOT_PRINCIPAL_SID=$actualBotSid"
+    Write-Output "CONNECT_BOT_EXPECTED_SID=$expectedBotSid"
+    if ($directory.users.'robb.stark' -notcontains $expectedBotSid) {
+        throw 'Resolved NORTH\robb.stark SID does not match the directory evidence'
+    }
+    if ($actualBotSid -ne $expectedBotSid) {
+        throw "connect_bot runs as unexpected account '$taskIdentity' (SID $actualBotSid); expected NORTH\robb.stark (SID $expectedBotSid)"
+    }
+    Write-Output 'CONNECT_BOT_PRINCIPAL_CHECK=PASS'
 }
 & gpresult.exe /scope computer /r
 if ($LASTEXITCODE -ne 0) { throw 'Cannot read resultant computer Group Policy' }
