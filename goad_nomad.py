@@ -197,8 +197,13 @@ class GoadNomad(BaseGoad):
         return None
 
     def do_install(self, arg=''):
-        """Run the canonical interactive install with a total elapsed timer."""
-        return self._run_with_install_timer(lambda: self.do_create(arg))
+        """Run a full install and return success only for an installed instance."""
+        result = self._run_with_install_timer(lambda: self.do_create(arg))
+        if result is False:
+            return False
+
+        instance = self.lab_manager.get_current_instance()
+        return instance is not None and instance.get_status() == READY
 
     def do_provide(self, arg=''):
         """Run the provider and return the result from *this* attempt.
@@ -472,11 +477,14 @@ def _dispatch_task(goad, args):
             if args.run_playbook is not None:
                 goad.do_provision(args.run_playbook)
             elif args.ansible_only:
-                goad.do_provision_lab()
+                if not goad.do_provision_lab():
+                    return 1
             else:
-                goad.do_install_instance()
+                if not goad.do_install_instance():
+                    return 1
         else:
-            goad.do_install()
+            if not goad.do_install():
+                return 1
     elif args.task == 'check':
         goad.do_check()
     elif args.task == 'start':

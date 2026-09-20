@@ -259,6 +259,35 @@ class ToolsReportingTests(unittest.TestCase):
         self.provider._recover_failed_windows_vagrant_up.assert_called_once_with('GOAD-SRV02')
         self.process.run.assert_not_called()
 
+    def test_failed_first_up_can_recover_before_canonical_ip_exists(self):
+        self.provider.prepare_install = Mock(return_value=True)
+        self.provider._sync_goad_nomad_inventories = Mock(return_value=True)
+        self.provider._sync_goad_nomad_vagrantfile_compatibility = Mock(return_value=True)
+        self.provider._bring_up_router = Mock(return_value=True)
+        self.provider.command.run_vagrant = Mock(return_value=False)
+        self.provider._ensure_vmware_tools = Mock(return_value=False)
+        self.provider._authenticated_guest_recovery_ready = Mock(return_value=True)
+        self.provider._recover_failed_windows_vagrant_up = Mock(return_value=False)
+
+        self.assertFalse(self.provider.install())
+
+        self.provider._authenticated_guest_recovery_ready.assert_called_once_with('GOAD-SRV02')
+        self.provider._recover_failed_windows_vagrant_up.assert_called_once_with('GOAD-SRV02')
+
+    def test_failed_first_up_still_fails_closed_without_recovery_readiness(self):
+        self.provider.prepare_install = Mock(return_value=True)
+        self.provider._sync_goad_nomad_inventories = Mock(return_value=True)
+        self.provider._sync_goad_nomad_vagrantfile_compatibility = Mock(return_value=True)
+        self.provider._bring_up_router = Mock(return_value=True)
+        self.provider.command.run_vagrant = Mock(return_value=False)
+        self.provider._ensure_vmware_tools = Mock(return_value=False)
+        self.provider._authenticated_guest_recovery_ready = Mock(return_value=False)
+        self.provider._recover_failed_windows_vagrant_up = Mock()
+
+        self.assertFalse(self.provider.install())
+
+        self.provider._recover_failed_windows_vagrant_up.assert_not_called()
+
     def test_authenticated_guest_state_wins_over_broken_vmrun_reporting(self):
         """Healthy authenticated guest must survive stale VIX telemetry."""
         self.provider.management_hosts = {'GOAD-SRV02': '10.4.10.22'}

@@ -429,6 +429,55 @@ if (
             and b'GOAD_KINGDOMS_GUEST_READY' in result.std_out
         )
 
+    def _authenticated_guest_recovery_ready(self, machine, timeout=60):
+        """Prove enough pre-provision guest health for one recovery cycle.
+
+        A failed first Vagrant bring-up can stop before fix_ip.ps1 assigns the
+        canonical KINGDOMS address. Requiring that address before permitting the
+        recovery vagrant up --provision creates a circular dependency: the
+        provisioner that assigns the address is never allowed to run.
+
+        For this narrow failed-first-up path, require only authenticated
+        forwarded WinRM plus a running VMware Tools service/process. The
+        recovery cycle must still finish by passing the normal
+        _ensure_vmware_tools gate, which requires the canonical KINGDOMS
+        address before installation may continue.
+        """
+        try:
+            port = self._winrm_forwarded_port(machine)
+        except Exception:
+            return False
+
+        if not port or not self._wait_winrm_ready(port, timeout):
+            return False
+
+        try:
+            result = self._winrm_session(port).run_ps(r"""
+$ErrorActionPreference = 'Stop'
+$svc = Get-Service -Name VMTools -ErrorAction Stop
+$file = Test-Path 'C:\\Program Files\\VMware\\VMware Tools\\vmtoolsd.exe'
+$proc = Get-Process -Name vmtoolsd -ErrorAction SilentlyContinue
+
+if (
+    $svc.Status -eq 'Running' -and
+    $file -and
+    $proc
+) {
+    Write-Output 'GOAD_KINGDOMS_RECOVERY_READY'
+}
+""")
+        except Exception as exc:
+            Log.warning(
+                f'GOAD Kingdoms: pre-provision recovery readiness failed for '
+                f'{machine}: {type(exc).__name__}'
+            )
+            return False
+
+        return (
+            result.status_code == 0
+            and b'GOAD_KINGDOMS_RECOVERY_READY' in result.std_out
+        )
+
     def _ensure_vmware_tools(self, machine):
         """Use authenticated guest state as authority for KINGDOMS readiness.
 
@@ -724,8 +773,15 @@ Write-Output 'GOAD_VMTOOLS_RESTARTED'
             Log.info(f'GOAD_NOMAD: bringing up {machine}')
             first_up = self.command.run_vagrant(['up', machine], self.path)
 
-            if not self._ensure_vmware_tools(machine):
-                return False
+            tools_ready = self._ensure_vmware_tools(machine)
+            if not tools_ready:
+                if first_up or not self._authenticated_guest_recovery_ready(machine):
+                    return False
+                Log.warning(
+                    f'GOAD Kingdoms: {machine} has authenticated WinRM and healthy '
+                    'VMware Tools but has not reached its canonical KINGDOMS address; '
+                    'allowing one bounded recovery provision cycle'
+                )
 
             if not first_up:
                 if not self._recover_failed_windows_vagrant_up(machine):
