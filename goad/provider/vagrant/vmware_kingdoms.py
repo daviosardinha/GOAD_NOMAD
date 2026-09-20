@@ -455,7 +455,7 @@ if (
             result = self._winrm_session(port).run_ps(r"""
 $ErrorActionPreference = 'Stop'
 $svc = Get-Service -Name VMTools -ErrorAction Stop
-$file = Test-Path 'C:\\Program Files\\VMware\\VMware Tools\\vmtoolsd.exe'
+$file = Test-Path 'C:\Program Files\VMware\VMware Tools\vmtoolsd.exe'
 $proc = Get-Process -Name vmtoolsd -ErrorAction SilentlyContinue
 
 if (

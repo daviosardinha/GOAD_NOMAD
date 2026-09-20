@@ -304,6 +304,7 @@ class ToolsReportingTests(unittest.TestCase):
         script = self.session.run_ps.call_args.args[0]
         self.assertIn('VMTools', script)
         self.assertIn('vmtoolsd', script)
+        self.assertIn(r'C:\\Program Files\\VMware\\VMware Tools\\vmtoolsd.exe', script)
         self.assertNotIn('Get-NetIPAddress', script)
         self.assertNotIn('10.4.10.22', script)
         self.provider._wait_winrm_ready.assert_called_once_with(2207, 60)
