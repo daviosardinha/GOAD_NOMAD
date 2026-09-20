@@ -22,6 +22,7 @@
     - role: kingdoms_health/member
   vars:
     kingdoms_health_domain: "{{ lab.hosts[dict_key].domain }}"
+    kingdoms_health_domain_controller: "{{ lab.hosts[lab.domains[kingdoms_health_domain].dc].hostname }}.{{ kingdoms_health_domain }}"
     kingdoms_health_domain_admin: "{{ admin_user }}@{{ kingdoms_health_domain }}"
     kingdoms_health_domain_password: "{{ lab.domains[kingdoms_health_domain].domain_password }}"
     kingdoms_health_repair: true

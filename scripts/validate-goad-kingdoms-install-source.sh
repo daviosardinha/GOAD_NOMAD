@@ -132,6 +132,7 @@ require_tokens(
         'hosts: server:workstation',
         'role: kingdoms_health/dc',
         'role: kingdoms_health/member',
+        'kingdoms_health_domain_controller:',
         'kingdoms_health_repair: true',
     ),
 )
@@ -143,6 +144,7 @@ require_tokens(
     (
         'hosts: dc',
         'hosts: server:workstation',
+        'kingdoms_health_domain_controller:',
         'kingdoms_health_repair: false',
     ),
 )
@@ -158,6 +160,11 @@ require_tokens(
         'Resolve-DnsName',
         'w32tm.exe',
         'AllowRepair',
+        'DomainController',
+        'Wait-DomainDiscovery',
+        'Invoke-Nltest',
+        'KINGDOMS_MEMBER_DCLOCATOR_RETRY',
+        '-Server $DomainController',
     ),
 )
 
@@ -175,6 +182,12 @@ require_tokens(
 )
 if 'Reset-ComputerMachinePassword' in dc_health:
     fail('domain controller health gate must not auto-repair machine trust')
+if 'Assert-DomainDiscovery' in member_health:
+    fail('member health must not hard-fail on a single DC Locator miss before trust evaluation')
+if member_health.index('$discoveryHealthy = Wait-DomainDiscovery') > member_health.index('$trustHealthy = Test-DirectSecureChannel'):
+    fail('member health must record bounded locator state before evaluating trust independently')
+if '-Server $DomainController' not in member_health:
+    fail('member trust validation/repair must pin the known domain controller')
 
 for label, health_script in (
     ('domain controller health contract', dc_health),

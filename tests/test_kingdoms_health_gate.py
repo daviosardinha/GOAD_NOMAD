@@ -33,8 +33,16 @@ class KingdomsHealthGateTests(unittest.TestCase):
             "Resolve-DnsName",
             "w32tm.exe",
             "AllowRepair",
+            "DomainController",
+            "Wait-DomainDiscovery",
+            "Invoke-Nltest",
+            "KINGDOMS_MEMBER_DCLOCATOR_RETRY",
+            "-Server $DomainController",
         ):
             self.assertIn(token, member)
+
+        self.assertIn("kingdoms_health_domain_controller:", pre)
+        self.assertIn("kingdoms_health_domain_controller:", final)
 
     def test_domain_controller_gate_is_validation_only(self):
         dc = (
@@ -56,6 +64,19 @@ class KingdomsHealthGateTests(unittest.TestCase):
         ):
             self.assertIn(token, dc)
         self.assertNotIn("Reset-ComputerMachinePassword", dc)
+
+    def test_member_health_separates_locator_convergence_from_trust_repair(self):
+        member = (
+            ROOT / "ansible/roles/kingdoms_health/member/tasks/main.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("Test-DirectSecureChannel", member)
+        self.assertIn("$discoveryHealthy = Wait-DomainDiscovery", member)
+        self.assertIn("$trustHealthy = Test-DirectSecureChannel", member)
+        self.assertIn("if (-not $trustHealthy)", member)
+        self.assertIn("Reset-ComputerMachinePassword", member)
+        self.assertIn("-Server $DomainController", member)
+        self.assertNotIn("Assert-DomainDiscovery", member)
 
     def test_health_powershell_uses_safe_variable_interpolation_before_colons(self):
         role_paths = (

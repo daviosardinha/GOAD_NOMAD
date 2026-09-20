@@ -8,6 +8,9 @@
           [String]$DomainName,
 
           [Parameter(Mandatory = $true)]
+          [String]$DomainController,
+
+          [Parameter(Mandatory = $true)]
           [String]$DomainAdmin,
 
           [Parameter(Mandatory = $true)]
@@ -20,19 +23,75 @@
       $ErrorActionPreference = 'Stop'
       $Ansible.Changed = $false
 
-      function Assert-DomainDiscovery {
-          Resolve-DnsName "_ldap._tcp.dc._msdcs.$DomainName" -ErrorAction Stop | Out-Null
-          $discovery = & nltest.exe "/dsgetdc:$DomainName" 2>&1
-          if ($LASTEXITCODE -ne 0) {
-              throw "DC discovery failed for ${DomainName}: $($discovery -join ' ')"
+      function Invoke-Nltest {
+          param (
+              [Parameter(Mandatory = $true)]
+              [String]$Argument
+          )
+
+          $savedPreference = $ErrorActionPreference
+          try {
+              $ErrorActionPreference = 'Continue'
+              $output = @(& nltest.exe $Argument 2>&1 | ForEach-Object { "$_" })
+              $rc = $LASTEXITCODE
+          }
+          finally {
+              $ErrorActionPreference = $savedPreference
+          }
+
+          [pscustomobject]@{
+              Rc = $rc
+              Output = ($output -join ' ')
           }
       }
 
-      function Test-SecureChannel {
-          $nltest = & nltest.exe "/sc_query:$DomainName" 2>&1
-          $nltestRc = $LASTEXITCODE
-          $powershellHealthy = Test-ComputerSecureChannel -ErrorAction SilentlyContinue
-          return ($nltestRc -eq 0 -and $powershellHealthy)
+      function Test-DomainDiscovery {
+          try {
+              Resolve-DnsName "_ldap._tcp.dc._msdcs.$DomainName" -ErrorAction Stop | Out-Null
+          }
+          catch {
+              return $false
+          }
+
+          $probe = Invoke-Nltest -Argument "/dsgetdc:$DomainName"
+          return ($probe.Rc -eq 0)
+      }
+
+      function Wait-DomainDiscovery {
+          param (
+              [Int]$Attempts = 12,
+              [Int]$DelaySeconds = 5
+          )
+
+          for ($attempt = 1; $attempt -le $Attempts; $attempt++) {
+              if (Test-DomainDiscovery) {
+                  return $true
+              }
+
+              if ($attempt -lt $Attempts) {
+                  Start-Sleep -Seconds $DelaySeconds
+              }
+          }
+
+          return $false
+      }
+
+      function Test-DirectSecureChannel {
+          try {
+              return [bool](Test-ComputerSecureChannel -Server $DomainController -ErrorAction Stop)
+          }
+          catch {
+              return $false
+          }
+      }
+
+      function Test-SecureChannelContract {
+          if (-not (Test-DirectSecureChannel)) {
+              return $false
+          }
+
+          $nltest = Invoke-Nltest -Argument "/sc_query:$DomainName"
+          return ($nltest.Rc -eq 0)
       }
 
       function Repair-SecureChannel {
@@ -42,30 +101,50 @@
               $securePassword
           )
 
-          Reset-ComputerMachinePassword -Credential $credential -ErrorAction Stop
+          Reset-ComputerMachinePassword -Server $DomainController -Credential $credential -ErrorAction Stop
           Restart-Service Netlogon -Force -ErrorAction Stop
           $Ansible.Changed = $true
       }
 
       function Repair-DomainTime {
-          & w32tm.exe /config /syncfromflags:domhier /update | Out-Null
-          if ($LASTEXITCODE -ne 0) {
-              throw "w32tm /config failed with exit code $LASTEXITCODE"
+          $savedPreference = $ErrorActionPreference
+          try {
+              $ErrorActionPreference = 'Continue'
+              & w32tm.exe /config /syncfromflags:domhier /update | Out-Null
+              $configRc = $LASTEXITCODE
+          }
+          finally {
+              $ErrorActionPreference = $savedPreference
+          }
+
+          if ($configRc -ne 0) {
+              throw "w32tm /config failed with exit code $configRc"
           }
 
           Restart-Service W32Time -Force -ErrorAction Stop
           $Ansible.Changed = $true
 
           for ($attempt = 1; $attempt -le 12; $attempt++) {
-              & w32tm.exe /resync /rediscover | Out-Null
-              Start-Sleep -Seconds 5
+              $savedPreference = $ErrorActionPreference
+              try {
+                  $ErrorActionPreference = 'Continue'
+                  & w32tm.exe /resync /rediscover | Out-Null
+                  $resyncRc = $LASTEXITCODE
+                  $source = (& w32tm.exe /query /source 2>$null | Out-String).Trim()
+                  $sourceRc = $LASTEXITCODE
+              }
+              finally {
+                  $ErrorActionPreference = $savedPreference
+              }
 
-              $source = (& w32tm.exe /query /source 2>$null | Out-String).Trim()
-              if ($LASTEXITCODE -eq 0 -and
+              if ($resyncRc -eq 0 -and
+                  $sourceRc -eq 0 -and
                   $source -and
                   $source -notmatch 'Local CMOS Clock') {
                   return $source
               }
+
+              Start-Sleep -Seconds 5
           }
 
           throw "$($env:COMPUTERNAME) did not return to domain time after repair"
@@ -79,21 +158,47 @@
           throw "$($env:COMPUTERNAME) reports domain '$($computer.Domain)' instead of '$DomainName'"
       }
 
-      Assert-DomainDiscovery
+      # DC Locator can transiently return ERROR_NO_SUCH_DOMAIN during fresh AD
+      # convergence even while direct DC connectivity and trust are healthy.
+      $discoveryHealthy = Wait-DomainDiscovery
 
-      if (-not (Test-SecureChannel)) {
+      # Trust is evaluated independently against the known DC. A locator miss
+      # alone must never trigger a machine-password reset.
+      $trustHealthy = Test-DirectSecureChannel
+      if (-not $trustHealthy) {
           if (-not $AllowRepair) {
               throw "Secure channel to $DomainName is broken and repair is disabled"
           }
 
-          Write-Output "KINGDOMS_MEMBER_TRUST_REPAIR host=$($env:COMPUTERNAME) domain=$DomainName"
+          Write-Output "KINGDOMS_MEMBER_TRUST_REPAIR host=$($env:COMPUTERNAME) domain=$DomainName dc=$DomainController"
           Repair-SecureChannel
+
+          $trustHealthy = $false
+          for ($attempt = 1; $attempt -le 12; $attempt++) {
+              if (Test-DirectSecureChannel) {
+                  $trustHealthy = $true
+                  break
+              }
+              Start-Sleep -Seconds 5
+          }
+
+          if (-not $trustHealthy) {
+              throw "Secure channel to $DomainName is still broken after repair through $DomainController"
+          }
+      }
+
+      if (-not $discoveryHealthy) {
+          Write-Output "KINGDOMS_MEMBER_DCLOCATOR_RETRY host=$($env:COMPUTERNAME) domain=$DomainName"
+          $discoveryHealthy = Wait-DomainDiscovery
+      }
+
+      if (-not $discoveryHealthy) {
+          throw "DC discovery for ${DomainName} did not converge within the bounded health window"
       }
 
       $channelHealthy = $false
       for ($attempt = 1; $attempt -le 12; $attempt++) {
-          Assert-DomainDiscovery
-          if (Test-SecureChannel) {
+          if (Test-SecureChannelContract) {
               $channelHealthy = $true
               break
           }
@@ -101,7 +206,7 @@
       }
 
       if (-not $channelHealthy) {
-          throw "Secure channel to $DomainName is still broken after validation/repair"
+          throw "Secure channel contract to $DomainName is unhealthy after DC discovery converged"
       }
 
       $timeService = Get-Service -Name W32Time -ErrorAction Stop
@@ -113,8 +218,17 @@
           $Ansible.Changed = $true
       }
 
-      $timeSource = (& w32tm.exe /query /source 2>$null | Out-String).Trim()
-      if ($LASTEXITCODE -ne 0 -or
+      $savedPreference = $ErrorActionPreference
+      try {
+          $ErrorActionPreference = 'Continue'
+          $timeSource = (& w32tm.exe /query /source 2>$null | Out-String).Trim()
+          $timeSourceRc = $LASTEXITCODE
+      }
+      finally {
+          $ErrorActionPreference = $savedPreference
+      }
+
+      if ($timeSourceRc -ne 0 -or
           -not $timeSource -or
           $timeSource -match 'Local CMOS Clock') {
           if (-not $AllowRepair) {
@@ -126,9 +240,10 @@
       }
 
       Resolve-DnsName "_ldap._tcp.dc._msdcs.$DomainName" -ErrorAction Stop | Out-Null
-      Write-Output "KINGDOMS_MEMBER_HEALTH_OK host=$($env:COMPUTERNAME) domain=$DomainName time=$timeSource"
+      Write-Output "KINGDOMS_MEMBER_HEALTH_OK host=$($env:COMPUTERNAME) domain=$DomainName dc=$DomainController time=$timeSource"
     parameters:
       DomainName: "{{ kingdoms_health_domain }}"
+      DomainController: "{{ kingdoms_health_domain_controller }}"
       DomainAdmin: "{{ kingdoms_health_domain_admin }}"
       DomainPassword: "{{ kingdoms_health_domain_password }}"
       AllowRepair: "{{ kingdoms_health_repair | bool }}"
