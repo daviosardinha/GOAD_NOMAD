@@ -241,10 +241,19 @@ class ToolsReportingTests(unittest.TestCase):
         self.assertIsNone(self.provider._tools_reporting_context)
 
     def test_healthy_reporting_does_not_restart_any_service(self):
+        self.provider._authenticated_guest_install_ready = Mock(return_value=True)
+        self.provider._vmx_path = Mock(return_value='/guest.vmx')
         self.provider._poll_guest_ip_bounded = Mock(return_value=True)
         self.provider._restart_tools_reporting = Mock()
-        self.provider.ensure_behavior = lambda: self.provider._wait_guest_ip('/guest.vmx', 1)
+
         self.assertTrue(self.provider._ensure_vmware_tools('GOAD-SRV02'))
+
+        self.provider._authenticated_guest_install_ready.assert_called_once_with(
+            'GOAD-SRV02'
+        )
+        self.provider._poll_guest_ip_bounded.assert_called_once_with(
+            '/guest.vmx', 10
+        )
         self.provider._restart_tools_reporting.assert_not_called()
 
     def test_guest_health_does_not_bypass_failed_vagrant_provisioning(self):
