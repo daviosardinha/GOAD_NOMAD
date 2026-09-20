@@ -219,7 +219,9 @@ require_tokens(
         'def _recover_failed_windows_vagrant_up(self, machine):',
         'def install(self):',
         "first_up = self.command.run_vagrant(['up', machine], self.path)",
-        'if not first_up:',
+        'tools_ready = self._ensure_vmware_tools(machine)',
+        'def _authenticated_guest_recovery_ready(self, machine, timeout=60):',
+        'if not first_up or not tools_ready:',
         'if not self._recover_failed_windows_vagrant_up(machine):',
         'shutdown.exe /s /t 0 /f',
         "['vmrun', '-T', 'ws', 'stop', vmx, 'soft']",
@@ -296,16 +298,69 @@ creation = next((i for i, n in enumerate(guest_loop.body)
                  and any(isinstance(t, ast.Name) and t.id == 'first_up' for t in n.targets)
                  and matches(n.value, "self.command.run_vagrant(['up', machine], self.path)")), -1)
 readiness = next((i for i, n in enumerate(guest_loop.body)
-                  if isinstance(n, ast.If) and matches(n.test, 'not self._ensure_vmware_tools(machine)')), -1)
+                  if isinstance(n, ast.Assign)
+                  and any(isinstance(t, ast.Name) and t.id == 'tools_ready' for t in n.targets)
+                  and matches(n.value, 'self._ensure_vmware_tools(machine)')), -1)
+recovery_probe = next((i for i, n in enumerate(guest_loop.body)
+                       if isinstance(n, ast.If) and matches(n.test, 'not tools_ready')), -1)
 dispatch = next((i for i, n in enumerate(guest_loop.body)
-                 if isinstance(n, ast.If) and matches(n.test, 'not first_up')), -1)
-if not 0 <= creation < readiness < dispatch:
-    fail('failed-up recovery must follow creation and Tools readiness independently')
+                 if isinstance(n, ast.If)
+                 and matches(n.test, 'not first_up or not tools_ready')), -1)
+if not 0 <= creation < readiness < recovery_probe < dispatch:
+    fail(
+        'Windows recovery must evaluate first-up result, strict Kingdoms readiness, '
+        'pre-provision recovery readiness, then recovery dispatch in that order'
+    )
+
+probe_block = guest_loop.body[recovery_probe]
+probe_assignment = next((n for n in probe_block.body
+                         if isinstance(n, ast.Assign)
+                         and any(isinstance(t, ast.Name) and t.id == 'recovery_ready'
+                                 for t in n.targets)
+                         and matches(
+                             n.value,
+                             'self._authenticated_guest_recovery_ready(machine)',
+                         )), None)
+if probe_assignment is None:
+    fail(
+        'missing authenticated pre-provision recovery probe for a guest that '
+        'has not reached strict Kingdoms readiness'
+    )
+probe_fail_closed = next((n for n in probe_block.body
+                          if isinstance(n, ast.If)
+                          and matches(n.test, 'not recovery_ready')), None)
+if probe_fail_closed is None or not any(
+        isinstance(n, ast.Return) and matches(n.value, 'False')
+        for n in probe_fail_closed.body
+):
+    fail('pre-provision recovery readiness must fail closed')
+
 recovery_guard = next((n for n in guest_loop.body[dispatch].body if isinstance(n, ast.If)
                        and matches(n.test, 'not self._recover_failed_windows_vagrant_up(machine)')), None)
 if recovery_guard is None or not any(isinstance(n, ast.Return) and matches(n.value, 'False')
                                      for n in recovery_guard.body):
-    fail('failed Vagrant recovery must stop installation even if Tools are healthy')
+    fail(
+        'failed first-up OR incomplete strict Kingdoms readiness must enter the '
+        'bounded recovery path and fail closed if recovery fails'
+    )
+
+recovery_method = methods.get('_recover_failed_windows_vagrant_up')
+if recovery_method is None:
+    fail('missing failed Windows bring-up recovery method')
+post_recovery_readiness = next((
+    n for n in ast.walk(recovery_method)
+    if isinstance(n, ast.If)
+    and matches(n.test, 'not self._ensure_vmware_tools(machine)')
+), None)
+if post_recovery_readiness is None or not any(
+        isinstance(n, ast.Return) and matches(n.value, 'False')
+        for n in post_recovery_readiness.body
+):
+    fail(
+        'recovery must re-prove strict Kingdoms readiness after --provision '
+        'before installation may continue'
+    )
+
 tools_override = methods.get('_ensure_vmware_tools')
 if tools_override is not None and any(
         isinstance(n, ast.Call) and matches(n, 'self._recover_failed_windows_vagrant_up(machine)')
