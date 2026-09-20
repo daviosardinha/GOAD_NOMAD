@@ -79,15 +79,20 @@ class KingdomsHealthGateTests(unittest.TestCase):
         self.assertNotIn("Assert-DomainDiscovery", member)
 
     def test_health_powershell_uses_safe_variable_interpolation_before_colons(self):
-        role_paths = (
-            ROOT / "ansible/roles/kingdoms_health/dc/tasks/main.yml",
-            ROOT / "ansible/roles/kingdoms_health/member/tasks/main.yml",
-        )
-        for path in role_paths:
-            text = path.read_text(encoding="utf-8")
-            with self.subTest(path=path):
-                self.assertNotIn("$DomainName:", text)
-                self.assertIn("${DomainName}:", text)
+        dc_path = ROOT / "ansible/roles/kingdoms_health/dc/tasks/main.yml"
+        member_path = ROOT / "ansible/roles/kingdoms_health/member/tasks/main.yml"
+
+        dc = dc_path.read_text(encoding="utf-8")
+        member = member_path.read_text(encoding="utf-8")
+
+        # Unsafe only when PowerShell sees a variable immediately followed by
+        # a colon. The DC role still has that message and must delimit it.
+        self.assertNotIn("$DomainName:", dc)
+        self.assertIn("${DomainName}:", dc)
+
+        # The member role no longer has a variable-before-colon string at all;
+        # absence of the unsafe form is the contract.
+        self.assertNotIn("$DomainName:", member)
 
 
 if __name__ == "__main__":
