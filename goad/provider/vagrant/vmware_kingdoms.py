@@ -507,13 +507,14 @@ if (
                     )
                 return True
 
-            # Guest state is not yet proven. Keep the existing installation and
-            # recovery behavior.
-            if super()._ensure_vmware_tools(machine):
-                return True
+            # Guest state is not yet proven. The inherited helper may install or
+            # repair VMware Tools, but its success is not sufficient for
+            # Kingdoms: it can succeed while the lab-facing NIC is still APIPA
+            # or before fix_ip.ps1 has assigned the canonical address.
+            super()._ensure_vmware_tools(machine)
 
-            # Recovery may have fixed Windows while VIX telemetry remained stale.
-            # Re-check authenticated guest state before declaring failure.
+            # Always re-prove the strict Kingdoms state after any inherited
+            # repair. NAT WinRM and healthy Tools are recovery signals only.
             if self._authenticated_guest_install_ready(machine):
                 vmx = self._vmx_path(machine)
                 if vmx and not self._poll_guest_ip_bounded(vmx, 10):
@@ -774,8 +775,10 @@ Write-Output 'GOAD_VMTOOLS_RESTARTED'
             first_up = self.command.run_vagrant(['up', machine], self.path)
 
             tools_ready = self._ensure_vmware_tools(machine)
+            recovery_ready = False
             if not tools_ready:
-                if first_up or not self._authenticated_guest_recovery_ready(machine):
+                recovery_ready = self._authenticated_guest_recovery_ready(machine)
+                if not recovery_ready:
                     return False
                 Log.warning(
                     f'GOAD Kingdoms: {machine} has authenticated WinRM and healthy '
@@ -783,7 +786,12 @@ Write-Output 'GOAD_VMTOOLS_RESTARTED'
                     'allowing one bounded recovery provision cycle'
                 )
 
-            if not first_up:
+            # A failed first up always gets the deterministic recovery cycle.
+            # Also recover an existing/resumed guest when Vagrant itself returns
+            # success but strict Kingdoms readiness is still missing. This is the
+            # exact interrupted state where the NAT adapter works, the lab NIC is
+            # APIPA, and fix_ip.ps1 has not completed.
+            if not first_up or not tools_ready:
                 if not self._recover_failed_windows_vagrant_up(machine):
                     Log.error(
                         f'GOAD_NOMAD: {machine} still failed after clean Vagrant recovery'

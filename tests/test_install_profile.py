@@ -288,6 +288,26 @@ class ToolsReportingTests(unittest.TestCase):
 
         self.provider._recover_failed_windows_vagrant_up.assert_not_called()
 
+    def test_resumed_partial_guest_recovers_even_when_vagrant_up_returns_success(self):
+        """A running APIPA guest must rerun provisioners instead of being trusted."""
+        self.provider.prepare_install = Mock(return_value=True)
+        self.provider._sync_goad_nomad_inventories = Mock(return_value=True)
+        self.provider._sync_goad_nomad_vagrantfile_compatibility = Mock(return_value=True)
+        self.provider._bring_up_router = Mock(return_value=True)
+        self.provider.command.run_vagrant = Mock(return_value=True)
+        self.provider._ensure_vmware_tools = Mock(return_value=False)
+        self.provider._authenticated_guest_recovery_ready = Mock(return_value=True)
+        self.provider._recover_failed_windows_vagrant_up = Mock(return_value=False)
+
+        self.assertFalse(self.provider.install())
+
+        self.provider._authenticated_guest_recovery_ready.assert_called_once_with(
+            'GOAD-SRV02'
+        )
+        self.provider._recover_failed_windows_vagrant_up.assert_called_once_with(
+            'GOAD-SRV02'
+        )
+
     def test_preprovision_recovery_contract_matches_srv02_failure_state(self):
         """Forwarded WinRM + VMware Tools may recover before the lab IP exists."""
         self.provider._winrm_forwarded_port = Mock(return_value=2207)
@@ -409,6 +429,21 @@ class ToolsReportingTests(unittest.TestCase):
 
         self.assertFalse(self.provider._ensure_vmware_tools('GOAD-SRV02'))
         self.provider.ensure_behavior.assert_called_once()
+
+    def test_healthy_tools_and_nat_winrm_cannot_bypass_missing_lab_ip(self):
+        """Inherited Tools success is not final Kingdoms readiness."""
+        self.provider.management_hosts = {'GOAD-SRV02': '10.4.10.22'}
+        self.provider._winrm_forwarded_port = Mock(return_value=2207)
+        self.provider._wait_winrm_ready = Mock(return_value=True)
+        self.session.run_ps.return_value = SimpleNamespace(
+            status_code=0,
+            std_out=b'',
+        )
+        self.provider.ensure_behavior = Mock(return_value=True)
+
+        self.assertFalse(self.provider._ensure_vmware_tools('GOAD-SRV02'))
+        self.provider.ensure_behavior.assert_called_once()
+        self.assertEqual(self.session.run_ps.call_count, 2)
 
     def test_non_goad_uses_inherited_readiness_without_repair_context(self):
         self.provider.lab_name = 'GOAD-Light'
