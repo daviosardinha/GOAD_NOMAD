@@ -35,6 +35,7 @@ readonly REQUIRED=(
     ad/GOAD/data/inventory
     ad/GOAD/providers/vmware/Vagrantfile
     ad/GOAD/providers/vmware/inventory
+    scripts/lab-mode.sh
     scripts/validate-network-segmentation-source.sh
     scripts/validate-ws01-source.sh
     scripts/validate-windows-lpe-framework-source.sh
@@ -330,6 +331,41 @@ preflight_call = kingdoms_provider.find('if not self.prepare_install():')
 first_guest_start = kingdoms_provider.find('if not self._bring_up_router():')
 if preflight_call == -1 or first_guest_start == -1 or preflight_call >= first_guest_start:
     fail('Kingdoms install must complete host-network preflight before starting GOAD-ROUTER')
+
+lab_mode = Path('scripts/lab-mode.sh').read_text()
+require_tokens(
+    'AD-aware Kingdoms mode transition',
+    lab_mode,
+    (
+        'DOMAIN_CONTROLLERS',
+        'DOMAIN_MEMBERS',
+        'EXERCISE_DOMAIN_CONTROLLERS',
+        'wait_domain_controller_ready',
+        'wait_domain_member_ready',
+        'preflight_domain_health',
+        'Get-ADRootDSE',
+        'Test-ComputerSecureChannel -Server',
+        'System.Security.Principal.NTAccount',
+        'w32tm.exe /query /source',
+        'configure_windows_nat_provisioning',
+        'configure_windows_nat_exercise',
+        'member/workstation guests first; domain controllers last',
+        'domain controllers first with AD readiness; members second',
+    ),
+)
+provisioning_transition = lab_mode[
+    lab_mode.index('configure_windows_nat_provisioning()'):
+    lab_mode.index('configure_windows_nat_exercise()')
+]
+if provisioning_transition.index('for vm in "${DOMAIN_CONTROLLERS[@]}"') > provisioning_transition.index('for vm in "${DOMAIN_MEMBERS[@]}"'):
+    fail('provisioning mode must restart/validate domain controllers before dependent members')
+
+exercise_transition = lab_mode[
+    lab_mode.index('configure_windows_nat_exercise()'):
+    lab_mode.index('verify_persistent_state()')
+]
+if exercise_transition.index('for vm in "${DOMAIN_MEMBERS[@]}"') > exercise_transition.index('for vm in "${EXERCISE_DOMAIN_CONTROLLERS[@]}"'):
+    fail('exercise mode must restart members before domain controllers')
 
 nat_enable = Path('ansible/roles/settings/enable_nat_adapter/tasks/main.yml').read_text()
 require_tokens(

@@ -5,13 +5,59 @@ readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly ROUTES="${ROOT}/scripts/provisioning-routes.sh"
 readonly POLICY_DIR="${ROOT}/ad/GOAD/providers/vmware/router/nftables"
 
-readonly WINDOWS_VMS=(
+readonly DOMAIN_CONTROLLERS=(
     GOAD-DC01
     GOAD-DC02
     GOAD-DC03
+)
+
+# When entering exercise mode, restart the child DC before its parent so
+# WINTERFELL can initialize while KINGSLANDING is still fully online.
+readonly EXERCISE_DOMAIN_CONTROLLERS=(
+    GOAD-DC02
+    GOAD-DC03
+    GOAD-DC01
+)
+
+readonly DOMAIN_MEMBERS=(
     GOAD-SRV02
     GOAD-SRV03
     GOAD-WS01
+)
+
+readonly WINDOWS_VMS=(
+    "${DOMAIN_CONTROLLERS[@]}"
+    "${DOMAIN_MEMBERS[@]}"
+)
+
+declare -A DC_DOMAIN=(
+    [GOAD-DC01]="sevenkingdoms.local"
+    [GOAD-DC02]="north.sevenkingdoms.local"
+    [GOAD-DC03]="essos.local"
+)
+
+declare -A DC_FQDN=(
+    [GOAD-DC01]="kingslanding.sevenkingdoms.local"
+    [GOAD-DC02]="winterfell.north.sevenkingdoms.local"
+    [GOAD-DC03]="meereen.essos.local"
+)
+
+declare -A MEMBER_DOMAIN=(
+    [GOAD-SRV02]="north.sevenkingdoms.local"
+    [GOAD-SRV03]="essos.local"
+    [GOAD-WS01]="north.sevenkingdoms.local"
+)
+
+declare -A MEMBER_DC=(
+    [GOAD-SRV02]="winterfell.north.sevenkingdoms.local"
+    [GOAD-SRV03]="meereen.essos.local"
+    [GOAD-WS01]="winterfell.north.sevenkingdoms.local"
+)
+
+declare -A MEMBER_NETBIOS=(
+    [GOAD-SRV02]="NORTH"
+    [GOAD-SRV03]="ESSOS"
+    [GOAD-WS01]="NORTH"
 )
 
 fail() {
@@ -291,16 +337,186 @@ ensure_vm_nat_state() {
         "${action}"
 }
 
-configure_windows_nat() {
-    local desired="$1"
-    local action="$2"
+vagrant_powershell_ready() {
+    local vm="$1"
+    local script="$2"
+    local encoded
+
+    encoded="$(
+        printf '%s' "${script}" |
+            iconv -f UTF-8 -t UTF-16LE |
+            base64 -w0
+    )"
+
+    (
+        cd "${PROVIDER}"
+        timeout 90 vagrant winrm "${vm}" -c \
+            "powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encoded}"
+    ) >/dev/null 2>&1
+}
+
+wait_domain_controller_ready() {
+    local vm="$1"
+    local domain="${DC_DOMAIN[${vm}]}"
+    local fqdn="${DC_FQDN[${vm}]}"
+    local script
+    local attempt
+
+    script="$(cat <<POWERSHELL
+\$ErrorActionPreference = 'Stop'
+\$Env:ADPS_LoadDefaultDrive = '0'
+
+foreach (\$serviceName in @('NTDS','DNS','ADWS','Netlogon','Kdc','W32Time')) {
+    \$service = Get-Service -Name \$serviceName -ErrorAction Stop
+    if (\$service.Status -ne 'Running') {
+        throw "\$serviceName is \$(\$service.Status)"
+    }
+}
+
+foreach (\$shareName in @('SYSVOL','NETLOGON')) {
+    if (-not (Get-SmbShare -Name \$shareName -ErrorAction SilentlyContinue)) {
+        throw "\$shareName share is missing"
+    }
+}
+
+Import-Module ActiveDirectory -ErrorAction Stop
+Get-ADRootDSE -Server '${fqdn}' -ErrorAction Stop | Out-Null
+Resolve-DnsName '_ldap._tcp.dc._msdcs.${domain}' -Server 127.0.0.1 -ErrorAction Stop | Out-Null
+
+\$savedPreference = \$ErrorActionPreference
+try {
+    \$ErrorActionPreference = 'Continue'
+    \$nltest = @(& nltest.exe '/dsgetdc:${domain}' /force 2>&1 | ForEach-Object { "\$_" })
+    \$nltestRc = \$LASTEXITCODE
+}
+finally {
+    \$ErrorActionPreference = \$savedPreference
+}
+
+if (\$nltestRc -ne 0) {
+    throw "DC Locator is not ready: \$(\$nltest -join ' ')"
+}
+
+Write-Output 'KINGDOMS_DC_RUNTIME_READY'
+POWERSHELL
+)"
+
+    for attempt in {1..60}; do
+        if vagrant_powershell_ready "${vm}" "${script}"; then
+            echo "        [+] ${vm} AD runtime ready (${fqdn})"
+            return 0
+        fi
+
+        if (( attempt % 6 == 0 )); then
+            echo "        [*] waiting for ${vm} AD runtime readiness ($((attempt * 5))s)"
+        fi
+
+        sleep 5
+    done
+
+    fail "${vm} did not regain AD/DC Locator readiness for ${domain} within 300s"
+}
+
+wait_domain_member_ready() {
+    local vm="$1"
+    local domain="${MEMBER_DOMAIN[${vm}]}"
+    local dc="${MEMBER_DC[${vm}]}"
+    local netbios="${MEMBER_NETBIOS[${vm}]}"
+    local script
+    local attempt
+
+    script="$(cat <<POWERSHELL
+\$ErrorActionPreference = 'Stop'
+
+Resolve-DnsName '${dc}' -ErrorAction Stop | Out-Null
+
+\$healthy = Test-ComputerSecureChannel -Server '${dc}' -ErrorAction Stop
+if (-not \$healthy) {
+    throw 'computer secure channel is unhealthy'
+}
+
+\$account = New-Object System.Security.Principal.NTAccount('${netbios}', 'administrator')
+\$null = \$account.Translate([System.Security.Principal.SecurityIdentifier])
+
+\$savedPreference = \$ErrorActionPreference
+try {
+    \$ErrorActionPreference = 'Continue'
+    \$source = (& w32tm.exe /query /source 2>\$null | Out-String).Trim()
+    \$sourceRc = \$LASTEXITCODE
+}
+finally {
+    \$ErrorActionPreference = \$savedPreference
+}
+
+if (\$sourceRc -ne 0 -or -not \$source -or \$source -match 'Local CMOS Clock') {
+    throw "domain time is not ready: \$source"
+}
+
+Write-Output 'KINGDOMS_MEMBER_RUNTIME_READY'
+POWERSHELL
+)"
+
+    for attempt in {1..60}; do
+        if vagrant_powershell_ready "${vm}" "${script}"; then
+            echo "        [+] ${vm} domain runtime ready (${domain})"
+            return 0
+        fi
+
+        if (( attempt % 6 == 0 )); then
+            echo "        [*] waiting for ${vm} domain runtime readiness ($((attempt * 5))s)"
+        fi
+
+        sleep 5
+    done
+
+    fail "${vm} did not regain domain identity readiness for ${domain} within 300s"
+}
+
+preflight_domain_health() {
     local vm
 
-    for vm in "${WINDOWS_VMS[@]}"; do
-        ensure_vm_nat_state \
-            "${vm}" \
-            "${desired}" \
-            "${action}"
+    echo "[*] Proving AD identity health before isolation restarts"
+
+    for vm in "${DOMAIN_CONTROLLERS[@]}"; do
+        wait_domain_controller_ready "${vm}"
+    done
+
+    for vm in "${DOMAIN_MEMBERS[@]}"; do
+        wait_domain_member_ready "${vm}"
+    done
+
+    echo "[+] AD identity preflight passed"
+}
+
+configure_windows_nat_provisioning() {
+    local vm
+
+    # DCs must be fully advertising before any dependent member is rebooted.
+    # Merely seeing the VM process or WinRM is not enough for Netlogon.
+    for vm in "${DOMAIN_CONTROLLERS[@]}"; do
+        ensure_vm_nat_state "${vm}" TRUE connect
+        wait_domain_controller_ready "${vm}"
+    done
+
+    for vm in "${DOMAIN_MEMBERS[@]}"; do
+        ensure_vm_nat_state "${vm}" TRUE connect
+        wait_domain_member_ready "${vm}"
+    done
+}
+
+configure_windows_nat_exercise() {
+    local vm
+
+    # Members reboot first while their DCs are still healthy. Restarting the
+    # DCs first caused BRAAVOS to boot against MEEREEN before ESSOS had started
+    # advertising, leaving DC Locator, domain time and Windows account lookup
+    # broken even though DNS and TCP connectivity were already available.
+    for vm in "${DOMAIN_MEMBERS[@]}"; do
+        ensure_vm_nat_state "${vm}" FALSE disconnect
+    done
+
+    for vm in "${EXERCISE_DOMAIN_CONTROLLERS[@]}"; do
+        ensure_vm_nat_state "${vm}" FALSE disconnect
     done
 }
 
@@ -399,6 +615,12 @@ enter_exercise_mode() {
 
     verify_windows_layout
 
+    # While NAT management is still available, prove every DC and member has a
+    # working domain identity. This fails closed before any isolation restart.
+    if [[ "$(cat "${PROVIDER}/.goad-nomad-mode" 2>/dev/null || true)" != "exercise" ]]; then
+        preflight_domain_health
+    fi
+
     #
     # Close routing first so there is never an intermediate
     # state where the host can freely reach protected zones.
@@ -410,8 +632,9 @@ enter_exercise_mode() {
 
     echo
     echo "[*] Persisting and disconnecting Windows NAT adapters"
+    echo "    member/workstation guests first; domain controllers last"
 
-    configure_windows_nat FALSE disconnect
+    configure_windows_nat_exercise
 
     verify_persistent_state FALSE
 
@@ -437,8 +660,9 @@ enter_provisioning_mode() {
     # Rebuild the Windows provisioning management plane first.
     #
     echo "[*] Persisting and connecting Windows NAT adapters"
+    echo "    domain controllers first with AD readiness; members second"
 
-    configure_windows_nat TRUE connect
+    configure_windows_nat_provisioning
 
     verify_persistent_state TRUE
 
