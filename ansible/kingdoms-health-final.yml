@@ -1,0 +1,26 @@
+---
+# Final readiness proof. No repair is allowed here: any AD health drift after
+# vulnerability/LPE provisioning must stop the install instead of being hidden.
+
+- import_playbook: data.yml
+  vars:
+    data_path: "../ad/{{domain_name}}/data/"
+
+- name: Kingdoms final domain controller health proof
+  hosts: dc
+  gather_facts: false
+  roles:
+    - role: kingdoms_health/dc
+  vars:
+    kingdoms_health_domain: "{{ lab.hosts[dict_key].domain }}"
+
+- name: Kingdoms final member and workstation health proof
+  hosts: server:workstation
+  gather_facts: false
+  roles:
+    - role: kingdoms_health/member
+  vars:
+    kingdoms_health_domain: "{{ lab.hosts[dict_key].domain }}"
+    kingdoms_health_domain_admin: "{{ admin_user }}@{{ kingdoms_health_domain }}"
+    kingdoms_health_domain_password: "{{ lab.domains[kingdoms_health_domain].domain_password }}"
+    kingdoms_health_repair: false

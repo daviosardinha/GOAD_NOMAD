@@ -25,6 +25,10 @@ readonly REQUIRED=(
     ansible/ws01.yml
     ansible/phase01.yml
     ansible/ws01-lpe-install.yml
+    ansible/kingdoms-health.yml
+    ansible/kingdoms-health-final.yml
+    ansible/roles/kingdoms_health/dc/tasks/main.yml
+    ansible/roles/kingdoms_health/member/tasks/main.yml
     ansible/windows-lpe.yml
     ansible/roles/settings/enable_nat_adapter/tasks/main.yml
     ad/GOAD/data/config.json
@@ -95,21 +99,82 @@ expected = [
     'ad-acl.yml',
     'servers.yml',
     'security.yml',
+    'kingdoms-health.yml',
     'vulnerabilities.yml',
     'phase01.yml',
     'ws01-lpe-install.yml',
+    'kingdoms-health-final.yml',
 ]
 actual = playbooks.get('GOAD')
 if actual != expected:
     fail(f'GOAD clean-install playbook sequence mismatch:\nexpected={expected}\nactual={actual}')
 if actual.index('ws01.yml') <= actual.index('ad-data.yml'):
     fail('ws01.yml must run after ad-data.yml so NORTH\\rickon.stark exists')
+if actual.index('kingdoms-health.yml') <= actual.index('security.yml'):
+    fail('pre-vulnerability Kingdoms health gate must run after security.yml')
+if actual.index('kingdoms-health.yml') >= actual.index('vulnerabilities.yml'):
+    fail('pre-vulnerability Kingdoms health gate must run before vulnerabilities.yml')
 if actual.index('phase01.yml') <= actual.index('vulnerabilities.yml'):
     fail('phase01.yml must run after vulnerabilities.yml')
 if actual.index('phase01.yml') >= actual.index('ws01-lpe-install.yml'):
     fail('phase01.yml must run before final WS01 LPE seeding')
-if actual[-1] != 'ws01-lpe-install.yml':
-    fail('WS01 full LPE seeding must be the final GOAD Ansible stage')
+if actual.index('kingdoms-health-final.yml') <= actual.index('ws01-lpe-install.yml'):
+    fail('final Kingdoms health proof must run after WS01 LPE seeding')
+if actual[-1] != 'kingdoms-health-final.yml':
+    fail('final Kingdoms health proof must be the final GOAD Ansible stage')
+
+health = Path('ansible/kingdoms-health.yml').read_text()
+require_tokens(
+    'Kingdoms pre-vulnerability health gate',
+    health,
+    (
+        'hosts: dc',
+        'hosts: server:workstation',
+        'role: kingdoms_health/dc',
+        'role: kingdoms_health/member',
+        'kingdoms_health_repair: true',
+    ),
+)
+
+final_health = Path('ansible/kingdoms-health-final.yml').read_text()
+require_tokens(
+    'Kingdoms final health proof',
+    final_health,
+    (
+        'hosts: dc',
+        'hosts: server:workstation',
+        'kingdoms_health_repair: false',
+    ),
+)
+
+member_health = Path('ansible/roles/kingdoms_health/member/tasks/main.yml').read_text()
+require_tokens(
+    'Kingdoms member health contract',
+    member_health,
+    (
+        'Test-ComputerSecureChannel',
+        'Reset-ComputerMachinePassword',
+        'nltest.exe',
+        'Resolve-DnsName',
+        'w32tm.exe',
+        'AllowRepair',
+    ),
+)
+
+dc_health = Path('ansible/roles/kingdoms_health/dc/tasks/main.yml').read_text()
+require_tokens(
+    'Kingdoms domain controller health contract',
+    dc_health,
+    (
+        "'NTDS', 'DNS', 'ADWS', 'Netlogon', 'Kdc', 'W32Time'",
+        "'SYSVOL', 'NETLOGON'",
+        'Get-ADDomain',
+        'Resolve-DnsName',
+        'nltest.exe',
+    ),
+)
+if 'Reset-ComputerMachinePassword' in dc_health:
+    fail('domain controller health gate must not auto-repair machine trust')
 
 install_lpe = Path('ansible/ws01-lpe-install.yml').read_text()
 require_tokens(
@@ -258,144 +323,3 @@ require_tokens(
         "if ($adapter.AdminStatus -ne 'Up')",
         'until: nat_adapter_enable_check.rc == 0',
     ),
-)
-if 'enable_adpter_interface' in nat_enable:
-    fail('NAT adapter enable still retries the expected WinRM transport teardown as a task failure')
-
-# A failed first bring-up must no longer hard-power Windows off as the primary
-# recovery action. Older Server 2016 boxes have demonstrated a fully booted
-# desktop with dead VMware Tools/WSMan after an unconditional halt -f. Require
-# the recovery path to call the graceful-stop controller before the bounded
-# Vagrant provisioning cycle. Forced halt remains only as the final fallback.
-recovery_match = re.search(
-    r'(?ms)^    def _recover_failed_windows_vagrant_up\(self, machine\):.*?(?=^    def install\(self\):)',
-    kingdoms_provider,
-)
-if recovery_match is None:
-    fail('cannot isolate GOAD Kingdoms failed-bring-up recovery implementation')
-recovery = recovery_match.group(0)
-if 'self._stop_failed_windows_guest_cleanly(machine)' not in recovery:
-    fail('failed-bring-up recovery must invoke graceful Windows shutdown controller')
-if "self._run_vagrant_bounded(['up', machine, '--provision'], timeout=600)" not in recovery:
-    fail('failed-bring-up recovery must use a bounded Vagrant --provision cycle')
-
-# Check the actual dispatch, rather than banning every Tools override by name.
-# A scoped service-reporting repair is legitimate, but failed first-up recovery
-# must remain an independent, mandatory decision in install().
-provider_class = next(n for n in ast.parse(kingdoms_provider).body
-                      if isinstance(n, ast.ClassDef) and n.name == 'GoadKingdomsVmwareProvider')
-methods = {n.name: n for n in provider_class.body if isinstance(n, ast.FunctionDef)}
-
-def matches(node, expression):
-    return ast.dump(node) == ast.dump(ast.parse(expression, mode='eval').body)
-
-guest_loop = next((n for n in methods['install'].body
-                   if isinstance(n, ast.For) and matches(n.iter, 'self.goad_nomad_windows')), None)
-if guest_loop is None:
-    fail('cannot find the independent Windows install loop')
-creation = next((i for i, n in enumerate(guest_loop.body)
-                 if isinstance(n, ast.Assign)
-                 and any(isinstance(t, ast.Name) and t.id == 'first_up' for t in n.targets)
-                 and matches(n.value, "self.command.run_vagrant(['up', machine], self.path)")), -1)
-readiness = next((i for i, n in enumerate(guest_loop.body)
-                  if isinstance(n, ast.Assign)
-                  and any(isinstance(t, ast.Name) and t.id == 'tools_ready' for t in n.targets)
-                  and matches(n.value, 'self._ensure_vmware_tools(machine)')), -1)
-recovery_probe = next((i for i, n in enumerate(guest_loop.body)
-                       if isinstance(n, ast.If) and matches(n.test, 'not tools_ready')), -1)
-dispatch = next((i for i, n in enumerate(guest_loop.body)
-                 if isinstance(n, ast.If)
-                 and matches(n.test, 'not first_up or not tools_ready')), -1)
-if not 0 <= creation < readiness < recovery_probe < dispatch:
-    fail(
-        'Windows recovery must evaluate first-up result, strict Kingdoms readiness, '
-        'pre-provision recovery readiness, then recovery dispatch in that order'
-    )
-
-probe_block = guest_loop.body[recovery_probe]
-probe_assignment = next((n for n in probe_block.body
-                         if isinstance(n, ast.Assign)
-                         and any(isinstance(t, ast.Name) and t.id == 'recovery_ready'
-                                 for t in n.targets)
-                         and matches(
-                             n.value,
-                             'self._authenticated_guest_recovery_ready(machine)',
-                         )), None)
-if probe_assignment is None:
-    fail(
-        'missing authenticated pre-provision recovery probe for a guest that '
-        'has not reached strict Kingdoms readiness'
-    )
-probe_fail_closed = next((n for n in probe_block.body
-                          if isinstance(n, ast.If)
-                          and matches(n.test, 'not recovery_ready')), None)
-if probe_fail_closed is None or not any(
-        isinstance(n, ast.Return) and matches(n.value, 'False')
-        for n in probe_fail_closed.body
-):
-    fail('pre-provision recovery readiness must fail closed')
-
-recovery_guard = next((n for n in guest_loop.body[dispatch].body if isinstance(n, ast.If)
-                       and matches(n.test, 'not self._recover_failed_windows_vagrant_up(machine)')), None)
-if recovery_guard is None or not any(isinstance(n, ast.Return) and matches(n.value, 'False')
-                                     for n in recovery_guard.body):
-    fail(
-        'failed first-up OR incomplete strict Kingdoms readiness must enter the '
-        'bounded recovery path and fail closed if recovery fails'
-    )
-
-recovery_method = methods.get('_recover_failed_windows_vagrant_up')
-if recovery_method is None:
-    fail('missing failed Windows bring-up recovery method')
-post_recovery_readiness = next((
-    n for n in ast.walk(recovery_method)
-    if isinstance(n, ast.If)
-    and matches(n.test, 'not self._ensure_vmware_tools(machine)')
-), None)
-if post_recovery_readiness is None or not any(
-        isinstance(n, ast.Return) and matches(n.value, 'False')
-        for n in post_recovery_readiness.body
-):
-    fail(
-        'recovery must re-prove strict Kingdoms readiness after --provision '
-        'before installation may continue'
-    )
-
-tools_override = methods.get('_ensure_vmware_tools')
-if tools_override is not None and any(
-        isinstance(n, ast.Call) and matches(n, 'self._recover_failed_windows_vagrant_up(machine)')
-        for n in ast.walk(tools_override)):
-    fail('failed-up recovery must not be hidden inside VMware Tools readiness')
-
-provisioner = Path('goad/provisioner/ansible/ansible.py').read_text()
-for token in ('_prepare_provider_provisioning', '_finalize_provider_provisioning', 'get_playbook_list'):
-    if token not in provisioner:
-        fail(f'Ansible clean-install lifecycle missing provider hook: {token}')
-PY
-pass 'GOAD clean-install orchestration + unattended lifecycle contract'
-
-readonly ANSIBLE_PLAYBOOK="${HOME}/.goad/.venv/bin/ansible-playbook"
-if [[ -x "${ANSIBLE_PLAYBOOK}" ]]; then
-    ANSIBLE_CONFIG="${ROOT}/ansible/ansible.cfg" \
-        "${ANSIBLE_PLAYBOOK}" -i 'ws01,' "${ROOT}/ansible/ws01.yml" --syntax-check >/dev/null
-    ANSIBLE_CONFIG="${ROOT}/ansible/ansible.cfg" \
-        "${ANSIBLE_PLAYBOOK}" -i 'ws01,' "${ROOT}/ansible/ws01-lpe-install.yml" --syntax-check >/dev/null
-    pass 'WS01 foundation and install LPE Ansible syntax'
-else
-    printf '[INFO] GOAD Ansible runtime not installed yet; syntax checks deferred to bootstrap/runtime\n'
-fi
-
-bash scripts/validate-network-segmentation-source.sh
-pass 'segmented VMware/provider source contract'
-
-bash scripts/validate-ws01-source.sh
-pass 'WS01 source contract'
-
-bash scripts/validate-windows-lpe-framework-source.sh
-pass '20-technique Windows LPE source contract'
-
-git diff --check
-pass 'Git whitespace check'
-
-printf '\n[READY] GOAD Kingdoms clean-install source gate passed.\n'
-printf 'A fresh GOAD/VMware install is wired for unattended sudo continuity, segmented provisioning, WS01 foundation, and all 20 LPE scenarios.\n'

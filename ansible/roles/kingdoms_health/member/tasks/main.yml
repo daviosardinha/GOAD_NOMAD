@@ -1,0 +1,135 @@
+---
+- name: Validate and conditionally repair member domain health
+  ansible.windows.win_powershell:
+    script: |
+      [CmdletBinding()]
+      param (
+          [Parameter(Mandatory = $true)]
+          [String]$DomainName,
+
+          [Parameter(Mandatory = $true)]
+          [String]$DomainAdmin,
+
+          [Parameter(Mandatory = $true)]
+          [String]$DomainPassword,
+
+          [Parameter(Mandatory = $true)]
+          [Bool]$AllowRepair
+      )
+
+      $ErrorActionPreference = 'Stop'
+      $Ansible.Changed = $false
+
+      function Assert-DomainDiscovery {
+          Resolve-DnsName "_ldap._tcp.dc._msdcs.$DomainName" -ErrorAction Stop | Out-Null
+          $discovery = & nltest.exe "/dsgetdc:$DomainName" 2>&1
+          if ($LASTEXITCODE -ne 0) {
+              throw "DC discovery failed for $DomainName: $($discovery -join ' ')"
+          }
+      }
+
+      function Test-SecureChannel {
+          $nltest = & nltest.exe "/sc_query:$DomainName" 2>&1
+          $nltestRc = $LASTEXITCODE
+          $powershellHealthy = Test-ComputerSecureChannel -ErrorAction SilentlyContinue
+          return ($nltestRc -eq 0 -and $powershellHealthy)
+      }
+
+      function Repair-SecureChannel {
+          $securePassword = ConvertTo-SecureString $DomainPassword -AsPlainText -Force
+          $credential = New-Object System.Management.Automation.PSCredential (
+              $DomainAdmin,
+              $securePassword
+          )
+
+          Reset-ComputerMachinePassword -Credential $credential -ErrorAction Stop
+          Restart-Service Netlogon -Force -ErrorAction Stop
+          $Ansible.Changed = $true
+      }
+
+      function Repair-DomainTime {
+          & w32tm.exe /config /syncfromflags:domhier /update | Out-Null
+          if ($LASTEXITCODE -ne 0) {
+              throw "w32tm /config failed with exit code $LASTEXITCODE"
+          }
+
+          Restart-Service W32Time -Force -ErrorAction Stop
+          $Ansible.Changed = $true
+
+          for ($attempt = 1; $attempt -le 12; $attempt++) {
+              & w32tm.exe /resync /rediscover | Out-Null
+              Start-Sleep -Seconds 5
+
+              $source = (& w32tm.exe /query /source 2>$null | Out-String).Trim()
+              if ($LASTEXITCODE -eq 0 -and
+                  $source -and
+                  $source -notmatch 'Local CMOS Clock') {
+                  return $source
+              }
+          }
+
+          throw "$($env:COMPUTERNAME) did not return to domain time after repair"
+      }
+
+      $computer = Get-CimInstance Win32_ComputerSystem
+      if (-not $computer.PartOfDomain) {
+          throw "$($env:COMPUTERNAME) is not joined to a domain"
+      }
+      if ($computer.Domain -ine $DomainName) {
+          throw "$($env:COMPUTERNAME) reports domain '$($computer.Domain)' instead of '$DomainName'"
+      }
+
+      Assert-DomainDiscovery
+
+      if (-not (Test-SecureChannel)) {
+          if (-not $AllowRepair) {
+              throw "Secure channel to $DomainName is broken and repair is disabled"
+          }
+
+          Write-Output "KINGDOMS_MEMBER_TRUST_REPAIR host=$($env:COMPUTERNAME) domain=$DomainName"
+          Repair-SecureChannel
+      }
+
+      $channelHealthy = $false
+      for ($attempt = 1; $attempt -le 12; $attempt++) {
+          Assert-DomainDiscovery
+          if (Test-SecureChannel) {
+              $channelHealthy = $true
+              break
+          }
+          Start-Sleep -Seconds 5
+      }
+
+      if (-not $channelHealthy) {
+          throw "Secure channel to $DomainName is still broken after validation/repair"
+      }
+
+      $timeService = Get-Service -Name W32Time -ErrorAction Stop
+      if ($timeService.Status -ne 'Running') {
+          if (-not $AllowRepair) {
+              throw "W32Time is $($timeService.Status) and repair is disabled"
+          }
+          Start-Service W32Time -ErrorAction Stop
+          $Ansible.Changed = $true
+      }
+
+      $timeSource = (& w32tm.exe /query /source 2>$null | Out-String).Trim()
+      if ($LASTEXITCODE -ne 0 -or
+          -not $timeSource -or
+          $timeSource -match 'Local CMOS Clock') {
+          if (-not $AllowRepair) {
+              throw "$($env:COMPUTERNAME) is not synchronized to domain time and repair is disabled"
+          }
+
+          Write-Output "KINGDOMS_MEMBER_TIME_REPAIR host=$($env:COMPUTERNAME) domain=$DomainName"
+          $timeSource = Repair-DomainTime
+      }
+
+      Resolve-DnsName "_ldap._tcp.dc._msdcs.$DomainName" -ErrorAction Stop | Out-Null
+      Write-Output "KINGDOMS_MEMBER_HEALTH_OK host=$($env:COMPUTERNAME) domain=$DomainName time=$timeSource"
+    parameters:
+      DomainName: "{{ kingdoms_health_domain }}"
+      DomainAdmin: "{{ kingdoms_health_domain_admin }}"
+      DomainPassword: "{{ kingdoms_health_domain_password }}"
+      AllowRepair: "{{ kingdoms_health_repair | bool }}"
+  register: kingdoms_health_member_result
