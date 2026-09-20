@@ -25,9 +25,16 @@ readonly DOMAIN_MEMBERS=(
     GOAD-WS01
 )
 
+# Keep the canonical six-machine list explicit. Several source/runtime
+# validators consume this as a compatibility contract, while the grouped arrays
+# above control AD-aware transition ordering.
 readonly WINDOWS_VMS=(
-    "${DOMAIN_CONTROLLERS[@]}"
-    "${DOMAIN_MEMBERS[@]}"
+    GOAD-DC01
+    GOAD-DC02
+    GOAD-DC03
+    GOAD-SRV02
+    GOAD-SRV03
+    GOAD-WS01
 )
 
 declare -A DC_DOMAIN=(
