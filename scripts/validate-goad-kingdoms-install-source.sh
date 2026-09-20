@@ -531,3 +531,9 @@ pass 'WS01 source contract'
 
 bash scripts/validate-windows-lpe-framework-source.sh
 pass '20-technique Windows LPE source contract'
+
+git diff --check
+pass 'Git whitespace check'
+
+printf '\n[READY] GOAD Kingdoms clean-install source gate passed.\n'
+printf 'A fresh GOAD/VMware install is wired for unattended sudo continuity, segmented provisioning, WS01 foundation, and all 20 LPE scenarios.\n'
