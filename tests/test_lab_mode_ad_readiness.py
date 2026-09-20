@@ -38,6 +38,28 @@ class LabModeAdReadinessTests(unittest.TestCase):
         )
         self.assertIn("preflight_domain_health", text)
 
+    def test_exercise_restart_proves_authenticated_readiness_before_final_disconnect(self):
+        text = self.text
+
+        for token in (
+            "prove_isolated_guest_ready()",
+            'temporarily connecting runtime NAT for authenticated readiness',
+            'vmrun -T ws connectNamedDevice',
+            'vmrun -T ws disconnectNamedDevice',
+            'authenticated post-reboot readiness proven; runtime NAT disconnected',
+            'prove_isolated_guest_ready "${vm}" member',
+            'prove_isolated_guest_ready "${vm}" dc',
+        ):
+            self.assertIn(token, text)
+
+        fn = text[text.index("prove_isolated_guest_ready()"):
+                  text.index("configure_windows_nat_exercise()")]
+        self.assertIn(
+            '[[ "${persistent}" == "FALSE" ]]',
+            fn,
+        )
+        self.assertIn("trap cleanup_runtime_nat EXIT", fn)
+
     def test_dc_readiness_is_ad_aware_not_merely_winrm(self):
         text = self.text
 

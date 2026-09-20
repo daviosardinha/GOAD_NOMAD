@@ -511,19 +511,68 @@ configure_windows_nat_provisioning() {
     done
 }
 
+prove_isolated_guest_ready() (
+    local vm="$1"
+    local kind="$2"
+    local vmx
+    local persistent
+
+    vmx="$(vmx_for "${vm}")"
+    persistent="$(get_start_connected "${vmx}")"
+
+    [[ "${persistent}" == "FALSE" ]] ||
+        fail "${vm}: exercise readiness probe requires persistent NAT to remain FALSE"
+
+    echo "        [*] temporarily connecting runtime NAT for authenticated readiness"
+
+    vmrun -T ws connectNamedDevice "${vmx}" ethernet0 >/dev/null 2>&1 ||
+        fail "${vm}: could not temporarily connect runtime NAT for readiness"
+
+    cleanup_runtime_nat() {
+        vmrun -T ws disconnectNamedDevice "${vmx}" ethernet0 >/dev/null 2>&1 || true
+    }
+    trap cleanup_runtime_nat EXIT
+
+    case "${kind}" in
+        member)
+            wait_domain_member_ready "${vm}"
+            ;;
+        dc)
+            wait_domain_controller_ready "${vm}"
+            ;;
+        *)
+            fail "Unknown isolated readiness kind for ${vm}: ${kind}"
+            ;;
+    esac
+
+    cleanup_runtime_nat
+    trap - EXIT
+
+    persistent="$(get_start_connected "${vmx}")"
+    [[ "${persistent}" == "FALSE" ]] ||
+        fail "${vm}: readiness probe changed persistent NAT isolation"
+
+    echo "        [+] ${vm} authenticated post-reboot readiness proven; runtime NAT disconnected"
+)
+
 configure_windows_nat_exercise() {
     local vm
 
-    # Members reboot first while their DCs are still healthy. Restarting the
-    # DCs first caused BRAAVOS to boot against MEEREEN before ESSOS had started
-    # advertising, leaving DC Locator, domain time and Windows account lookup
-    # broken even though DNS and TCP connectivity were already available.
+    # Members reboot first while their DCs are still healthy. Every restarted
+    # guest keeps ethernet0.startConnected=FALSE. The management NIC is then
+    # connected only long enough to prove authenticated Windows/domain
+    # readiness through Vagrant WinRM and is immediately disconnected again.
     for vm in "${DOMAIN_MEMBERS[@]}"; do
         ensure_vm_nat_state "${vm}" FALSE disconnect
+        prove_isolated_guest_ready "${vm}" member
     done
 
+    # Keep parent/child dependencies available while DCs are restarted. The
+    # child DC is validated before KINGSLANDING is cycled; MEEREEN is
+    # independent; KINGSLANDING is restarted last.
     for vm in "${EXERCISE_DOMAIN_CONTROLLERS[@]}"; do
         ensure_vm_nat_state "${vm}" FALSE disconnect
+        prove_isolated_guest_ready "${vm}" dc
     done
 }
 
@@ -693,6 +742,9 @@ main() {
     require_command vagrant
     require_command python3
     require_command ip
+    require_command timeout
+    require_command iconv
+    require_command base64
 
     [[ -f "${ROUTES}" ]] ||
         fail "${ROUTES} is missing."

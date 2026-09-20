@@ -349,6 +349,9 @@ require_tokens(
         'w32tm.exe /query /source',
         'configure_windows_nat_provisioning',
         'configure_windows_nat_exercise',
+        'prove_isolated_guest_ready',
+        'temporarily connecting runtime NAT for authenticated readiness',
+        'authenticated post-reboot readiness proven; runtime NAT disconnected',
         'member/workstation guests first; domain controllers last',
         'domain controllers first with AD readiness; members second',
     ),
@@ -366,6 +369,17 @@ exercise_transition = lab_mode[
 ]
 if exercise_transition.index('for vm in "${DOMAIN_MEMBERS[@]}"') > exercise_transition.index('for vm in "${EXERCISE_DOMAIN_CONTROLLERS[@]}"'):
     fail('exercise mode must restart members before domain controllers')
+for token in (
+    'ensure_vm_nat_state "${vm}" FALSE disconnect',
+    'prove_isolated_guest_ready "${vm}" member',
+    'prove_isolated_guest_ready "${vm}" dc',
+):
+    if token not in exercise_transition:
+        fail(f'exercise mode missing post-reboot authenticated readiness contract: {token}')
+
+runtime_validator = Path('scripts/validate-network-segmentation-runtime.sh').read_text()
+if '${HOME}/.goad/.venv/bin/ansible-playbook' not in runtime_validator:
+    fail('network runtime validator does not detect the canonical GOAD Ansible virtualenv')
 
 nat_enable = Path('ansible/roles/settings/enable_nat_adapter/tasks/main.yml').read_text()
 require_tokens(
@@ -517,9 +531,3 @@ pass 'WS01 source contract'
 
 bash scripts/validate-windows-lpe-framework-source.sh
 pass '20-technique Windows LPE source contract'
-
-git diff --check
-pass 'Git whitespace check'
-
-printf '\n[READY] GOAD Kingdoms clean-install source gate passed.\n'
-printf 'A fresh GOAD/VMware install is wired for unattended sudo continuity, segmented provisioning, WS01 foundation, and all 20 LPE scenarios.\n'
