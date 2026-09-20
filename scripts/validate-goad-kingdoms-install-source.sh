@@ -176,6 +176,15 @@ require_tokens(
 if 'Reset-ComputerMachinePassword' in dc_health:
     fail('domain controller health gate must not auto-repair machine trust')
 
+for label, health_script in (
+    ('domain controller health contract', dc_health),
+    ('member health contract', member_health),
+):
+    if '$DomainName:' in health_script:
+        fail(f'{label} contains unsafe PowerShell interpolation before colon')
+    if '${DomainName}:' not in health_script:
+        fail(f'{label} must delimit DomainName before colon in PowerShell strings')
+
 install_lpe = Path('ansible/ws01-lpe-install.yml').read_text()
 require_tokens(
     'WS01 LPE clean-install playbook',

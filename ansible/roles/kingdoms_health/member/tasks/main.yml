@@ -24,7 +24,7 @@
           Resolve-DnsName "_ldap._tcp.dc._msdcs.$DomainName" -ErrorAction Stop | Out-Null
           $discovery = & nltest.exe "/dsgetdc:$DomainName" 2>&1
           if ($LASTEXITCODE -ne 0) {
-              throw "DC discovery failed for $DomainName: $($discovery -join ' ')"
+              throw "DC discovery failed for ${DomainName}: $($discovery -join ' ')"
           }
       }
 

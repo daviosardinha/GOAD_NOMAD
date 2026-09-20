@@ -57,6 +57,17 @@ class KingdomsHealthGateTests(unittest.TestCase):
             self.assertIn(token, dc)
         self.assertNotIn("Reset-ComputerMachinePassword", dc)
 
+    def test_health_powershell_uses_safe_variable_interpolation_before_colons(self):
+        role_paths = (
+            ROOT / "ansible/roles/kingdoms_health/dc/tasks/main.yml",
+            ROOT / "ansible/roles/kingdoms_health/member/tasks/main.yml",
+        )
+        for path in role_paths:
+            text = path.read_text(encoding="utf-8")
+            with self.subTest(path=path):
+                self.assertNotIn("$DomainName:", text)
+                self.assertIn("${DomainName}:", text)
+
 
 if __name__ == "__main__":
     unittest.main()

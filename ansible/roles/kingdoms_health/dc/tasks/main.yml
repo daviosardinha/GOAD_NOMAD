@@ -37,7 +37,7 @@
 
       $dcDiscovery = & nltest.exe "/dsgetdc:$DomainName" 2>&1
       if ($LASTEXITCODE -ne 0) {
-          throw "DC discovery failed for $DomainName: $($dcDiscovery -join ' ')"
+          throw "DC discovery failed for ${DomainName}: $($dcDiscovery -join ' ')"
       }
 
       foreach ($port in @(88, 389)) {
