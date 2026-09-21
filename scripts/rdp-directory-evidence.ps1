@@ -20,6 +20,10 @@ function ConvertTo-KingdomsSidValue {
     throw "Unsupported directory SID representation: $typeName"
 }
 
+# Every directory query below is explicitly pinned to WINTERFELL. Avoid
+# initializing the implicit AD: drive during cold-start convergence: ADWS can
+# already be listening while default-drive discovery is still transient.
+$Env:ADPS_LoadDefaultDrive = '0'
 Import-Module ActiveDirectory
 $cs = Get-CimInstance Win32_ComputerSystem
 if ($cs.Name -ine 'WINTERFELL' -or $cs.Domain -ine 'north.sevenkingdoms.local') {

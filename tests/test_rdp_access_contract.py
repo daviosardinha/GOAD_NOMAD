@@ -139,6 +139,13 @@ class RdpAccessContractTests(unittest.TestCase):
                 with self.subTest(path=path, forbidden=forbidden):
                     self.assertNotIn(forbidden, text)
 
+    def test_directory_collector_skips_implicit_ad_drive_initialization(self):
+        text = self.text('scripts/rdp-directory-evidence.ps1')
+        disable = "$Env:ADPS_LoadDefaultDrive = '0'"
+        module_import = 'Import-Module ActiveDirectory'
+        self.assertIn(disable, text)
+        self.assertLess(text.index(disable), text.index(module_import))
+
     def test_directory_token_groups_use_explicit_base_search(self):
         text = self.text('scripts/rdp-directory-evidence.ps1')
         self.assertIn('Get-ADUser -Identity $name -Server $cs.Name', text)
