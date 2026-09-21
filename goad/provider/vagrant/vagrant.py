@@ -39,6 +39,10 @@ class VagrantProvider(Provider):
     def destroy(self):
         return self.command.run_vagrant(['destroy'], self.path)
 
+    def destroy_non_interactive(self):
+        """Destroy Vagrant resources without requiring an interactive TTY."""
+        return self.command.run_vagrant(['destroy', '-f'], self.path)
+
     def start(self, vm_name=None):
         # GOAD_NOMAD's segmented VMware provider needs more than a bare
         # ``vagrant up``. Protected-zone routing may need to be opened

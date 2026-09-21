@@ -421,6 +421,25 @@ class GoadNomad(BaseGoad):
         else:
             Log.error('GOAD_NOMAD runtime validation failed')
 
+    def do_destroy(self, arg=''):
+        """Destroy the loaded instance and return the provider result.
+
+        Interactive console use keeps the provider's normal confirmation.
+        Non-interactive CLI dispatch uses the provider's explicit forced
+        destroy entry point so Vagrant never tries to prompt without a TTY.
+        """
+        provider = self.lab_manager.get_current_instance_provider()
+        if provider is None:
+            Log.error('No provider loaded for the current instance')
+            return False
+
+        if arg == '--non-interactive':
+            destroy_non_interactive = getattr(provider, 'destroy_non_interactive', None)
+            if callable(destroy_non_interactive):
+                return bool(destroy_non_interactive())
+
+        return bool(provider.destroy())
+
     def do_status(self, arg=''):
         super().do_status(arg)
         provider = self._nomad_provider(require_instance=True)
@@ -495,7 +514,8 @@ def _dispatch_task(goad, args):
         goad.do_stop()
         goad.do_start()
     elif args.task == 'destroy':
-        goad.do_destroy()
+        if not goad.do_destroy('--non-interactive'):
+            return 1
     elif args.task == 'status':
         goad.do_status()
     elif args.task == 'snapshot':
