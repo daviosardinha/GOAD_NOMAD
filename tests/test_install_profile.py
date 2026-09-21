@@ -365,36 +365,78 @@ class ToolsReportingTests(unittest.TestCase):
         self.assertIn('Get-NetIPAddress', final_script)
         self.assertIn('10.4.10.22', final_script)
 
-    def test_recovery_cycle_must_reach_strict_readiness_after_provision(self):
-        """A successful --provision command alone cannot complete recovery."""
-        self.provider._stop_failed_windows_guest_cleanly = Mock(return_value=True)
-        self.provider._run_vagrant_bounded = Mock(return_value=True)
-        self.provider._ensure_vmware_tools = Mock(return_value=False)
-
-        self.assertFalse(
-            self.provider._recover_failed_windows_vagrant_up('GOAD-SRV02')
-        )
-
-        self.provider._run_vagrant_bounded.assert_called_once_with(
-            ['up', 'GOAD-SRV02', '--provision'],
-            timeout=600,
-        )
-        self.provider._ensure_vmware_tools.assert_called_once_with('GOAD-SRV02')
-
-    def test_recovery_cycle_succeeds_only_after_strict_readiness_returns(self):
-        self.provider._stop_failed_windows_guest_cleanly = Mock(return_value=True)
-        self.provider._run_vagrant_bounded = Mock(return_value=True)
-        self.provider._ensure_vmware_tools = Mock(return_value=True)
+    def test_recovery_skips_vagrant_replay_when_guest_is_already_complete(self):
+        self.provider.management_hosts = {'GOAD-SRV02': '10.4.10.22'}
+        self.provider._authenticated_guest_install_ready = Mock(return_value=True)
+        self.provider._wait_lab_winrm_ready = Mock(return_value=True)
+        self.provider._repair_canonical_lab_network = Mock()
 
         self.assertTrue(
             self.provider._recover_failed_windows_vagrant_up('GOAD-SRV02')
         )
 
-        self.provider._run_vagrant_bounded.assert_called_once_with(
-            ['up', 'GOAD-SRV02', '--provision'],
-            timeout=600,
+        self.provider._repair_canonical_lab_network.assert_not_called()
+        self.provider._wait_lab_winrm_ready.assert_called_once_with(
+            'GOAD-SRV02', '10.4.10.22', timeout=120
         )
-        self.provider._ensure_vmware_tools.assert_called_once_with('GOAD-SRV02')
+
+    def test_recovery_repairs_only_missing_network_contract(self):
+        self.provider.management_hosts = {'GOAD-SRV02': '10.4.10.22'}
+        self.provider._authenticated_guest_install_ready = Mock(
+            side_effect=[False, True]
+        )
+        self.provider._authenticated_guest_recovery_ready = Mock(return_value=True)
+        self.provider._repair_canonical_lab_network = Mock(return_value=True)
+        self.provider._wait_lab_winrm_ready = Mock(return_value=True)
+
+        self.assertTrue(
+            self.provider._recover_failed_windows_vagrant_up('GOAD-SRV02')
+        )
+
+        self.provider._repair_canonical_lab_network.assert_called_once_with(
+            'GOAD-SRV02'
+        )
+        self.provider._wait_lab_winrm_ready.assert_called_once_with(
+            'GOAD-SRV02', '10.4.10.22', timeout=120
+        )
+
+    def test_recovery_fails_closed_when_direct_network_repair_fails(self):
+        self.provider.management_hosts = {'GOAD-SRV02': '10.4.10.22'}
+        self.provider._authenticated_guest_install_ready = Mock(return_value=False)
+        self.provider._authenticated_guest_recovery_ready = Mock(return_value=True)
+        self.provider._repair_canonical_lab_network = Mock(return_value=False)
+        self.provider._wait_lab_winrm_ready = Mock()
+
+        self.assertFalse(
+            self.provider._recover_failed_windows_vagrant_up('GOAD-SRV02')
+        )
+
+        self.provider._wait_lab_winrm_ready.assert_not_called()
+
+    def test_direct_network_repair_uses_srv02_canonical_contract(self):
+        self.provider.recovery_network_contract = {
+            'GOAD-SRV02': (
+                '10.4.10.22', '10.4.10.1', '00:50:56:20:10:22'
+            )
+        }
+        self.provider._winrm_forwarded_port = Mock(return_value=2207)
+        self.provider._wait_winrm_ready = Mock(return_value=True)
+        self.session.run_ps.return_value = SimpleNamespace(
+            status_code=0,
+            std_out=b'GOAD_KINGDOMS_NETWORK_REPAIRED',
+        )
+
+        self.assertTrue(
+            self.provider._repair_canonical_lab_network('GOAD-SRV02')
+        )
+
+        script = self.session.run_ps.call_args.args[0]
+        self.assertIn('10.4.10.22', script)
+        self.assertIn('10.4.10.1', script)
+        self.assertIn('00:50:56:20:10:22', script)
+        self.assertIn('10.4.0.0/16', script)
+        self.assertIn('GOAD_KINGDOMS_NETWORK_REPAIRED', script)
+        self.provider._wait_winrm_ready.assert_called_once_with(2207, 60)
 
     def test_authenticated_guest_state_wins_over_broken_vmrun_reporting(self):
         """Healthy authenticated guest must survive stale VIX telemetry."""

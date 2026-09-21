@@ -13,6 +13,14 @@ from goad.provider.vagrant.vmware_nomad import GoadNomadVmwareProvider
 
 
 class GoadKingdomsVmwareProvider(GoadNomadVmwareProvider):
+    recovery_network_contract = {
+        'GOAD-DC01': ('10.4.20.10', '10.4.20.1', '00:50:56:20:20:10'),
+        'GOAD-DC02': ('10.4.10.11', '10.4.10.1', '00:50:56:20:10:11'),
+        'GOAD-DC03': ('10.4.30.12', '10.4.30.1', '00:50:56:20:30:12'),
+        'GOAD-SRV02': ('10.4.10.22', '10.4.10.1', '00:50:56:20:10:22'),
+        'GOAD-SRV03': ('10.4.30.23', '10.4.30.1', '00:50:56:20:30:23'),
+        'GOAD-WS01': ('10.4.10.31', '10.4.10.1', '00:50:56:20:10:31'),
+    }
     """GOAD Kingdoms VMware provider policy layered over the M1 lifecycle.
 
     ``GoadNomadVmwareProvider`` remains the compatibility implementation that
@@ -618,46 +626,164 @@ Write-Output 'GOAD_VMTOOLS_RESTARTED'
         context['restart_attempted'] = True
         return self._restart_tools_reporting(context['machine'], vmx)
 
-    def _recover_failed_windows_vagrant_up(self, machine):
-        """Recover a failed fresh Windows ``vagrant up`` deterministically.
+    def _repair_canonical_lab_network(self, machine):
+        """Repair only the deterministic lab NIC through already-proven WinRM.
 
-        A failed first bring-up does not necessarily mean VMware Tools are
-        absent. Fresh StefanScherer guests can already have healthy Tools and a
-        working forwarded WinRM endpoint while Vagrant's VMware guest channel
-        still fails during adapter/provisioner setup.
-
-        Recovery therefore preserves the now-proven guest state: shut Windows
-        down gracefully first, verify VMware reports it stopped, then execute one
-        bounded ``vagrant up --provision`` cycle. Finally re-prove VMware Tools
-        and authenticated WinRM readiness before allowing installation to move to
-        the next machine.
+        Fresh VMware boxes can fail while Vagrant is configuring secondary
+        adapters, before the normal fix_ip.ps1 provisioner runs. Replaying every
+        Vagrant shell provisioner is both unnecessary and fragile once forwarded
+        WinRM and VMware Tools are already authenticated and healthy. Repair the
+        one missing contract directly, then prove the exact HTTPS endpoint that
+        Ansible will use.
         """
-        Log.warning(
-            f'GOAD Kingdoms: {machine} first Vagrant bring-up failed despite '
-            'recoverable guest readiness; starting a clean recovery provision cycle'
-        )
+        contract = self.recovery_network_contract.get(machine)
+        if contract is None:
+            Log.error(f'GOAD Kingdoms: no recovery network contract for {machine}')
+            return False
 
-        if not self._stop_failed_windows_guest_cleanly(machine):
+        expected_ip, gateway, mac = contract
+        try:
+            port = self._winrm_forwarded_port(machine)
+        except Exception as exc:
             Log.error(
-                f'GOAD Kingdoms: could not stop {machine} safely after failed Vagrant bring-up'
+                f'GOAD Kingdoms: cannot resolve forwarded WinRM for {machine}: '
+                f'{type(exc).__name__}'
             )
             return False
 
-        if not self._run_vagrant_bounded(['up', machine, '--provision'], timeout=600):
+        if not port or not self._wait_winrm_ready(port, 60):
             Log.error(
-                f'GOAD Kingdoms: {machine} failed the bounded Vagrant --provision recovery cycle'
+                f'GOAD Kingdoms: forwarded WinRM is not stable for {machine}; '
+                'refusing direct network repair'
             )
             return False
 
-        if not self._ensure_vmware_tools(machine):
+        script = rf"""
+$ErrorActionPreference = 'Stop'
+
+function Normalize-Mac([String] $value) {{
+    return ($value -replace '[:-]', '').ToUpperInvariant()
+}}
+
+$wantedMac = Normalize-Mac '{mac}'
+$adapter = Get-NetAdapter | Where-Object {{
+    (Normalize-Mac $_.MacAddress) -eq $wantedMac
+}} | Select-Object -First 1
+
+if ($null -eq $adapter) {{
+    throw 'GOAD Kingdoms recovery could not find the deterministic lab adapter'
+}}
+
+$existing = @(Get-NetIPAddress -InterfaceIndex $adapter.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+    Where-Object {{ $_.IPAddress -eq '{expected_ip}' }})
+
+if ($existing.Count -eq 0) {{
+    netsh.exe interface ipv4 set address name="$($adapter.Name)" source=static address={expected_ip} mask=255.255.255.0 gateway=none | Out-Null
+    if ($LASTEXITCODE -ne 0) {{
+        throw 'GOAD Kingdoms recovery failed to assign the canonical lab address'
+    }}
+}}
+
+$routes = @(Get-NetRoute -DestinationPrefix '10.4.0.0/16' -ErrorAction SilentlyContinue)
+if ($routes.Count -gt 0) {{
+    $routes | Remove-NetRoute -Confirm:$false -ErrorAction Stop
+}}
+
+route.exe -p ADD 10.4.0.0 MASK 255.255.0.0 {gateway} METRIC 5 IF $adapter.ifIndex | Out-Null
+if ($LASTEXITCODE -ne 0) {{
+    throw 'GOAD Kingdoms recovery failed to install the internal route'
+}}
+
+Write-Output 'GOAD_KINGDOMS_NETWORK_REPAIRED'
+"""
+        try:
+            result = self._winrm_session(port).run_ps(script)
+        except Exception as exc:
             Log.error(
-                f'GOAD Kingdoms: {machine} completed Vagrant recovery but VMware Tools/WinRM '
-                'did not return healthy'
+                f'GOAD Kingdoms: direct network repair failed for {machine}: '
+                f'{type(exc).__name__}'
+            )
+            return False
+
+        if (
+            result.status_code != 0
+            or b'GOAD_KINGDOMS_NETWORK_REPAIRED' not in result.std_out
+        ):
+            Log.error(
+                f'GOAD Kingdoms: direct network repair did not complete for {machine}'
             )
             return False
 
         Log.success(
-            f'GOAD Kingdoms: {machine} completed a clean failed-bring-up recovery provision cycle'
+            f'GOAD Kingdoms: repaired {machine} lab NIC directly through '
+            'authenticated forwarded WinRM'
+        )
+        return True
+
+    def _recover_failed_windows_vagrant_up(self, machine):
+        """Recover a failed fresh Windows bring-up without replaying Vagrant shells.
+
+        The recovery precondition already proves authenticated forwarded WinRM
+        and healthy VMware Tools. The remaining fresh-install failure observed
+        in practice is Vagrant stopping before the deterministic lab NIC has
+        received its canonical address. Re-running the full Vagrant provision
+        chain replays legacy compatibility scripts and can hang even though the
+        guest itself is healthy.
+
+        Repair the missing lab-NIC contract directly, then fail closed unless
+        both strict guest readiness and the canonical HTTPS/WinRM management
+        endpoint are proven.
+        """
+        expected = self.management_hosts.get(machine)
+        if not expected:
+            Log.error(f'GOAD Kingdoms: no canonical management address for {machine}')
+            return False
+
+        if self._authenticated_guest_install_ready(machine):
+            if self._wait_lab_winrm_ready(machine, expected, timeout=120):
+                Log.success(
+                    f'GOAD Kingdoms: {machine} first Vagrant command failed after '
+                    'required guest state was already complete; continuing'
+                )
+                return True
+            Log.error(
+                f'GOAD Kingdoms: {machine} has canonical guest state but its '
+                'Ansible HTTPS endpoint is not ready'
+            )
+            return False
+
+        if not self._authenticated_guest_recovery_ready(machine):
+            Log.error(
+                f'GOAD Kingdoms: {machine} lacks authenticated recovery readiness'
+            )
+            return False
+
+        Log.warning(
+            f'GOAD Kingdoms: {machine} first Vagrant bring-up stopped before '
+            'canonical lab networking; repairing the deterministic lab NIC '
+            'without replaying legacy shell provisioners'
+        )
+
+        if not self._repair_canonical_lab_network(machine):
+            return False
+
+        if not self._authenticated_guest_install_ready(machine, timeout=120):
+            Log.error(
+                f'GOAD Kingdoms: {machine} network repair completed but strict '
+                'guest readiness is still missing'
+            )
+            return False
+
+        if not self._wait_lab_winrm_ready(machine, expected, timeout=120):
+            Log.error(
+                f'GOAD Kingdoms: {machine} network repair completed but canonical '
+                'HTTPS/WinRM readiness was not proven'
+            )
+            return False
+
+        Log.success(
+            f'GOAD Kingdoms: {machine} recovered directly to canonical '
+            'management readiness'
         )
         return True
 
