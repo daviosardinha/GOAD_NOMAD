@@ -261,6 +261,12 @@ prepare_runtime_power() {
     wait_tcp_ready 10.4.10.22 5986 'CASTELBLACK WinRM' 300 || return 1
     wait_tcp_ready 10.4.10.31 3389 'WS01 RDP' 300 || return 1
     wait_tcp_ready 10.4.10.31 5986 'WS01 WinRM' 300 || return 1
+    # WS01 exposes modern direct-hosted SMB only on the Domain profile. After
+    # a cold boot, RDP/WinRM can be ready before NLA finishes classifying the
+    # lab NIC as DomainAuthenticated and the TCP/445 rule becomes effective.
+    # Phase 01 expects reachable SMB with NULL/Guest rejected, so wait for the
+    # service boundary that the validator actually consumes.
+    wait_tcp_ready 10.4.10.31 445 'WS01 SMB / Domain profile' 300 || return 1
 
     printf '[PASS] Existing Kingdoms instance powered and NORTH runtime stabilized\n'
 }

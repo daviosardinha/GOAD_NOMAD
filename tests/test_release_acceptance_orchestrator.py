@@ -35,6 +35,11 @@ class ReleaseAcceptanceOrchestratorTests(unittest.TestCase):
         for stage in stages:
             self.assertIn(stage, text)
 
+    def test_runtime_power_waits_for_ws01_smb_domain_profile(self):
+        text = SCRIPT.read_text()
+        self.assertIn("wait_tcp_ready 10.4.10.31 445 'WS01 SMB / Domain profile' 300", text)
+        self.assertIn("Phase 01 expects reachable SMB with NULL/Guest rejected", text)
+
     def test_runtime_power_recovery_is_non_provisioning_and_conflict_guarded(self):
         text = SCRIPT.read_text()
         self.assertIn("check-vmware-instance-conflicts.sh", text)
