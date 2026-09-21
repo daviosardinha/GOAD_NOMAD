@@ -21,6 +21,7 @@ class ReleaseAcceptanceOrchestratorTests(unittest.TestCase):
             "source_identity",
             "regression_suite",
             "clean_install_source",
+            "prepare_runtime_power",
             "rdp_phase01",
             "clean_install_runtime",
             "full_lpe_runtime",
@@ -33,6 +34,14 @@ class ReleaseAcceptanceOrchestratorTests(unittest.TestCase):
         self.assertEqual(positions, sorted(positions))
         for stage in stages:
             self.assertIn(stage, text)
+
+    def test_runtime_power_recovery_is_non_provisioning_and_conflict_guarded(self):
+        text = SCRIPT.read_text()
+        self.assertIn("check-vmware-instance-conflicts.sh", text)
+        self.assertIn("vmrun -T ws start", text)
+        self.assertIn("nogui", text)
+        self.assertIn("ethernet0.startConnected=FALSE", text)
+        self.assertNotIn("vagrant up", text)
 
     def test_orchestrator_never_destroys_or_merges(self):
         text = SCRIPT.read_text().lower()
