@@ -89,7 +89,7 @@ class RdpAccessContractTests(unittest.TestCase):
             'ad/GOAD/scripts/rdp_scheduler.ps1': 'af1fa86d8cccb9a81addf95aecb30d3a8d93672075c34f7627869445a9f2c0d2',
             'ad/GOAD/files/dc02/bot_rdp.ps1': '4ead342fe794a1260093db797d73ce421cd1724a58a8ee6df14b0bf6e2d744b5',
             'ansible/roles/phase01/dc/files/anonymous-sid-translation-gpo.ps1': '97a4d301de121a7359da4b19d30408e490178345065974a738b200c8f7e468b1',
-            'scripts/validate-phase01.py': '07b5f602a73eb9803115a28836681e1396f1c8277da98e84855bcca1a3ca7a2a',
+            'scripts/validate-phase01.py': '989b3565ff3a627fe1945373c821f646bab126b8b033a134829c0925aa649b5e',
         }
         for path, digest in expected.items():
             with self.subTest(path=path):
