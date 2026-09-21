@@ -196,6 +196,32 @@ class GoadNomad(BaseGoad):
             return provider
         return None
 
+    def do_create(self, arg=''):
+        """Create a new instance, with an explicit non-interactive CLI path.
+
+        Interactive console installs retain the upstream confirmation prompt.
+        A command-line -t install is already an explicit operator action and
+        must not block or silently abort because stdin is not a TTY.
+        """
+        if arg != '--non-interactive':
+            return super().do_create(arg)
+
+        if self.lab_manager.get_current_instance() is not None:
+            return self.do_install_instance()
+
+        Log.success('Current Settings')
+        self.lab_manager.current_settings.show()
+        print()
+        Log.info(
+            'GOAD Kingdoms: explicit CLI install accepted; '
+            'creating the lab without an interactive confirmation prompt'
+        )
+        Log.info('Create instance folder')
+        if not self.lab_manager.create_instance():
+            Log.error('Instance creation failed')
+            return False
+
+        return self.do_install_instance()
     def do_install(self, arg=''):
         """Run a full install and return success only for an installed instance."""
         result = self._run_with_install_timer(lambda: self.do_create(arg))
@@ -502,7 +528,7 @@ def _dispatch_task(goad, args):
                 if not goad.do_install_instance():
                     return 1
         else:
-            if not goad.do_install():
+            if not goad.do_install('--non-interactive'):
                 return 1
     elif args.task == 'check':
         goad.do_check()
