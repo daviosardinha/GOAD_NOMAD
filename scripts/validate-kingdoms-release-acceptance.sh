@@ -286,11 +286,59 @@ full_lpe_runtime() {
 }
 
 phase02_readiness() {
-    INSTANCE="${INSTANCE}"     PROVIDER="${PROVIDER}"     EVIDENCE="${EVIDENCE}/phase02"         bash scripts/validate-phase02-readiness.sh
+    # INSTANCE/PROVIDER/EVIDENCE are readonly in this orchestrator. Prefixing a
+    # command with shell assignments attempts to reassign those readonly names
+    # before exec and silently lets the child fall back to its historical
+    # default instance. Pass the requested instance through env(1) instead.
+    env \
+        INSTANCE="${INSTANCE}" \
+        PROVIDER="${PROVIDER}" \
+        EVIDENCE="${EVIDENCE}/phase02" \
+        bash scripts/validate-phase02-readiness.sh
 }
 
 final_health() {
-    ANSIBLE_CONFIG="${ANSIBLE_CFG}"     "${ANSIBLE_PLAYBOOK}"         -i "${LAB_INVENTORY}"         -i "${INSTANCE_INVENTORY}"         -i "${GLOBAL_INVENTORY}"         "${ROOT}/ansible/kingdoms-health-final.yml"
+    local health_rc=0
+    local restore_rc=0
+    local mode='unknown'
+
+    [[ -f "${PROVIDER}/.goad-nomad-mode" ]] && mode="$(tr -d '[:space:]' < "${PROVIDER}/.goad-nomad-mode")"
+    [[ "${mode}" == 'exercise' ]] || {
+        fail "final health proof requires exercise mode before opening the temporary management plane; observed ${mode}"
+        return 1
+    }
+
+    # The committed health playbook intentionally addresses the canonical lab
+    # IPs. In exercise mode the host must not route directly to 10.4.20/24 or
+    # 10.4.30/24, so dc01/dc03/srv03 being unreachable is correct isolation,
+    # not failed AD health. Re-enter the normal provisioning management plane,
+    # run the no-repair health proof, and always return to exercise mode.
+    printf '[INFO] Opening provisioning management plane for all-six final health proof\n'
+    GOAD_PROVIDER_DIR="${PROVIDER}" \
+        bash "${ROOT}/scripts/lab-mode.sh" provisioning || return 1
+
+    ANSIBLE_CONFIG="${ANSIBLE_CFG}" \
+        "${ANSIBLE_PLAYBOOK}" \
+        -i "${LAB_INVENTORY}" \
+        -i "${INSTANCE_INVENTORY}" \
+        -i "${GLOBAL_INVENTORY}" \
+        "${ROOT}/ansible/kingdoms-health-final.yml" || health_rc=$?
+
+    printf '[INFO] Restoring exercise isolation after final health proof\n'
+    GOAD_PROVIDER_DIR="${PROVIDER}" \
+        bash "${ROOT}/scripts/lab-mode.sh" exercise || restore_rc=$?
+
+    if [[ ${restore_rc} -ne 0 ]]; then
+        fail "could not restore exercise mode after final health proof (rc=${restore_rc})"
+        return "${restore_rc}"
+    fi
+
+    if [[ ${health_rc} -ne 0 ]]; then
+        fail "all-six final domain health proof failed (rc=${health_rc})"
+        return "${health_rc}"
+    fi
+
+    return 0
 }
 
 final_exercise_state() {

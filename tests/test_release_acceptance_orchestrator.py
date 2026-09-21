@@ -43,6 +43,26 @@ class ReleaseAcceptanceOrchestratorTests(unittest.TestCase):
         self.assertIn("ethernet0.startConnected=FALSE", text)
         self.assertNotIn("vagrant up", text)
 
+    def test_phase02_receives_the_requested_instance_via_env(self):
+        text = SCRIPT.read_text()
+        self.assertIn('env \\\\', text)
+        self.assertIn('INSTANCE="${INSTANCE}" \\\\', text)
+        self.assertIn('PROVIDER="${PROVIDER}" \\\\', text)
+        self.assertIn('EVIDENCE="${EVIDENCE}/phase02" \\\\', text)
+        self.assertIn('bash scripts/validate-phase02-readiness.sh', text)
+
+    def test_final_health_temporarily_reopens_management_and_restores_exercise(self):
+        text = SCRIPT.read_text()
+        start = text.index('final_health()')
+        end = text.index('final_exercise_state()', start)
+        block = text[start:end]
+
+        self.assertIn('final health proof requires exercise mode', block)
+        self.assertIn('lab-mode.sh" provisioning', block)
+        self.assertIn('kingdoms-health-final.yml', block)
+        self.assertIn('lab-mode.sh" exercise', block)
+        self.assertIn('all-six final domain health proof failed', block)
+
     def test_orchestrator_never_destroys_or_merges(self):
         text = SCRIPT.read_text().lower()
         self.assertNotIn("goad.sh -t destroy", text)
