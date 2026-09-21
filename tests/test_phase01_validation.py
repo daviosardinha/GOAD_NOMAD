@@ -21,6 +21,7 @@ WINTERFELL_NULL = (
 )
 CASTELBLACK_NULL = 'session setup failed: NT_STATUS_ACCESS_DENIED\n'
 WS01_FILTERED = 'do_connect: Connection to 10.4.10.31 failed (Error NT_STATUS_IO_TIMEOUT)\n'
+WS01_REJECTED = 'session setup failed: NT_STATUS_LOGON_FAILURE\n'
 
 
 class EvidenceTests(unittest.TestCase):
@@ -149,7 +150,7 @@ class EvidenceTests(unittest.TestCase):
                 elif command[-1] == '//10.4.10.22' and '%' in command:
                     rc, text = 1, CASTELBLACK_NULL
                 elif command[-1] == '//10.4.10.31':
-                    rc, text = 1, WS01_FILTERED
+                    rc, text = 1, WS01_REJECTED
                 elif command[-1] == '//10.4.10.11' and 'Guest%' in command:
                     rc, text = 1, 'session setup failed: NT_STATUS_ACCOUNT_DISABLED\n'
                 else:
@@ -171,7 +172,8 @@ class EvidenceTests(unittest.TestCase):
             self.assertEqual(result, 0)
             summary = (Path(temp) / 'results/SUMMARY.txt').read_text()
             self.assertIn('Anonymous SAMR password policy', summary)
-            self.assertIn('WS01 NULL share listing: filtered/unreachable', summary)
+            self.assertIn('WS01 NULL share listing: rejected', summary)
+            self.assertIn('WS01 Guest share listing: rejected', summary)
             self.assertIn('FAIL: 0', summary)
 
 
