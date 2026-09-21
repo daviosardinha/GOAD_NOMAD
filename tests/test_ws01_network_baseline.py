@@ -40,6 +40,16 @@ class Ws01NetworkBaselineTests(unittest.TestCase):
         self.assertNotIn("Phase 02 expects filtered/unreachable", text)
         self.assertNotIn("WS01 SMB remains filtered/unreachable", text)
 
+    def test_phase02_shell_syntax_is_valid(self):
+        import subprocess
+
+        result = subprocess.run(
+            ['bash', '-n', str(PHASE02_VALIDATOR)],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_ws01_smb_rule_does_not_explicitly_open_legacy_netbios_ports(self):
         text = WS01_PLAYBOOK.read_text()
 

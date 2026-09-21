@@ -175,12 +175,50 @@ if [[ ${#NXC[@]} -gt 0 ]]; then
       fi
 
       if [[ "$name" == WINTERFELL ]]; then
-        for share in 'IPC    done
+        for share in 'IPC$' NETLOGON SYSVOL; do
+          share_has "$log" "$share" READ \
+            && pass "$name $user has expected READ on $share" \
+            || fail "$name $user missing expected READ on $share"
+        done
+        for share in 'ADMIN$' 'C$'; do
+          if share_has "$log" "$share" READ || share_has "$log" "$share" WRITE; then
+            fail "$name $user unexpectedly has file access on $share"
+          else
+            pass "$name $user has no unexpected access on $share"
+          fi
+        done
+      elif [[ "$name" == CASTELBLACK ]]; then
+        for share in all public; do
+          if share_has "$log" "$share" READ && share_has "$log" "$share" WRITE; then
+            pass "$name $user has expected READ,WRITE on $share"
+          else
+            fail "$name $user does not have expected READ,WRITE on $share"
+          fi
+        done
+        for share in 'ADMIN$' 'C$'; do
+          if share_has "$log" "$share" READ || share_has "$log" "$share" WRITE; then
+            fail "$name $user unexpectedly has administrative-share access on $share"
+          else
+            pass "$name $user has no unexpected administrative-share access on $share"
+          fi
+        done
+      else
+        # WS01 remains visible to the Phase 00 SMB service map and accepts valid
+        # NORTH network authentication, but recovered low-privilege users must
+        # not gain administrative-share file access.
+        for share in 'ADMIN$' 'C$'; do
+          if share_has "$log" "$share" READ || share_has "$log" "$share" WRITE; then
+            fail "$name $user unexpectedly has administrative-share access on $share"
+          else
+            pass "$name $user has no unexpected administrative-share access on $share"
+          fi
+        done
+      fi
+    done
   done
 else
   fail 'SMB credential/authorization matrix not run because NetExec is unavailable'
 fi
-
 section '7. WINRM — NO SURPRISE FOOTHOLD'
 if [[ ${#NXC[@]} -gt 0 ]]; then
   for target in "WINTERFELL:$WINTERFELL" "CASTELBLACK:$CASTELBLACK" "WS01:$WS01"; do
