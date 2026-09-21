@@ -972,6 +972,59 @@ Write-Output 'GOAD_VMTOOLS_RESTARTED'
             return False
         return super().prepare_install()
 
+    def _fresh_install_bootstrap_pending(self):
+        """Return True only between fresh provider bring-up and the first playbook.
+
+        A zero-state install has healthy Windows/WinRM endpoints before Active
+        Directory exists. The normal provisioning mode transition is deliberately
+        AD-aware, so using it here creates a circular dependency: it waits for
+        NTDS/DC Locator before Ansible has had a chance to promote the DCs.
+
+        The install timing profile gives us an explicit lifecycle marker for this
+        narrow state. Installed/maintenance instances have a recorded runtime mode
+        and continue through the normal AD-aware mode controller.
+        """
+        profile = getattr(self, '_kingdoms_install_profile', None)
+        return (
+            self.lab_name == 'GOAD'
+            and self.get_runtime_mode() == 'unknown'
+            and isinstance(profile, dict)
+            and profile.get('provider_success') is True
+            and profile.get('status') == 'ansible_running'
+        )
+
+    def prepare_provisioning(self):
+        """Prepare fresh pre-AD bootstrap without weakening installed lifecycle."""
+        if not self.is_goad_nomad_segmented():
+            return super().prepare_provisioning()
+
+        if not self._fresh_install_bootstrap_pending():
+            return super().prepare_provisioning()
+
+        Log.info(
+            'GOAD Kingdoms: fresh install bootstrap before AD exists; '
+            'preparing routed WinRM management without AD readiness'
+        )
+
+        if not self._require_cached_sudo():
+            return False
+        if not self._apply_router_policy('provisioning'):
+            return False
+        if not self._enable_provisioning_routes():
+            return False
+        if not self._validate_management_plane():
+            Log.error(
+                'GOAD Kingdoms: fresh pre-AD management plane is not ready; '
+                'refusing to start Ansible'
+            )
+            return False
+
+        Log.success(
+            'GOAD Kingdoms: fresh pre-AD management plane ready; '
+            'Ansible may create the directory services'
+        )
+        return True
+
     def set_runtime_mode(self, mode):
         # Re-check immediately before every provisioning/exercise transition.
         # This covers long-running starts where the sudo timestamp may have

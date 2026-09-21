@@ -300,6 +300,22 @@ if 'VMware Tools WinRM session interrupted for' in vmware_provider:
 
 kingdoms_provider = Path('goad/provider/vagrant/vmware_kingdoms.py').read_text()
 require_tokens(
+    'fresh-install pre-AD provisioning bootstrap',
+    kingdoms_provider,
+    (
+        'def _fresh_install_bootstrap_pending(self):',
+        "profile.get('status') == 'ansible_running'",
+        "self.get_runtime_mode() == 'unknown'",
+        'def prepare_provisioning(self):',
+        "self._apply_router_policy('provisioning')",
+        'self._enable_provisioning_routes()',
+        'self._validate_management_plane()',
+        'fresh install bootstrap before AD exists',
+        'fresh pre-AD management plane ready',
+    ),
+)
+
+require_tokens(
     'GOAD Kingdoms failed Windows bring-up recovery',
     kingdoms_provider,
     (
