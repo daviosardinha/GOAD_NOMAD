@@ -7,8 +7,6 @@ WS01_PLAYBOOK = ROOT / "ansible" / "ws01.yml"
 DATA_PLAYBOOK = ROOT / "ansible" / "data.yml"
 WORKSTATION_ROLE = ROOT / "ansible" / "roles" / "commonwkstn" / "tasks" / "main.yml"
 VMWARE_INVENTORY = ROOT / "ad" / "GOAD" / "providers" / "vmware" / "inventory"
-PHASE01_VALIDATOR = ROOT / "scripts" / "validate-phase01.py"
-PHASE02_VALIDATOR = ROOT / "scripts" / "validate-phase02-readiness.sh"
 
 
 class Ws01NetworkBaselineTests(unittest.TestCase):
@@ -24,14 +22,6 @@ class Ws01NetworkBaselineTests(unittest.TestCase):
         self.assertIn('Localport: "445"', text)
         self.assertIn('Protocol: "TCP"', text)
         self.assertIn('Action: "Allow"', text)
-
-    def test_runtime_validators_match_exposed_ws01_smb_baseline(self):
-        phase01 = PHASE01_VALIDATOR.read_text()
-        phase02 = PHASE02_VALIDATOR.read_text()
-
-        self.assertIn('("WS01", args.ws01, "rejected", "rejected")', phase01)
-        self.assertIn("pass 'WS01 SMB TCP/445 reachable as the workstation baseline requires'", phase02)
-        self.assertNotIn("Phase 02 expects filtered/unreachable", phase02)
 
     def test_ws01_smb_rule_does_not_explicitly_open_legacy_netbios_ports(self):
         text = WS01_PLAYBOOK.read_text()

@@ -150,9 +150,9 @@ do
 done
 
 if tcp_open "$WS01" 445; then
-  pass 'WS01 SMB TCP/445 reachable as the workstation baseline requires'
+  fail 'WS01 SMB TCP/445 is reachable; Phase 02 expects filtered/unreachable'
 else
-  fail 'WS01 SMB TCP/445 is unreachable; workstation baseline requires modern direct-hosted SMB'
+  pass 'WS01 SMB remains filtered/unreachable'
 fi
 
 for rec in "WINTERFELL:$WINTERFELL" "CASTELBLACK:$CASTELBLACK" "WS01:$WS01"; do

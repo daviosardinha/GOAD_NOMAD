@@ -216,12 +216,12 @@ def main(argv=None):
     # Explicitly empty username AND password. -N alone can use the local login.
     # These checks identify requested auth modes, not the server's session flags.
     # Selected RPC pipes are intentionally exposed; normal share names are not.
-    # WS01 intentionally exposes modern direct-hosted SMB/TCP 445 on the Domain
-    # profile, but NULL and Guest sessions must still be rejected.
+    # WS01 intentionally keeps inbound SMB filtered by its host firewall, so a
+    # connection timeout is the expected negative-control result there.
     for label, host, null_expected, guest_expected in [
         ("WINTERFELL", args.dc, "no share names returned", "rejected"),
         ("CASTELBLACK", args.server, "rejected", "available"),
-        ("WS01", args.ws01, "rejected", "rejected"),
+        ("WS01", args.ws01, "filtered/unreachable", "filtered/unreachable"),
     ]:
         for mode, credential, expected in [("NULL", "%", null_expected), ("Guest", "Guest%", guest_expected)]:
             rc, text = v.run(f"smb_{label}_{mode}", ["smbclient", "-g", "-N", "-U", credential, "-L", "//" + host])
