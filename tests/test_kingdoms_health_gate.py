@@ -78,6 +78,17 @@ class KingdomsHealthGateTests(unittest.TestCase):
         self.assertIn("-Server $DomainController", member)
         self.assertNotIn("Assert-DomainDiscovery", member)
 
+        # DNS/DC Locator convergence must be exhausted before direct secure
+        # channel testing can trigger any repair path.
+        discovery_failure = (
+            'throw "DC discovery for ${DomainName} did not converge within the bounded health window"'
+        )
+        trust_probe = "$trustHealthy = Test-DirectSecureChannel"
+        trust_repair = 'Write-Output "KINGDOMS_MEMBER_TRUST_REPAIR'
+
+        self.assertLess(member.index(discovery_failure), member.index(trust_probe))
+        self.assertLess(member.index(trust_probe), member.index(trust_repair))
+
     def test_health_powershell_uses_safe_variable_interpolation_before_colons(self):
         dc_path = ROOT / "ansible/roles/kingdoms_health/dc/tasks/main.yml"
         member_path = ROOT / "ansible/roles/kingdoms_health/member/tasks/main.yml"

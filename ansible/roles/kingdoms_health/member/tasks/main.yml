@@ -159,11 +159,22 @@
       }
 
       # DC Locator can transiently return ERROR_NO_SUCH_DOMAIN during fresh AD
-      # convergence even while direct DC connectivity and trust are healthy.
+      # convergence. Exhaust the bounded discovery window before evaluating
+      # machine trust so a DNS/locator race can never trigger trust repair.
       $discoveryHealthy = Wait-DomainDiscovery
 
-      # Trust is evaluated independently against the known DC. A locator miss
-      # alone must never trigger a machine-password reset.
+      if (-not $discoveryHealthy) {
+          Write-Output "KINGDOMS_MEMBER_DCLOCATOR_RETRY host=$($env:COMPUTERNAME) domain=$DomainName"
+          $discoveryHealthy = Wait-DomainDiscovery
+      }
+
+      if (-not $discoveryHealthy) {
+          throw "DC discovery for ${DomainName} did not converge within the bounded health window"
+      }
+
+      # Trust is evaluated independently against the known DC, but only after
+      # DC discovery has converged. A locator/DNS miss must never trigger a
+      # machine-password reset.
       $trustHealthy = Test-DirectSecureChannel
       if (-not $trustHealthy) {
           if (-not $AllowRepair) {
@@ -185,15 +196,6 @@
           if (-not $trustHealthy) {
               throw "Secure channel to $DomainName is still broken after repair through $DomainController"
           }
-      }
-
-      if (-not $discoveryHealthy) {
-          Write-Output "KINGDOMS_MEMBER_DCLOCATOR_RETRY host=$($env:COMPUTERNAME) domain=$DomainName"
-          $discoveryHealthy = Wait-DomainDiscovery
-      }
-
-      if (-not $discoveryHealthy) {
-          throw "DC discovery for ${DomainName} did not converge within the bounded health window"
       }
 
       $channelHealthy = $false
