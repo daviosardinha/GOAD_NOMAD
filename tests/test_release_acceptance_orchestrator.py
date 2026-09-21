@@ -45,11 +45,11 @@ class ReleaseAcceptanceOrchestratorTests(unittest.TestCase):
 
     def test_phase02_receives_the_requested_instance_via_env(self):
         text = SCRIPT.read_text()
-        self.assertIn('env \\\\', text)
-        self.assertIn('INSTANCE="${INSTANCE}" \\\\', text)
-        self.assertIn('PROVIDER="${PROVIDER}" \\\\', text)
-        self.assertIn('EVIDENCE="${EVIDENCE}/phase02" \\\\', text)
-        self.assertIn('bash scripts/validate-phase02-readiness.sh', text)
+        self.assertIn("    env " + "\\", text)
+        self.assertIn('        INSTANCE="${INSTANCE}" ' + "\\", text)
+        self.assertIn('        PROVIDER="${PROVIDER}" ' + "\\", text)
+        self.assertIn('        EVIDENCE="${EVIDENCE}/phase02" ' + "\\", text)
+        self.assertIn('        bash scripts/validate-phase02-readiness.sh', text)
 
     def test_final_health_temporarily_reopens_management_and_restores_exercise(self):
         text = SCRIPT.read_text()
