@@ -1,8 +1,7 @@
 <div align="center">
 
 # Kingdoms
-
-<img width="1536" height="1024" alt="image" src="https://github.com/user-attachments/assets/a6976fa0-4819-494e-87d0-3cb03a8c5e58" />
+<img width="1672" height="941" alt="main" src="https://github.com/user-attachments/assets/a7f99c97-94af-408b-95df-1624bad2b6f1" />
 
 ### Segmented Active Directory Red Team Training Range
 
