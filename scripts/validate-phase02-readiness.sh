@@ -139,6 +139,7 @@ section '5. REQUIRED GATE REACHABILITY'
 for rec in \
   "WINTERFELL:$WINTERFELL:445:SMB" \
   "CASTELBLACK:$CASTELBLACK:445:SMB" \
+  "WS01:$WS01:445:SMB" \
   "WINTERFELL:$WINTERFELL:3389:RDP" \
   "CASTELBLACK:$CASTELBLACK:3389:RDP" \
   "WS01:$WS01:3389:RDP" \
@@ -148,13 +149,6 @@ do
   IFS=: read -r name ip port svc <<<"$rec"
   tcp_open "$ip" "$port" && pass "$name $svc TCP/$port reachable" || fail "$name $svc TCP/$port unreachable"
 done
-
-if tcp_open "$WS01" 445; then
-  fail 'WS01 SMB TCP/445 is reachable; Phase 02 expects filtered/unreachable'
-else
-  pass 'WS01 SMB remains filtered/unreachable'
-fi
-
 for rec in "WINTERFELL:$WINTERFELL" "CASTELBLACK:$CASTELBLACK" "WS01:$WS01"; do
   name="${rec%%:*}"; ip="${rec##*:}"
   if tcp_open "$ip" 5985; then
@@ -168,7 +162,7 @@ done
 
 section '6. FIVE RECOVERED CREDENTIALS — SMB AUTHENTICATION'
 if [[ ${#NXC[@]} -gt 0 ]]; then
-  for target in "WINTERFELL:$WINTERFELL" "CASTELBLACK:$CASTELBLACK"; do
+  for target in "WINTERFELL:$WINTERFELL" "CASTELBLACK:$CASTELBLACK" "WS01:$WS01"; do
     name="${target%%:*}"; ip="${target##*:}"
     for user in "${USERS[@]}"; do
       log="$EVIDENCE/smb-${name,,}-$user.log"
@@ -181,19 +175,451 @@ if [[ ${#NXC[@]} -gt 0 ]]; then
       fi
 
       if [[ "$name" == WINTERFELL ]]; then
-        for share in 'IPC$' NETLOGON SYSVOL; do
+        for share in 'IPC    done
+  done
+else
+  fail 'SMB credential/authorization matrix not run because NetExec is unavailable'
+fi
+
+section '7. WINRM — NO SURPRISE FOOTHOLD'
+if [[ ${#NXC[@]} -gt 0 ]]; then
+  for target in "WINTERFELL:$WINTERFELL" "CASTELBLACK:$CASTELBLACK" "WS01:$WS01"; do
+    name="${target%%:*}"; ip="${target##*:}"
+    if ! tcp_open "$ip" 5985; then
+      fail "$name WinRM authorization test cannot use the documented TCP/5985 path"
+      continue
+    fi
+    for user in "${USERS[@]}"; do
+      log="$EVIDENCE/winrm-${name,,}-$user.log"
+      run_nxc "$log" winrm "$ip" -d "$DOMAIN_FQDN" -u "$user" -p "${PASSWD[$user]}" >/dev/null 2>&1
+      if auth_ok "$log"; then
+        fail "$name unexpectedly gives NORTH\\$user a WinRM-capable session"
+      else
+        pass "$name does not give NORTH\\$user an unexpected WinRM foothold"
+      fi
+    done
+  done
+else
+  fail 'WinRM matrix not run because NetExec is unavailable'
+fi
+
+section '8. MSSQL — EXACT WINDOWS LOGIN CONTRACT'
+if [[ ${#NXC[@]} -gt 0 ]]; then
+  declare -A SQL_EXPECT=(
+    [hodor]=allow
+    [brandon.stark]=allow
+    [jon.snow]=allow
+    [samwell.tarly]=allow
+    [rickon.stark]=allow
+  )
+  for user in "${USERS[@]}"; do
+    log="$EVIDENCE/mssql-$user.log"
+    run_nxc "$log" mssql "$CASTELBLACK" -d "$DOMAIN_FQDN" -u "$user" -p "${PASSWD[$user]}" >/dev/null 2>&1
+    if auth_ok "$log"; then observed=allow; else observed=deny; fi
+    if [[ "$observed" == "${SQL_EXPECT[$user]}" ]]; then
+      pass "MSSQL $user = $observed as designed"
+    else
+      fail "MSSQL $user = $observed, expected ${SQL_EXPECT[$user]}"
+    fi
+  done
+else
+  fail 'MSSQL login matrix not run because NetExec is unavailable'
+fi
+
+section '9. MSSQL — SERVER ROLE CONTRACT'
+if [[ -n "$MSSQLCLIENT" ]]; then
+  for user in hodor brandon.stark jon.snow samwell.tarly rickon.stark; do
+    log="$EVIDENCE/mssql-role-$user.log"
+    printf "SELECT SYSTEM_USER;\nSELECT IS_SRVROLEMEMBER('sysadmin');\nexit\n" | \
+      timeout 45 env PATH=/usr/bin:/bin "$MSSQLCLIENT" "$DOMAIN_NB/$user:${PASSWD[$user]}@$CASTELBLACK" -windows-auth \
+      >"$log" 2>&1
+    rc=$?
+    cat "$log"
+    if [[ $rc -ne 0 ]] || ! grep -Eqi "${user//./\\.}" "$log"; then
+      fail "Could not query MSSQL context for $user"
+      continue
+    fi
+    if [[ "$user" == jon.snow ]]; then
+      grep -Eq '(^|[[:space:]])1([[:space:]]|$)' "$log" \
+        && pass 'jon.snow is MSSQL sysadmin as designed' \
+        || fail 'jon.snow is not MSSQL sysadmin as designed'
+    else
+      grep -Eq '(^|[[:space:]])0([[:space:]]|$)' "$log" \
+        && pass "$user is a non-sysadmin MSSQL login as designed" \
+        || fail "$user MSSQL sysadmin state does not match the course contract"
+    fi
+  done
+else
+  fail 'MSSQL role checks not run: Impacket mssqlclient missing'
+fi
+
+section '10. IIS WINDOWS AUTHENTICATION — EXACT COURSE BOUNDARY'
+url="http://castelblack.north.sevenkingdoms.local/internal/"
+unauth="$EVIDENCE/http-unauth.headers"
+code="$(curl --noproxy '*' -sS --max-time 15 -D "$unauth" -o /dev/null -w '%{http_code}' "$url" 2>"$EVIDENCE/http-unauth.err")"
+if [[ "$code" == 401 ]] && grep -Eqi '^WWW-Authenticate:.*Negotiate' "$unauth" && grep -Eqi '^WWW-Authenticate:.*NTLM' "$unauth"; then
+  pass '/internal/ unauthenticated boundary = 401 + Negotiate + NTLM'
+else
+  fail "/internal/ unauthenticated boundary mismatch (HTTP ${code:-ERROR})"
+fi
+
+for user in "${USERS[@]}"; do
+  headers="$EVIDENCE/http-$user.headers"
+  body="$EVIDENCE/http-$user.body"
+  if [[ "$HTTP_AUTH_CLIENT" == 'curl' ]]; then
+    code="$(curl --noproxy '*' --ntlm -sS --max-time 15 -D "$headers" -o "$body" -w '%{http_code}' \
+        -u "$DOMAIN_NB\\$user:${PASSWD[$user]}" "$url" 2>"$EVIDENCE/http-$user.err")"
+  elif [[ "$HTTP_AUTH_CLIENT" == 'requests-ntlm' ]]; then
+    code="$(PHASE02_HTTP_USER="$DOMAIN_NB\\$user" PHASE02_HTTP_PASS="${PASSWD[$user]}" PHASE02_HTTP_URL="$url" \
+      /usr/bin/python3 - <<'PY'
+import os
+import requests
+from requests_ntlm import HttpNtlmAuth
+s = requests.Session()
+s.trust_env = False
+r = s.get(
+    os.environ["PHASE02_HTTP_URL"],
+    auth=HttpNtlmAuth(os.environ["PHASE02_HTTP_USER"], os.environ["PHASE02_HTTP_PASS"]),
+    timeout=15,
+)
+print(r.status_code)
+PY
+    )"
+  else
+    code='ERROR'
+  fi
+  if [[ "$code" =~ ^2[0-9][0-9]$ ]]; then
+    pass "/internal/ accepts NORTH\\$user (HTTP $code)"
+  else
+    fail "/internal/ does not accept NORTH\\$user as planned (HTTP ${code:-ERROR})"
+  fi
+done
+
+section '11. FINAL PHASE 02 FOOTHOLD CONTRACT'
+if tcp_open "$WS01" 3389 && grep -Fq 'RDP_POLICY_CONTRACT=WS01:PASS' "$EVIDENCE/rdp-phase01.log"; then
+  pass 'Rickon -> WS01 RDP low-privilege foothold is ready'
+else
+  fail 'Rickon -> WS01 foothold contract is not ready'
+fi
+
+section 'FINAL RESULT'
+printf 'PASS: %d\nWARN: %d\nFAIL: %d\nEvidence: %s\n' "$PASS" "$WARN" "$FAIL" "$EVIDENCE"
+if [[ $FAIL -eq 0 ]]; then
+  cat <<'READY'
+
+[READY] 02 — TEST THE GATES PRE-LAB CONTRACT PASSED
+The current Kingdoms instance matches the intended Phase 02 path.
+No known access-right/service mismatch should force a curriculum stop.
+READY
+  exit 0
+fi
+
+cat <<'NOTREADY'
+
+[NOT READY] 02 — TEST THE GATES HAS A CONTRACT MISMATCH
+Fix every [FAIL] before restarting the chapter. Do not work around it mid-lab.
+NOTREADY
+exit 1 NETLOGON SYSVOL; do
           share_has "$log" "$share" READ \
             && pass "$name $user has expected READ on $share" \
             || fail "$name $user missing expected READ on $share"
         done
-        for share in 'ADMIN$' 'C$'; do
+        for share in 'ADMIN    done
+  done
+else
+  fail 'SMB credential/authorization matrix not run because NetExec is unavailable'
+fi
+
+section '7. WINRM — NO SURPRISE FOOTHOLD'
+if [[ ${#NXC[@]} -gt 0 ]]; then
+  for target in "WINTERFELL:$WINTERFELL" "CASTELBLACK:$CASTELBLACK" "WS01:$WS01"; do
+    name="${target%%:*}"; ip="${target##*:}"
+    if ! tcp_open "$ip" 5985; then
+      fail "$name WinRM authorization test cannot use the documented TCP/5985 path"
+      continue
+    fi
+    for user in "${USERS[@]}"; do
+      log="$EVIDENCE/winrm-${name,,}-$user.log"
+      run_nxc "$log" winrm "$ip" -d "$DOMAIN_FQDN" -u "$user" -p "${PASSWD[$user]}" >/dev/null 2>&1
+      if auth_ok "$log"; then
+        fail "$name unexpectedly gives NORTH\\$user a WinRM-capable session"
+      else
+        pass "$name does not give NORTH\\$user an unexpected WinRM foothold"
+      fi
+    done
+  done
+else
+  fail 'WinRM matrix not run because NetExec is unavailable'
+fi
+
+section '8. MSSQL — EXACT WINDOWS LOGIN CONTRACT'
+if [[ ${#NXC[@]} -gt 0 ]]; then
+  declare -A SQL_EXPECT=(
+    [hodor]=allow
+    [brandon.stark]=allow
+    [jon.snow]=allow
+    [samwell.tarly]=allow
+    [rickon.stark]=allow
+  )
+  for user in "${USERS[@]}"; do
+    log="$EVIDENCE/mssql-$user.log"
+    run_nxc "$log" mssql "$CASTELBLACK" -d "$DOMAIN_FQDN" -u "$user" -p "${PASSWD[$user]}" >/dev/null 2>&1
+    if auth_ok "$log"; then observed=allow; else observed=deny; fi
+    if [[ "$observed" == "${SQL_EXPECT[$user]}" ]]; then
+      pass "MSSQL $user = $observed as designed"
+    else
+      fail "MSSQL $user = $observed, expected ${SQL_EXPECT[$user]}"
+    fi
+  done
+else
+  fail 'MSSQL login matrix not run because NetExec is unavailable'
+fi
+
+section '9. MSSQL — SERVER ROLE CONTRACT'
+if [[ -n "$MSSQLCLIENT" ]]; then
+  for user in hodor brandon.stark jon.snow samwell.tarly rickon.stark; do
+    log="$EVIDENCE/mssql-role-$user.log"
+    printf "SELECT SYSTEM_USER;\nSELECT IS_SRVROLEMEMBER('sysadmin');\nexit\n" | \
+      timeout 45 env PATH=/usr/bin:/bin "$MSSQLCLIENT" "$DOMAIN_NB/$user:${PASSWD[$user]}@$CASTELBLACK" -windows-auth \
+      >"$log" 2>&1
+    rc=$?
+    cat "$log"
+    if [[ $rc -ne 0 ]] || ! grep -Eqi "${user//./\\.}" "$log"; then
+      fail "Could not query MSSQL context for $user"
+      continue
+    fi
+    if [[ "$user" == jon.snow ]]; then
+      grep -Eq '(^|[[:space:]])1([[:space:]]|$)' "$log" \
+        && pass 'jon.snow is MSSQL sysadmin as designed' \
+        || fail 'jon.snow is not MSSQL sysadmin as designed'
+    else
+      grep -Eq '(^|[[:space:]])0([[:space:]]|$)' "$log" \
+        && pass "$user is a non-sysadmin MSSQL login as designed" \
+        || fail "$user MSSQL sysadmin state does not match the course contract"
+    fi
+  done
+else
+  fail 'MSSQL role checks not run: Impacket mssqlclient missing'
+fi
+
+section '10. IIS WINDOWS AUTHENTICATION — EXACT COURSE BOUNDARY'
+url="http://castelblack.north.sevenkingdoms.local/internal/"
+unauth="$EVIDENCE/http-unauth.headers"
+code="$(curl --noproxy '*' -sS --max-time 15 -D "$unauth" -o /dev/null -w '%{http_code}' "$url" 2>"$EVIDENCE/http-unauth.err")"
+if [[ "$code" == 401 ]] && grep -Eqi '^WWW-Authenticate:.*Negotiate' "$unauth" && grep -Eqi '^WWW-Authenticate:.*NTLM' "$unauth"; then
+  pass '/internal/ unauthenticated boundary = 401 + Negotiate + NTLM'
+else
+  fail "/internal/ unauthenticated boundary mismatch (HTTP ${code:-ERROR})"
+fi
+
+for user in "${USERS[@]}"; do
+  headers="$EVIDENCE/http-$user.headers"
+  body="$EVIDENCE/http-$user.body"
+  if [[ "$HTTP_AUTH_CLIENT" == 'curl' ]]; then
+    code="$(curl --noproxy '*' --ntlm -sS --max-time 15 -D "$headers" -o "$body" -w '%{http_code}' \
+        -u "$DOMAIN_NB\\$user:${PASSWD[$user]}" "$url" 2>"$EVIDENCE/http-$user.err")"
+  elif [[ "$HTTP_AUTH_CLIENT" == 'requests-ntlm' ]]; then
+    code="$(PHASE02_HTTP_USER="$DOMAIN_NB\\$user" PHASE02_HTTP_PASS="${PASSWD[$user]}" PHASE02_HTTP_URL="$url" \
+      /usr/bin/python3 - <<'PY'
+import os
+import requests
+from requests_ntlm import HttpNtlmAuth
+s = requests.Session()
+s.trust_env = False
+r = s.get(
+    os.environ["PHASE02_HTTP_URL"],
+    auth=HttpNtlmAuth(os.environ["PHASE02_HTTP_USER"], os.environ["PHASE02_HTTP_PASS"]),
+    timeout=15,
+)
+print(r.status_code)
+PY
+    )"
+  else
+    code='ERROR'
+  fi
+  if [[ "$code" =~ ^2[0-9][0-9]$ ]]; then
+    pass "/internal/ accepts NORTH\\$user (HTTP $code)"
+  else
+    fail "/internal/ does not accept NORTH\\$user as planned (HTTP ${code:-ERROR})"
+  fi
+done
+
+section '11. FINAL PHASE 02 FOOTHOLD CONTRACT'
+if tcp_open "$WS01" 3389 && grep -Fq 'RDP_POLICY_CONTRACT=WS01:PASS' "$EVIDENCE/rdp-phase01.log"; then
+  pass 'Rickon -> WS01 RDP low-privilege foothold is ready'
+else
+  fail 'Rickon -> WS01 foothold contract is not ready'
+fi
+
+section 'FINAL RESULT'
+printf 'PASS: %d\nWARN: %d\nFAIL: %d\nEvidence: %s\n' "$PASS" "$WARN" "$FAIL" "$EVIDENCE"
+if [[ $FAIL -eq 0 ]]; then
+  cat <<'READY'
+
+[READY] 02 — TEST THE GATES PRE-LAB CONTRACT PASSED
+The current Kingdoms instance matches the intended Phase 02 path.
+No known access-right/service mismatch should force a curriculum stop.
+READY
+  exit 0
+fi
+
+cat <<'NOTREADY'
+
+[NOT READY] 02 — TEST THE GATES HAS A CONTRACT MISMATCH
+Fix every [FAIL] before restarting the chapter. Do not work around it mid-lab.
+NOTREADY
+exit 1 'C    done
+  done
+else
+  fail 'SMB credential/authorization matrix not run because NetExec is unavailable'
+fi
+
+section '7. WINRM — NO SURPRISE FOOTHOLD'
+if [[ ${#NXC[@]} -gt 0 ]]; then
+  for target in "WINTERFELL:$WINTERFELL" "CASTELBLACK:$CASTELBLACK" "WS01:$WS01"; do
+    name="${target%%:*}"; ip="${target##*:}"
+    if ! tcp_open "$ip" 5985; then
+      fail "$name WinRM authorization test cannot use the documented TCP/5985 path"
+      continue
+    fi
+    for user in "${USERS[@]}"; do
+      log="$EVIDENCE/winrm-${name,,}-$user.log"
+      run_nxc "$log" winrm "$ip" -d "$DOMAIN_FQDN" -u "$user" -p "${PASSWD[$user]}" >/dev/null 2>&1
+      if auth_ok "$log"; then
+        fail "$name unexpectedly gives NORTH\\$user a WinRM-capable session"
+      else
+        pass "$name does not give NORTH\\$user an unexpected WinRM foothold"
+      fi
+    done
+  done
+else
+  fail 'WinRM matrix not run because NetExec is unavailable'
+fi
+
+section '8. MSSQL — EXACT WINDOWS LOGIN CONTRACT'
+if [[ ${#NXC[@]} -gt 0 ]]; then
+  declare -A SQL_EXPECT=(
+    [hodor]=allow
+    [brandon.stark]=allow
+    [jon.snow]=allow
+    [samwell.tarly]=allow
+    [rickon.stark]=allow
+  )
+  for user in "${USERS[@]}"; do
+    log="$EVIDENCE/mssql-$user.log"
+    run_nxc "$log" mssql "$CASTELBLACK" -d "$DOMAIN_FQDN" -u "$user" -p "${PASSWD[$user]}" >/dev/null 2>&1
+    if auth_ok "$log"; then observed=allow; else observed=deny; fi
+    if [[ "$observed" == "${SQL_EXPECT[$user]}" ]]; then
+      pass "MSSQL $user = $observed as designed"
+    else
+      fail "MSSQL $user = $observed, expected ${SQL_EXPECT[$user]}"
+    fi
+  done
+else
+  fail 'MSSQL login matrix not run because NetExec is unavailable'
+fi
+
+section '9. MSSQL — SERVER ROLE CONTRACT'
+if [[ -n "$MSSQLCLIENT" ]]; then
+  for user in hodor brandon.stark jon.snow samwell.tarly rickon.stark; do
+    log="$EVIDENCE/mssql-role-$user.log"
+    printf "SELECT SYSTEM_USER;\nSELECT IS_SRVROLEMEMBER('sysadmin');\nexit\n" | \
+      timeout 45 env PATH=/usr/bin:/bin "$MSSQLCLIENT" "$DOMAIN_NB/$user:${PASSWD[$user]}@$CASTELBLACK" -windows-auth \
+      >"$log" 2>&1
+    rc=$?
+    cat "$log"
+    if [[ $rc -ne 0 ]] || ! grep -Eqi "${user//./\\.}" "$log"; then
+      fail "Could not query MSSQL context for $user"
+      continue
+    fi
+    if [[ "$user" == jon.snow ]]; then
+      grep -Eq '(^|[[:space:]])1([[:space:]]|$)' "$log" \
+        && pass 'jon.snow is MSSQL sysadmin as designed' \
+        || fail 'jon.snow is not MSSQL sysadmin as designed'
+    else
+      grep -Eq '(^|[[:space:]])0([[:space:]]|$)' "$log" \
+        && pass "$user is a non-sysadmin MSSQL login as designed" \
+        || fail "$user MSSQL sysadmin state does not match the course contract"
+    fi
+  done
+else
+  fail 'MSSQL role checks not run: Impacket mssqlclient missing'
+fi
+
+section '10. IIS WINDOWS AUTHENTICATION — EXACT COURSE BOUNDARY'
+url="http://castelblack.north.sevenkingdoms.local/internal/"
+unauth="$EVIDENCE/http-unauth.headers"
+code="$(curl --noproxy '*' -sS --max-time 15 -D "$unauth" -o /dev/null -w '%{http_code}' "$url" 2>"$EVIDENCE/http-unauth.err")"
+if [[ "$code" == 401 ]] && grep -Eqi '^WWW-Authenticate:.*Negotiate' "$unauth" && grep -Eqi '^WWW-Authenticate:.*NTLM' "$unauth"; then
+  pass '/internal/ unauthenticated boundary = 401 + Negotiate + NTLM'
+else
+  fail "/internal/ unauthenticated boundary mismatch (HTTP ${code:-ERROR})"
+fi
+
+for user in "${USERS[@]}"; do
+  headers="$EVIDENCE/http-$user.headers"
+  body="$EVIDENCE/http-$user.body"
+  if [[ "$HTTP_AUTH_CLIENT" == 'curl' ]]; then
+    code="$(curl --noproxy '*' --ntlm -sS --max-time 15 -D "$headers" -o "$body" -w '%{http_code}' \
+        -u "$DOMAIN_NB\\$user:${PASSWD[$user]}" "$url" 2>"$EVIDENCE/http-$user.err")"
+  elif [[ "$HTTP_AUTH_CLIENT" == 'requests-ntlm' ]]; then
+    code="$(PHASE02_HTTP_USER="$DOMAIN_NB\\$user" PHASE02_HTTP_PASS="${PASSWD[$user]}" PHASE02_HTTP_URL="$url" \
+      /usr/bin/python3 - <<'PY'
+import os
+import requests
+from requests_ntlm import HttpNtlmAuth
+s = requests.Session()
+s.trust_env = False
+r = s.get(
+    os.environ["PHASE02_HTTP_URL"],
+    auth=HttpNtlmAuth(os.environ["PHASE02_HTTP_USER"], os.environ["PHASE02_HTTP_PASS"]),
+    timeout=15,
+)
+print(r.status_code)
+PY
+    )"
+  else
+    code='ERROR'
+  fi
+  if [[ "$code" =~ ^2[0-9][0-9]$ ]]; then
+    pass "/internal/ accepts NORTH\\$user (HTTP $code)"
+  else
+    fail "/internal/ does not accept NORTH\\$user as planned (HTTP ${code:-ERROR})"
+  fi
+done
+
+section '11. FINAL PHASE 02 FOOTHOLD CONTRACT'
+if tcp_open "$WS01" 3389 && grep -Fq 'RDP_POLICY_CONTRACT=WS01:PASS' "$EVIDENCE/rdp-phase01.log"; then
+  pass 'Rickon -> WS01 RDP low-privilege foothold is ready'
+else
+  fail 'Rickon -> WS01 foothold contract is not ready'
+fi
+
+section 'FINAL RESULT'
+printf 'PASS: %d\nWARN: %d\nFAIL: %d\nEvidence: %s\n' "$PASS" "$WARN" "$FAIL" "$EVIDENCE"
+if [[ $FAIL -eq 0 ]]; then
+  cat <<'READY'
+
+[READY] 02 — TEST THE GATES PRE-LAB CONTRACT PASSED
+The current Kingdoms instance matches the intended Phase 02 path.
+No known access-right/service mismatch should force a curriculum stop.
+READY
+  exit 0
+fi
+
+cat <<'NOTREADY'
+
+[NOT READY] 02 — TEST THE GATES HAS A CONTRACT MISMATCH
+Fix every [FAIL] before restarting the chapter. Do not work around it mid-lab.
+NOTREADY
+exit 1; do
           if share_has "$log" "$share" READ || share_has "$log" "$share" WRITE; then
             fail "$name $user unexpectedly has file access on $share"
           else
             pass "$name $user has no unexpected access on $share"
           fi
         done
-      else
+      elif [[ "$name" == CASTELBLACK ]]; then
         for share in all public; do
           if share_has "$log" "$share" READ && share_has "$log" "$share" WRITE; then
             pass "$name $user has expected READ,WRITE on $share"
@@ -201,7 +627,594 @@ if [[ ${#NXC[@]} -gt 0 ]]; then
             fail "$name $user does not have expected READ,WRITE on $share"
           fi
         done
-        for share in 'ADMIN$' 'C$'; do
+        for share in 'ADMIN    done
+  done
+else
+  fail 'SMB credential/authorization matrix not run because NetExec is unavailable'
+fi
+
+section '7. WINRM — NO SURPRISE FOOTHOLD'
+if [[ ${#NXC[@]} -gt 0 ]]; then
+  for target in "WINTERFELL:$WINTERFELL" "CASTELBLACK:$CASTELBLACK" "WS01:$WS01"; do
+    name="${target%%:*}"; ip="${target##*:}"
+    if ! tcp_open "$ip" 5985; then
+      fail "$name WinRM authorization test cannot use the documented TCP/5985 path"
+      continue
+    fi
+    for user in "${USERS[@]}"; do
+      log="$EVIDENCE/winrm-${name,,}-$user.log"
+      run_nxc "$log" winrm "$ip" -d "$DOMAIN_FQDN" -u "$user" -p "${PASSWD[$user]}" >/dev/null 2>&1
+      if auth_ok "$log"; then
+        fail "$name unexpectedly gives NORTH\\$user a WinRM-capable session"
+      else
+        pass "$name does not give NORTH\\$user an unexpected WinRM foothold"
+      fi
+    done
+  done
+else
+  fail 'WinRM matrix not run because NetExec is unavailable'
+fi
+
+section '8. MSSQL — EXACT WINDOWS LOGIN CONTRACT'
+if [[ ${#NXC[@]} -gt 0 ]]; then
+  declare -A SQL_EXPECT=(
+    [hodor]=allow
+    [brandon.stark]=allow
+    [jon.snow]=allow
+    [samwell.tarly]=allow
+    [rickon.stark]=allow
+  )
+  for user in "${USERS[@]}"; do
+    log="$EVIDENCE/mssql-$user.log"
+    run_nxc "$log" mssql "$CASTELBLACK" -d "$DOMAIN_FQDN" -u "$user" -p "${PASSWD[$user]}" >/dev/null 2>&1
+    if auth_ok "$log"; then observed=allow; else observed=deny; fi
+    if [[ "$observed" == "${SQL_EXPECT[$user]}" ]]; then
+      pass "MSSQL $user = $observed as designed"
+    else
+      fail "MSSQL $user = $observed, expected ${SQL_EXPECT[$user]}"
+    fi
+  done
+else
+  fail 'MSSQL login matrix not run because NetExec is unavailable'
+fi
+
+section '9. MSSQL — SERVER ROLE CONTRACT'
+if [[ -n "$MSSQLCLIENT" ]]; then
+  for user in hodor brandon.stark jon.snow samwell.tarly rickon.stark; do
+    log="$EVIDENCE/mssql-role-$user.log"
+    printf "SELECT SYSTEM_USER;\nSELECT IS_SRVROLEMEMBER('sysadmin');\nexit\n" | \
+      timeout 45 env PATH=/usr/bin:/bin "$MSSQLCLIENT" "$DOMAIN_NB/$user:${PASSWD[$user]}@$CASTELBLACK" -windows-auth \
+      >"$log" 2>&1
+    rc=$?
+    cat "$log"
+    if [[ $rc -ne 0 ]] || ! grep -Eqi "${user//./\\.}" "$log"; then
+      fail "Could not query MSSQL context for $user"
+      continue
+    fi
+    if [[ "$user" == jon.snow ]]; then
+      grep -Eq '(^|[[:space:]])1([[:space:]]|$)' "$log" \
+        && pass 'jon.snow is MSSQL sysadmin as designed' \
+        || fail 'jon.snow is not MSSQL sysadmin as designed'
+    else
+      grep -Eq '(^|[[:space:]])0([[:space:]]|$)' "$log" \
+        && pass "$user is a non-sysadmin MSSQL login as designed" \
+        || fail "$user MSSQL sysadmin state does not match the course contract"
+    fi
+  done
+else
+  fail 'MSSQL role checks not run: Impacket mssqlclient missing'
+fi
+
+section '10. IIS WINDOWS AUTHENTICATION — EXACT COURSE BOUNDARY'
+url="http://castelblack.north.sevenkingdoms.local/internal/"
+unauth="$EVIDENCE/http-unauth.headers"
+code="$(curl --noproxy '*' -sS --max-time 15 -D "$unauth" -o /dev/null -w '%{http_code}' "$url" 2>"$EVIDENCE/http-unauth.err")"
+if [[ "$code" == 401 ]] && grep -Eqi '^WWW-Authenticate:.*Negotiate' "$unauth" && grep -Eqi '^WWW-Authenticate:.*NTLM' "$unauth"; then
+  pass '/internal/ unauthenticated boundary = 401 + Negotiate + NTLM'
+else
+  fail "/internal/ unauthenticated boundary mismatch (HTTP ${code:-ERROR})"
+fi
+
+for user in "${USERS[@]}"; do
+  headers="$EVIDENCE/http-$user.headers"
+  body="$EVIDENCE/http-$user.body"
+  if [[ "$HTTP_AUTH_CLIENT" == 'curl' ]]; then
+    code="$(curl --noproxy '*' --ntlm -sS --max-time 15 -D "$headers" -o "$body" -w '%{http_code}' \
+        -u "$DOMAIN_NB\\$user:${PASSWD[$user]}" "$url" 2>"$EVIDENCE/http-$user.err")"
+  elif [[ "$HTTP_AUTH_CLIENT" == 'requests-ntlm' ]]; then
+    code="$(PHASE02_HTTP_USER="$DOMAIN_NB\\$user" PHASE02_HTTP_PASS="${PASSWD[$user]}" PHASE02_HTTP_URL="$url" \
+      /usr/bin/python3 - <<'PY'
+import os
+import requests
+from requests_ntlm import HttpNtlmAuth
+s = requests.Session()
+s.trust_env = False
+r = s.get(
+    os.environ["PHASE02_HTTP_URL"],
+    auth=HttpNtlmAuth(os.environ["PHASE02_HTTP_USER"], os.environ["PHASE02_HTTP_PASS"]),
+    timeout=15,
+)
+print(r.status_code)
+PY
+    )"
+  else
+    code='ERROR'
+  fi
+  if [[ "$code" =~ ^2[0-9][0-9]$ ]]; then
+    pass "/internal/ accepts NORTH\\$user (HTTP $code)"
+  else
+    fail "/internal/ does not accept NORTH\\$user as planned (HTTP ${code:-ERROR})"
+  fi
+done
+
+section '11. FINAL PHASE 02 FOOTHOLD CONTRACT'
+if tcp_open "$WS01" 3389 && grep -Fq 'RDP_POLICY_CONTRACT=WS01:PASS' "$EVIDENCE/rdp-phase01.log"; then
+  pass 'Rickon -> WS01 RDP low-privilege foothold is ready'
+else
+  fail 'Rickon -> WS01 foothold contract is not ready'
+fi
+
+section 'FINAL RESULT'
+printf 'PASS: %d\nWARN: %d\nFAIL: %d\nEvidence: %s\n' "$PASS" "$WARN" "$FAIL" "$EVIDENCE"
+if [[ $FAIL -eq 0 ]]; then
+  cat <<'READY'
+
+[READY] 02 — TEST THE GATES PRE-LAB CONTRACT PASSED
+The current Kingdoms instance matches the intended Phase 02 path.
+No known access-right/service mismatch should force a curriculum stop.
+READY
+  exit 0
+fi
+
+cat <<'NOTREADY'
+
+[NOT READY] 02 — TEST THE GATES HAS A CONTRACT MISMATCH
+Fix every [FAIL] before restarting the chapter. Do not work around it mid-lab.
+NOTREADY
+exit 1 'C    done
+  done
+else
+  fail 'SMB credential/authorization matrix not run because NetExec is unavailable'
+fi
+
+section '7. WINRM — NO SURPRISE FOOTHOLD'
+if [[ ${#NXC[@]} -gt 0 ]]; then
+  for target in "WINTERFELL:$WINTERFELL" "CASTELBLACK:$CASTELBLACK" "WS01:$WS01"; do
+    name="${target%%:*}"; ip="${target##*:}"
+    if ! tcp_open "$ip" 5985; then
+      fail "$name WinRM authorization test cannot use the documented TCP/5985 path"
+      continue
+    fi
+    for user in "${USERS[@]}"; do
+      log="$EVIDENCE/winrm-${name,,}-$user.log"
+      run_nxc "$log" winrm "$ip" -d "$DOMAIN_FQDN" -u "$user" -p "${PASSWD[$user]}" >/dev/null 2>&1
+      if auth_ok "$log"; then
+        fail "$name unexpectedly gives NORTH\\$user a WinRM-capable session"
+      else
+        pass "$name does not give NORTH\\$user an unexpected WinRM foothold"
+      fi
+    done
+  done
+else
+  fail 'WinRM matrix not run because NetExec is unavailable'
+fi
+
+section '8. MSSQL — EXACT WINDOWS LOGIN CONTRACT'
+if [[ ${#NXC[@]} -gt 0 ]]; then
+  declare -A SQL_EXPECT=(
+    [hodor]=allow
+    [brandon.stark]=allow
+    [jon.snow]=allow
+    [samwell.tarly]=allow
+    [rickon.stark]=allow
+  )
+  for user in "${USERS[@]}"; do
+    log="$EVIDENCE/mssql-$user.log"
+    run_nxc "$log" mssql "$CASTELBLACK" -d "$DOMAIN_FQDN" -u "$user" -p "${PASSWD[$user]}" >/dev/null 2>&1
+    if auth_ok "$log"; then observed=allow; else observed=deny; fi
+    if [[ "$observed" == "${SQL_EXPECT[$user]}" ]]; then
+      pass "MSSQL $user = $observed as designed"
+    else
+      fail "MSSQL $user = $observed, expected ${SQL_EXPECT[$user]}"
+    fi
+  done
+else
+  fail 'MSSQL login matrix not run because NetExec is unavailable'
+fi
+
+section '9. MSSQL — SERVER ROLE CONTRACT'
+if [[ -n "$MSSQLCLIENT" ]]; then
+  for user in hodor brandon.stark jon.snow samwell.tarly rickon.stark; do
+    log="$EVIDENCE/mssql-role-$user.log"
+    printf "SELECT SYSTEM_USER;\nSELECT IS_SRVROLEMEMBER('sysadmin');\nexit\n" | \
+      timeout 45 env PATH=/usr/bin:/bin "$MSSQLCLIENT" "$DOMAIN_NB/$user:${PASSWD[$user]}@$CASTELBLACK" -windows-auth \
+      >"$log" 2>&1
+    rc=$?
+    cat "$log"
+    if [[ $rc -ne 0 ]] || ! grep -Eqi "${user//./\\.}" "$log"; then
+      fail "Could not query MSSQL context for $user"
+      continue
+    fi
+    if [[ "$user" == jon.snow ]]; then
+      grep -Eq '(^|[[:space:]])1([[:space:]]|$)' "$log" \
+        && pass 'jon.snow is MSSQL sysadmin as designed' \
+        || fail 'jon.snow is not MSSQL sysadmin as designed'
+    else
+      grep -Eq '(^|[[:space:]])0([[:space:]]|$)' "$log" \
+        && pass "$user is a non-sysadmin MSSQL login as designed" \
+        || fail "$user MSSQL sysadmin state does not match the course contract"
+    fi
+  done
+else
+  fail 'MSSQL role checks not run: Impacket mssqlclient missing'
+fi
+
+section '10. IIS WINDOWS AUTHENTICATION — EXACT COURSE BOUNDARY'
+url="http://castelblack.north.sevenkingdoms.local/internal/"
+unauth="$EVIDENCE/http-unauth.headers"
+code="$(curl --noproxy '*' -sS --max-time 15 -D "$unauth" -o /dev/null -w '%{http_code}' "$url" 2>"$EVIDENCE/http-unauth.err")"
+if [[ "$code" == 401 ]] && grep -Eqi '^WWW-Authenticate:.*Negotiate' "$unauth" && grep -Eqi '^WWW-Authenticate:.*NTLM' "$unauth"; then
+  pass '/internal/ unauthenticated boundary = 401 + Negotiate + NTLM'
+else
+  fail "/internal/ unauthenticated boundary mismatch (HTTP ${code:-ERROR})"
+fi
+
+for user in "${USERS[@]}"; do
+  headers="$EVIDENCE/http-$user.headers"
+  body="$EVIDENCE/http-$user.body"
+  if [[ "$HTTP_AUTH_CLIENT" == 'curl' ]]; then
+    code="$(curl --noproxy '*' --ntlm -sS --max-time 15 -D "$headers" -o "$body" -w '%{http_code}' \
+        -u "$DOMAIN_NB\\$user:${PASSWD[$user]}" "$url" 2>"$EVIDENCE/http-$user.err")"
+  elif [[ "$HTTP_AUTH_CLIENT" == 'requests-ntlm' ]]; then
+    code="$(PHASE02_HTTP_USER="$DOMAIN_NB\\$user" PHASE02_HTTP_PASS="${PASSWD[$user]}" PHASE02_HTTP_URL="$url" \
+      /usr/bin/python3 - <<'PY'
+import os
+import requests
+from requests_ntlm import HttpNtlmAuth
+s = requests.Session()
+s.trust_env = False
+r = s.get(
+    os.environ["PHASE02_HTTP_URL"],
+    auth=HttpNtlmAuth(os.environ["PHASE02_HTTP_USER"], os.environ["PHASE02_HTTP_PASS"]),
+    timeout=15,
+)
+print(r.status_code)
+PY
+    )"
+  else
+    code='ERROR'
+  fi
+  if [[ "$code" =~ ^2[0-9][0-9]$ ]]; then
+    pass "/internal/ accepts NORTH\\$user (HTTP $code)"
+  else
+    fail "/internal/ does not accept NORTH\\$user as planned (HTTP ${code:-ERROR})"
+  fi
+done
+
+section '11. FINAL PHASE 02 FOOTHOLD CONTRACT'
+if tcp_open "$WS01" 3389 && grep -Fq 'RDP_POLICY_CONTRACT=WS01:PASS' "$EVIDENCE/rdp-phase01.log"; then
+  pass 'Rickon -> WS01 RDP low-privilege foothold is ready'
+else
+  fail 'Rickon -> WS01 foothold contract is not ready'
+fi
+
+section 'FINAL RESULT'
+printf 'PASS: %d\nWARN: %d\nFAIL: %d\nEvidence: %s\n' "$PASS" "$WARN" "$FAIL" "$EVIDENCE"
+if [[ $FAIL -eq 0 ]]; then
+  cat <<'READY'
+
+[READY] 02 — TEST THE GATES PRE-LAB CONTRACT PASSED
+The current Kingdoms instance matches the intended Phase 02 path.
+No known access-right/service mismatch should force a curriculum stop.
+READY
+  exit 0
+fi
+
+cat <<'NOTREADY'
+
+[NOT READY] 02 — TEST THE GATES HAS A CONTRACT MISMATCH
+Fix every [FAIL] before restarting the chapter. Do not work around it mid-lab.
+NOTREADY
+exit 1; do
+          if share_has "$log" "$share" READ || share_has "$log" "$share" WRITE; then
+            fail "$name $user unexpectedly has administrative-share access on $share"
+          else
+            pass "$name $user has no unexpected administrative-share access on $share"
+          fi
+        done
+      else
+        # WS01 is visible to the Phase 00 SMB service map and accepts valid
+        # NORTH network authentication, but recovered low-privilege users must
+        # not gain administrative-share file access.
+        for share in 'ADMIN    done
+  done
+else
+  fail 'SMB credential/authorization matrix not run because NetExec is unavailable'
+fi
+
+section '7. WINRM — NO SURPRISE FOOTHOLD'
+if [[ ${#NXC[@]} -gt 0 ]]; then
+  for target in "WINTERFELL:$WINTERFELL" "CASTELBLACK:$CASTELBLACK" "WS01:$WS01"; do
+    name="${target%%:*}"; ip="${target##*:}"
+    if ! tcp_open "$ip" 5985; then
+      fail "$name WinRM authorization test cannot use the documented TCP/5985 path"
+      continue
+    fi
+    for user in "${USERS[@]}"; do
+      log="$EVIDENCE/winrm-${name,,}-$user.log"
+      run_nxc "$log" winrm "$ip" -d "$DOMAIN_FQDN" -u "$user" -p "${PASSWD[$user]}" >/dev/null 2>&1
+      if auth_ok "$log"; then
+        fail "$name unexpectedly gives NORTH\\$user a WinRM-capable session"
+      else
+        pass "$name does not give NORTH\\$user an unexpected WinRM foothold"
+      fi
+    done
+  done
+else
+  fail 'WinRM matrix not run because NetExec is unavailable'
+fi
+
+section '8. MSSQL — EXACT WINDOWS LOGIN CONTRACT'
+if [[ ${#NXC[@]} -gt 0 ]]; then
+  declare -A SQL_EXPECT=(
+    [hodor]=allow
+    [brandon.stark]=allow
+    [jon.snow]=allow
+    [samwell.tarly]=allow
+    [rickon.stark]=allow
+  )
+  for user in "${USERS[@]}"; do
+    log="$EVIDENCE/mssql-$user.log"
+    run_nxc "$log" mssql "$CASTELBLACK" -d "$DOMAIN_FQDN" -u "$user" -p "${PASSWD[$user]}" >/dev/null 2>&1
+    if auth_ok "$log"; then observed=allow; else observed=deny; fi
+    if [[ "$observed" == "${SQL_EXPECT[$user]}" ]]; then
+      pass "MSSQL $user = $observed as designed"
+    else
+      fail "MSSQL $user = $observed, expected ${SQL_EXPECT[$user]}"
+    fi
+  done
+else
+  fail 'MSSQL login matrix not run because NetExec is unavailable'
+fi
+
+section '9. MSSQL — SERVER ROLE CONTRACT'
+if [[ -n "$MSSQLCLIENT" ]]; then
+  for user in hodor brandon.stark jon.snow samwell.tarly rickon.stark; do
+    log="$EVIDENCE/mssql-role-$user.log"
+    printf "SELECT SYSTEM_USER;\nSELECT IS_SRVROLEMEMBER('sysadmin');\nexit\n" | \
+      timeout 45 env PATH=/usr/bin:/bin "$MSSQLCLIENT" "$DOMAIN_NB/$user:${PASSWD[$user]}@$CASTELBLACK" -windows-auth \
+      >"$log" 2>&1
+    rc=$?
+    cat "$log"
+    if [[ $rc -ne 0 ]] || ! grep -Eqi "${user//./\\.}" "$log"; then
+      fail "Could not query MSSQL context for $user"
+      continue
+    fi
+    if [[ "$user" == jon.snow ]]; then
+      grep -Eq '(^|[[:space:]])1([[:space:]]|$)' "$log" \
+        && pass 'jon.snow is MSSQL sysadmin as designed' \
+        || fail 'jon.snow is not MSSQL sysadmin as designed'
+    else
+      grep -Eq '(^|[[:space:]])0([[:space:]]|$)' "$log" \
+        && pass "$user is a non-sysadmin MSSQL login as designed" \
+        || fail "$user MSSQL sysadmin state does not match the course contract"
+    fi
+  done
+else
+  fail 'MSSQL role checks not run: Impacket mssqlclient missing'
+fi
+
+section '10. IIS WINDOWS AUTHENTICATION — EXACT COURSE BOUNDARY'
+url="http://castelblack.north.sevenkingdoms.local/internal/"
+unauth="$EVIDENCE/http-unauth.headers"
+code="$(curl --noproxy '*' -sS --max-time 15 -D "$unauth" -o /dev/null -w '%{http_code}' "$url" 2>"$EVIDENCE/http-unauth.err")"
+if [[ "$code" == 401 ]] && grep -Eqi '^WWW-Authenticate:.*Negotiate' "$unauth" && grep -Eqi '^WWW-Authenticate:.*NTLM' "$unauth"; then
+  pass '/internal/ unauthenticated boundary = 401 + Negotiate + NTLM'
+else
+  fail "/internal/ unauthenticated boundary mismatch (HTTP ${code:-ERROR})"
+fi
+
+for user in "${USERS[@]}"; do
+  headers="$EVIDENCE/http-$user.headers"
+  body="$EVIDENCE/http-$user.body"
+  if [[ "$HTTP_AUTH_CLIENT" == 'curl' ]]; then
+    code="$(curl --noproxy '*' --ntlm -sS --max-time 15 -D "$headers" -o "$body" -w '%{http_code}' \
+        -u "$DOMAIN_NB\\$user:${PASSWD[$user]}" "$url" 2>"$EVIDENCE/http-$user.err")"
+  elif [[ "$HTTP_AUTH_CLIENT" == 'requests-ntlm' ]]; then
+    code="$(PHASE02_HTTP_USER="$DOMAIN_NB\\$user" PHASE02_HTTP_PASS="${PASSWD[$user]}" PHASE02_HTTP_URL="$url" \
+      /usr/bin/python3 - <<'PY'
+import os
+import requests
+from requests_ntlm import HttpNtlmAuth
+s = requests.Session()
+s.trust_env = False
+r = s.get(
+    os.environ["PHASE02_HTTP_URL"],
+    auth=HttpNtlmAuth(os.environ["PHASE02_HTTP_USER"], os.environ["PHASE02_HTTP_PASS"]),
+    timeout=15,
+)
+print(r.status_code)
+PY
+    )"
+  else
+    code='ERROR'
+  fi
+  if [[ "$code" =~ ^2[0-9][0-9]$ ]]; then
+    pass "/internal/ accepts NORTH\\$user (HTTP $code)"
+  else
+    fail "/internal/ does not accept NORTH\\$user as planned (HTTP ${code:-ERROR})"
+  fi
+done
+
+section '11. FINAL PHASE 02 FOOTHOLD CONTRACT'
+if tcp_open "$WS01" 3389 && grep -Fq 'RDP_POLICY_CONTRACT=WS01:PASS' "$EVIDENCE/rdp-phase01.log"; then
+  pass 'Rickon -> WS01 RDP low-privilege foothold is ready'
+else
+  fail 'Rickon -> WS01 foothold contract is not ready'
+fi
+
+section 'FINAL RESULT'
+printf 'PASS: %d\nWARN: %d\nFAIL: %d\nEvidence: %s\n' "$PASS" "$WARN" "$FAIL" "$EVIDENCE"
+if [[ $FAIL -eq 0 ]]; then
+  cat <<'READY'
+
+[READY] 02 — TEST THE GATES PRE-LAB CONTRACT PASSED
+The current Kingdoms instance matches the intended Phase 02 path.
+No known access-right/service mismatch should force a curriculum stop.
+READY
+  exit 0
+fi
+
+cat <<'NOTREADY'
+
+[NOT READY] 02 — TEST THE GATES HAS A CONTRACT MISMATCH
+Fix every [FAIL] before restarting the chapter. Do not work around it mid-lab.
+NOTREADY
+exit 1 'C    done
+  done
+else
+  fail 'SMB credential/authorization matrix not run because NetExec is unavailable'
+fi
+
+section '7. WINRM — NO SURPRISE FOOTHOLD'
+if [[ ${#NXC[@]} -gt 0 ]]; then
+  for target in "WINTERFELL:$WINTERFELL" "CASTELBLACK:$CASTELBLACK" "WS01:$WS01"; do
+    name="${target%%:*}"; ip="${target##*:}"
+    if ! tcp_open "$ip" 5985; then
+      fail "$name WinRM authorization test cannot use the documented TCP/5985 path"
+      continue
+    fi
+    for user in "${USERS[@]}"; do
+      log="$EVIDENCE/winrm-${name,,}-$user.log"
+      run_nxc "$log" winrm "$ip" -d "$DOMAIN_FQDN" -u "$user" -p "${PASSWD[$user]}" >/dev/null 2>&1
+      if auth_ok "$log"; then
+        fail "$name unexpectedly gives NORTH\\$user a WinRM-capable session"
+      else
+        pass "$name does not give NORTH\\$user an unexpected WinRM foothold"
+      fi
+    done
+  done
+else
+  fail 'WinRM matrix not run because NetExec is unavailable'
+fi
+
+section '8. MSSQL — EXACT WINDOWS LOGIN CONTRACT'
+if [[ ${#NXC[@]} -gt 0 ]]; then
+  declare -A SQL_EXPECT=(
+    [hodor]=allow
+    [brandon.stark]=allow
+    [jon.snow]=allow
+    [samwell.tarly]=allow
+    [rickon.stark]=allow
+  )
+  for user in "${USERS[@]}"; do
+    log="$EVIDENCE/mssql-$user.log"
+    run_nxc "$log" mssql "$CASTELBLACK" -d "$DOMAIN_FQDN" -u "$user" -p "${PASSWD[$user]}" >/dev/null 2>&1
+    if auth_ok "$log"; then observed=allow; else observed=deny; fi
+    if [[ "$observed" == "${SQL_EXPECT[$user]}" ]]; then
+      pass "MSSQL $user = $observed as designed"
+    else
+      fail "MSSQL $user = $observed, expected ${SQL_EXPECT[$user]}"
+    fi
+  done
+else
+  fail 'MSSQL login matrix not run because NetExec is unavailable'
+fi
+
+section '9. MSSQL — SERVER ROLE CONTRACT'
+if [[ -n "$MSSQLCLIENT" ]]; then
+  for user in hodor brandon.stark jon.snow samwell.tarly rickon.stark; do
+    log="$EVIDENCE/mssql-role-$user.log"
+    printf "SELECT SYSTEM_USER;\nSELECT IS_SRVROLEMEMBER('sysadmin');\nexit\n" | \
+      timeout 45 env PATH=/usr/bin:/bin "$MSSQLCLIENT" "$DOMAIN_NB/$user:${PASSWD[$user]}@$CASTELBLACK" -windows-auth \
+      >"$log" 2>&1
+    rc=$?
+    cat "$log"
+    if [[ $rc -ne 0 ]] || ! grep -Eqi "${user//./\\.}" "$log"; then
+      fail "Could not query MSSQL context for $user"
+      continue
+    fi
+    if [[ "$user" == jon.snow ]]; then
+      grep -Eq '(^|[[:space:]])1([[:space:]]|$)' "$log" \
+        && pass 'jon.snow is MSSQL sysadmin as designed' \
+        || fail 'jon.snow is not MSSQL sysadmin as designed'
+    else
+      grep -Eq '(^|[[:space:]])0([[:space:]]|$)' "$log" \
+        && pass "$user is a non-sysadmin MSSQL login as designed" \
+        || fail "$user MSSQL sysadmin state does not match the course contract"
+    fi
+  done
+else
+  fail 'MSSQL role checks not run: Impacket mssqlclient missing'
+fi
+
+section '10. IIS WINDOWS AUTHENTICATION — EXACT COURSE BOUNDARY'
+url="http://castelblack.north.sevenkingdoms.local/internal/"
+unauth="$EVIDENCE/http-unauth.headers"
+code="$(curl --noproxy '*' -sS --max-time 15 -D "$unauth" -o /dev/null -w '%{http_code}' "$url" 2>"$EVIDENCE/http-unauth.err")"
+if [[ "$code" == 401 ]] && grep -Eqi '^WWW-Authenticate:.*Negotiate' "$unauth" && grep -Eqi '^WWW-Authenticate:.*NTLM' "$unauth"; then
+  pass '/internal/ unauthenticated boundary = 401 + Negotiate + NTLM'
+else
+  fail "/internal/ unauthenticated boundary mismatch (HTTP ${code:-ERROR})"
+fi
+
+for user in "${USERS[@]}"; do
+  headers="$EVIDENCE/http-$user.headers"
+  body="$EVIDENCE/http-$user.body"
+  if [[ "$HTTP_AUTH_CLIENT" == 'curl' ]]; then
+    code="$(curl --noproxy '*' --ntlm -sS --max-time 15 -D "$headers" -o "$body" -w '%{http_code}' \
+        -u "$DOMAIN_NB\\$user:${PASSWD[$user]}" "$url" 2>"$EVIDENCE/http-$user.err")"
+  elif [[ "$HTTP_AUTH_CLIENT" == 'requests-ntlm' ]]; then
+    code="$(PHASE02_HTTP_USER="$DOMAIN_NB\\$user" PHASE02_HTTP_PASS="${PASSWD[$user]}" PHASE02_HTTP_URL="$url" \
+      /usr/bin/python3 - <<'PY'
+import os
+import requests
+from requests_ntlm import HttpNtlmAuth
+s = requests.Session()
+s.trust_env = False
+r = s.get(
+    os.environ["PHASE02_HTTP_URL"],
+    auth=HttpNtlmAuth(os.environ["PHASE02_HTTP_USER"], os.environ["PHASE02_HTTP_PASS"]),
+    timeout=15,
+)
+print(r.status_code)
+PY
+    )"
+  else
+    code='ERROR'
+  fi
+  if [[ "$code" =~ ^2[0-9][0-9]$ ]]; then
+    pass "/internal/ accepts NORTH\\$user (HTTP $code)"
+  else
+    fail "/internal/ does not accept NORTH\\$user as planned (HTTP ${code:-ERROR})"
+  fi
+done
+
+section '11. FINAL PHASE 02 FOOTHOLD CONTRACT'
+if tcp_open "$WS01" 3389 && grep -Fq 'RDP_POLICY_CONTRACT=WS01:PASS' "$EVIDENCE/rdp-phase01.log"; then
+  pass 'Rickon -> WS01 RDP low-privilege foothold is ready'
+else
+  fail 'Rickon -> WS01 foothold contract is not ready'
+fi
+
+section 'FINAL RESULT'
+printf 'PASS: %d\nWARN: %d\nFAIL: %d\nEvidence: %s\n' "$PASS" "$WARN" "$FAIL" "$EVIDENCE"
+if [[ $FAIL -eq 0 ]]; then
+  cat <<'READY'
+
+[READY] 02 — TEST THE GATES PRE-LAB CONTRACT PASSED
+The current Kingdoms instance matches the intended Phase 02 path.
+No known access-right/service mismatch should force a curriculum stop.
+READY
+  exit 0
+fi
+
+cat <<'NOTREADY'
+
+[NOT READY] 02 — TEST THE GATES HAS A CONTRACT MISMATCH
+Fix every [FAIL] before restarting the chapter. Do not work around it mid-lab.
+NOTREADY
+exit 1; do
           if share_has "$log" "$share" READ || share_has "$log" "$share" WRITE; then
             fail "$name $user unexpectedly has administrative-share access on $share"
           else

@@ -34,15 +34,28 @@
   roles:
     - { role: 'commonwkstn', tags: 'workstation' }
   tasks:
-    # LanmanServer may run like a normal domain workstation, but WS01 is the
-    # Phase 01/02 SMB negative control. Do not create a direct-hosted SMB
-    # firewall exception here; a stale rule from older Kingdoms builds is
-    # removed again by phase01.yml for migration safety.
+    # Phase 00 intentionally fingerprints WS01 over direct-hosted SMB. Keep
+    # TCP/445 reachable on the Domain profile while leaving legacy NetBIOS
+    # ports closed. Phase 01 still expects NULL/Guest share listing to be
+    # rejected, and later phases decide authorization with valid identities.
     - name: Windows | Ensure SMB Server service is running on WS01
       win_service:
         name: LanmanServer
         start_mode: auto
         state: started
+
+    - name: Firewall | Allow modern SMB on WS01 Domain profile
+      win_dsc:
+        resource_name: xFirewall
+        Name: "Kingdoms WS01 SMB (TCP-In)"
+        Ensure: present
+        Enabled: True
+        Profile: "Domain"
+        Direction: "Inbound"
+        Localport: "445"
+        Protocol: "TCP"
+        Action: "Allow"
+        Description: "Expose SMB on the Domain profile for the Kingdoms Phase 00 service map"
   vars:
     member_domain: "{{lab.hosts[dict_key].domain}}"
     domain_username: "{{admin_user}}@{{member_domain}}"

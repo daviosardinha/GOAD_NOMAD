@@ -23,13 +23,3 @@
   gather_facts: false
   roles:
     - role: phase01/iis
-
-- name: Preserve WS01 as the filtered SMB negative control
-  hosts: ws01
-  gather_facts: false
-  tasks:
-    - name: Remove legacy Kingdoms WS01 direct SMB allow rule
-      ansible.windows.win_dsc:
-        resource_name: xFirewall
-        Name: "Kingdoms WS01 SMB (TCP-In)"
-        Ensure: absent
