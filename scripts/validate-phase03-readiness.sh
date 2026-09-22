@@ -298,3 +298,118 @@ if [[ ${#NXC[@]} -gt 0 ]]; then
   strip_ansi <"$LDAP_NXC_LOG.raw" >"$LDAP_NXC_LOG"
   cat "$LDAP_NXC_LOG"
   [[ $LDAP_NXC_RC -eq 0 ]] || warn "NetExec LDAP posture probe returned rc=$LDAP_NXC_RC; parsing evidence anyway"
+
+  if grep -Eqi 'signing:(None|False)' "$LDAP_NXC_LOG"; then
+    pass 'WINTERFELL external LDAP probe does not observe signing enforcement'
+  else
+    fail 'NetExec LDAP probe did not show the expected non-enforced signing posture'
+  fi
+
+  if grep -Eqi 'channel binding:(Never|None|False)' "$LDAP_NXC_LOG"; then
+    pass 'WINTERFELL external LDAP probe does not observe LDAPS channel-binding enforcement'
+    LDAP_POSTURE_PROVED=1
+  else
+    fail 'NetExec LDAP probe did not show the expected non-enforced channel-binding posture'
+  fi
+else
+  fail 'NetExec unavailable for LDAP relay-posture probe'
+fi
+
+# Optional corroboration with Impacket's CheckLDAPStatus.py.  Do not make a
+# missing Python dependency look like a lab failure; the NetExec probe above
+# is the primary external contract.
+if [[ -n "$LDAP_CHECKER" && "$LDAP_CHECKER" != *.gz ]]; then
+  LDAP_PY=''
+  for py in "$HOME/.goad/.venv/bin/python" python3 /usr/bin/python3; do
+    [[ -n "$py" ]] || continue
+    if command -v "$py" >/dev/null 2>&1 && "$py" -c 'import dns.resolver, impacket' >/dev/null 2>&1; then
+      LDAP_PY="$(command -v "$py")"
+      break
+    fi
+  done
+  if [[ -n "$LDAP_PY" ]]; then
+    LDAP_LOG="$EVIDENCE/ldap-status-impacket.log"
+    timeout 90 "$LDAP_PY" "$LDAP_CHECKER" -domain "$DOMAIN_FQDN" -dc-ip "$WINTERFELL" >"$LDAP_LOG" 2>&1
+    LDAP_RC=$?
+    cat "$LDAP_LOG"
+    if [[ $LDAP_RC -eq 0 ]] && grep -Eqi 'LDAP Signing Required:[[:space:]]*False' "$LDAP_LOG" && grep -Eqi 'LDAPS Channel Binding Status:[[:space:]]*Never' "$LDAP_LOG"; then
+      pass 'CheckLDAPStatus.py independently corroborates signing=False and channel binding=Never'
+    else
+      warn 'CheckLDAPStatus.py did not corroborate the posture; NetExec evidence remains the primary Phase 03 gate'
+    fi
+  else
+    info 'CheckLDAPStatus.py present but no local Python interpreter has its dns/impacket dependencies; NetExec is used as the primary probe'
+  fi
+fi
+
+section '6. MSSQL AUTHENTICATION-COERCION PREREQUISITE'
+if [[ -n "$MSSQLCLIENT" ]]; then
+  SQL_LOG="$EVIDENCE/mssql-coercion-prereq.log"
+  printf "SELECT SYSTEM_USER;\nSELECT servicename, service_account FROM sys.dm_server_services;\nEXEC master.sys.xp_dirtree 'C:\\Windows',1,0;\nexit\n" | \
+    timeout 60 env PATH=/usr/bin:/bin "$MSSQLCLIENT" 'NORTH/jon.snow:iknownothing@castelblack.north.sevenkingdoms.local' -windows-auth \
+    >"$SQL_LOG" 2>&1
+  SQL_RC=$?
+  cat "$SQL_LOG"
+  if [[ $SQL_RC -eq 0 ]] && grep -Eqi 'NORTH\\jon\.snow' "$SQL_LOG"; then pass 'Jon can establish the documented Windows-authenticated MSSQL context'; else fail 'Jon MSSQL context failed'; fi
+  grep -Eqi '(NORTH|north\.sevenkingdoms\.local)\\sql_svc' "$SQL_LOG" && pass 'MSSQL reports the expected NORTH sql_svc domain identity' || fail 'MSSQL service identity was not observed as the expected NORTH sql_svc identity'
+  if [[ $SQL_RC -eq 0 ]] && ! grep -Eqi 'ERROR|permission.*denied|not.*permission' "$SQL_LOG"; then pass 'xp_dirtree executes with a local path; outbound UNC coercion can be lab-tested next without changing SQL configuration'; else fail 'xp_dirtree prerequisite did not execute cleanly'; fi
+else
+  fail 'MSSQL coercion prerequisite skipped because mssqlclient is unavailable'
+fi
+
+section '7. LOCAL LISTENER / TOOL CONFLICTS'
+LISTEN_LOG="$EVIDENCE/local-listeners.log"
+ss -H -lntup 2>/dev/null | tee "$LISTEN_LOG" || true
+for port in 80 445; do
+  if grep -Eq "(^|[^0-9]):${port}([^0-9]|$)" "$LISTEN_LOG"; then
+    fail "local TCP/$port is already in use; Responder/ntlmrelayx listener ownership must be resolved before the relay lab"
+  else
+    pass "local TCP/$port is free for Phase 03 listeners"
+  fi
+done
+# mitm6 needs the lab-facing interface, so a DNS listener bound only to
+# loopback is not a conflict. Wildcard or non-loopback binds are.
+for port in 53 547; do
+  PORT_LINES="$(grep -E "(^|[^0-9]):${port}([^0-9]|$)" "$LISTEN_LOG" || true)"
+  if [[ -z "$PORT_LINES" ]]; then
+    pass "local port $port has no current listener conflict"
+    continue
+  fi
+
+  NON_LOOPBACK="$(printf '%s\n' "$PORT_LINES" | grep -Ev '(^|[[:space:]])127\.0\.0\.1:' | grep -Ev '(^|[[:space:]])\[::1\]:' || true)"
+  if [[ -n "$NON_LOOPBACK" ]]; then
+    warn "local port $port has a non-loopback listener; inspect before starting mitm6"
+  else
+    pass "local port $port is bound only on loopback and does not conflict with the NORTH lab interface"
+  fi
+done
+
+section '8. DELIBERATELY NOT EXECUTED YET'
+printf '%s\n' \
+  '[NOT RUN] Responder poisoning / NetNTLMv2 capture.' \
+  '[NOT RUN] ntlmrelayx relay to CASTELBLACK or WS01.' \
+  '[NOT RUN] SAM/LSASS/DPAPI dumping.' \
+  '[NOT RUN] PrinterBug, PetitPotam, Coercer, or MSSQL UNC outbound authentication.' \
+  '[NOT RUN] mitm6 / DHCPv6 / WPAD poisoning.' \
+  '[NOT RUN] LDAP/LDAPS relay, RBCD, Shadow Credentials, or Drop-The-MIC.' \
+  '[INFO] Those become technique-specific apply/prove/reset tests only after this prerequisite gate is understood.'
+
+section 'FINAL PHASE 03 READINESS RESULT'
+printf 'PASS: %d\nWARN: %d\nFAIL: %d\nEvidence: %s\n' "$PASS" "$WARN" "$FAIL" "$EVIDENCE"
+if [[ $FAIL -eq 0 ]]; then
+  cat <<'READY'
+
+[READY] 03 — POISON THE WELLS BASELINE PREREQUISITES PASSED
+The current instance supports the core NORTH poisoning/relay starting conditions.
+Warnings identify optional/advanced paths that still require a focused runtime proof.
+READY
+  exit 0
+fi
+
+cat <<'NOTREADY'
+
+[NOT READY] 03 — POISON THE WELLS HAS A BASELINE CONTRACT MISMATCH
+Do not change the curriculum yet. Use the evidence above to decide whether the
+lab or the planned Phase 03 path should be adapted.
+NOTREADY
+exit 1
