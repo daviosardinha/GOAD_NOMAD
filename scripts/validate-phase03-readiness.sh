@@ -198,3 +198,103 @@ if [[ -n "$ANSIBLE_PLAYBOOK" ]]; then
               Import-Module ActiveDirectory -ErrorAction Stop
               $domain = Get-ADDomain -Identity 'north.sevenkingdoms.local' -ErrorAction Stop
               $root = Get-ADObject -Identity $domain.DistinguishedName -Properties 'ms-DS-MachineAccountQuota' -ErrorAction Stop
+              Write-Output "PHASE03_MAQ=$($root.'ms-DS-MachineAccountQuota')"
+
+              $ldapIntegrity = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Services\NTDS\Parameters' -Name LDAPServerIntegrity -ErrorAction SilentlyContinue).LDAPServerIntegrity
+              $cbt = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Services\NTDS\Parameters' -Name LdapEnforceChannelBindings -ErrorAction SilentlyContinue).LdapEnforceChannelBindings
+              if ($null -eq $ldapIntegrity) { $ldapIntegrity = '<unset>' }
+              if ($null -eq $cbt) { $cbt = '<unset>' }
+              Write-Output "PHASE03_LDAP_REGISTRY=LDAPServerIntegrity:$ldapIntegrity|LdapEnforceChannelBindings:$cbt"
+          }
+
+          if ($name -eq 'WS01') {
+              $v4 = Get-NetIPAddress -AddressFamily IPv4 -IPAddress '10.4.10.31' -ErrorAction Stop
+              $alias = $v4.InterfaceAlias
+              $binding = Get-NetAdapterBinding -Name $alias -ComponentID ms_tcpip6 -ErrorAction Stop
+              $v6 = @(Get-NetIPAddress -InterfaceAlias $alias -AddressFamily IPv6 -ErrorAction SilentlyContinue)
+              Write-Output "PHASE03_WS01_IPV6=ALIAS:$alias|ENABLED:$($binding.Enabled)|COUNT:$($v6.Count)"
+          }
+
+          if ($name -eq 'CASTELBLACK') {
+              $sql = Get-CimInstance Win32_Service | Where-Object { $_.Name -like 'MSSQL*' -and $_.State -eq 'Running' } | Select-Object -First 1
+              if ($null -eq $sql) { throw 'No running MSSQL service found on CASTELBLACK' }
+              Write-Output "PHASE03_MSSQL_SERVICE=NAME:$($sql.Name)|ACCOUNT:$($sql.StartName)|STATE:$($sql.State)"
+          }
+      changed_when: false
+      register: phase03_facts
+
+    - name: Emit Phase 03 markers for the validator
+      ansible.builtin.debug:
+        msg: "{{ phase03_facts.output | default([]) }}"
+      changed_when: false
+YAML
+
+  ANSIBLE_CONFIG="$ROOT/ansible/ansible.cfg" \
+  timeout 600 "$ANSIBLE_PLAYBOOK" \
+    -i "$ROOT/ad/GOAD/data/inventory" \
+    -i "$ROOT/ad/GOAD/providers/vmware/inventory" \
+    "$PLAYBOOK" 2>&1 | tee "$EVIDENCE/windows-prereqs.log"
+  ANSIBLE_RC=${PIPESTATUS[0]}
+  [[ $ANSIBLE_RC -eq 0 ]] && pass 'read-only Windows prerequisite collection completed' || fail "Windows prerequisite collection failed rc=$ANSIBLE_RC"
+
+  grep -Fq 'PHASE03_LLMNR=1' "$EVIDENCE/windows-prereqs.log" && pass 'WINTERFELL LLMNR is enabled' || fail 'WINTERFELL LLMNR is not explicitly enabled'
+  if grep -Eq 'PHASE03_NBTNS=(0|1)' "$EVIDENCE/windows-prereqs.log"; then pass 'WINTERFELL NetBIOS-over-TCP/IP is not explicitly disabled'; else fail 'WINTERFELL NBT-NS posture does not match the lab prerequisite'; fi
+
+  BOT_RESP="$(grep -F 'PHASE03_BOT=responder_bot|' "$EVIDENCE/windows-prereqs.log" | tail -n1 || true)"
+  if grep -Fqi 'USER=robb.stark' <<<"$BOT_RESP" && grep -Fqi 'Bravos' <<<"$BOT_RESP" && grep -Fqi 'private' <<<"$BOT_RESP" && grep -Fqi 'INTERVAL=PT2M' <<<"$BOT_RESP"; then
+    pass 'responder_bot = Robb -> \\Bravos\private every 2 minutes'
+  else
+    fail 'responder_bot runtime contract does not match the intended Robb poisoning trigger'
+  fi
+
+  BOT_NTLM="$(grep -F 'PHASE03_BOT=ntlm_bot|' "$EVIDENCE/windows-prereqs.log" | tail -n1 || true)"
+  if grep -Fqi 'USER=eddard.stark' <<<"$BOT_NTLM" && grep -Fqi 'Meren' <<<"$BOT_NTLM" && grep -Fqi 'Private' <<<"$BOT_NTLM" && grep -Fqi 'INTERVAL=PT5M' <<<"$BOT_NTLM"; then
+    pass 'ntlm_bot = Eddard -> \\Meren\Private every 5 minutes'
+  else
+    fail 'ntlm_bot runtime contract does not match the intended Eddard relay trigger'
+  fi
+
+  grep -Eq 'PHASE03_MAQ=([1-9][0-9]*)' "$EVIDENCE/windows-prereqs.log" && pass 'NORTH MachineAccountQuota is non-zero for an RBCD lab candidate' || warn 'NORTH MachineAccountQuota is zero/unavailable; add-computer RBCD path will need a different design'
+  grep -Eq 'PHASE03_WS01_IPV6=.*ENABLED:True.*COUNT:[1-9]' "$EVIDENCE/windows-prereqs.log" && pass 'WS01 NORTH adapter has IPv6 enabled and at least one IPv6 address' || warn 'WS01 IPv6 prerequisite is not ready for a mitm6 lab'
+  if MSSQL_MARKER="$(grep -F 'PHASE03_MSSQL_SERVICE=' "$EVIDENCE/windows-prereqs.log" | tail -n1 || true)" && grep -Fqi 'ACCOUNT:north.sevenkingdoms.local' <<<"$MSSQL_MARKER" && grep -Fqi 'sql_svc' <<<"$MSSQL_MARKER" && grep -Fqi 'STATE:Running' <<<"$MSSQL_MARKER"; then
+    pass 'CASTELBLACK MSSQL runs as the NORTH sql_svc domain identity'
+  else
+    fail 'CASTELBLACK MSSQL service account is not the expected NORTH sql_svc identity'
+  fi
+
+  if grep -Eq 'PHASE03_SPOOLER=WINTERFELL:Running:' "$EVIDENCE/windows-prereqs.log"; then pass 'WINTERFELL Print Spooler is running (PrinterBug candidate surface)'; else warn 'WINTERFELL Print Spooler is not running; PrinterBug against the DC is not currently a candidate'; fi
+else
+  fail 'Windows-side prerequisites not collected because ansible-playbook is unavailable'
+fi
+
+section '4. DNS-MISS PREREQUISITES FOR THE TWO BUILT-IN BOTS'
+for typo in bravos meren; do
+  DNS_LOG="$EVIDENCE/dns-${typo}.log"
+  if nslookup "${typo}.${DOMAIN_FQDN}" "$WINTERFELL" >"$DNS_LOG" 2>&1; then
+    if grep -Eqi 'NXDOMAIN|Non-existent domain|server can.t find' "$DNS_LOG"; then
+      pass "$typo is absent from NORTH DNS and can fall through to local name resolution"
+    else
+      fail "$typo unexpectedly resolves in NORTH DNS"
+    fi
+  else
+    if grep -Eqi 'NXDOMAIN|Non-existent domain|server can.t find' "$DNS_LOG"; then
+      pass "$typo is absent from NORTH DNS and can fall through to local name resolution"
+    else
+      fail "could not prove expected DNS miss for $typo"
+    fi
+  fi
+done
+
+section '5. LDAP / LDAPS RELAY TARGET POSTURE'
+for port in 389 636; do
+  tcp_open "$WINTERFELL" "$port" && pass "WINTERFELL TCP/$port reachable" || fail "WINTERFELL TCP/$port unreachable"
+done
+
+LDAP_POSTURE_PROVED=0
+if [[ ${#NXC[@]} -gt 0 ]]; then
+  LDAP_NXC_LOG="$EVIDENCE/netexec-ldap-status.log"
+  timeout 90 "${NXC[@]}" ldap "$WINTERFELL" -u '' -p '' >"$LDAP_NXC_LOG.raw" 2>&1
+  LDAP_NXC_RC=$?
+  strip_ansi <"$LDAP_NXC_LOG.raw" >"$LDAP_NXC_LOG"
+  cat "$LDAP_NXC_LOG"
+  [[ $LDAP_NXC_RC -eq 0 ]] || warn "NetExec LDAP posture probe returned rc=$LDAP_NXC_RC; parsing evidence anyway"
