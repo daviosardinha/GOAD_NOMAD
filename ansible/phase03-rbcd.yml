@@ -47,9 +47,9 @@
       vars:
         ansible_become_password: "{{ lab.domains['north.sevenkingdoms.local'].domain_password }}"
       # State and ACL backups remain on the domain controller; no credentials printed.
-      no_log: "{{ phase03_rbcd_action != 'audit' }}"
+      no_log: "{{ phase03_rbcd_action != 'audit' and not ansible_check_mode }}"
 
-    - name: Display read-only fixture evidence
+    - name: Display read-only audit or safe dry-run preview
       ansible.builtin.debug:
         var: phase03_rbcd_fixture.result
-      when: phase03_rbcd_action == 'audit'
+      when: phase03_rbcd_action == 'audit' or ansible_check_mode
