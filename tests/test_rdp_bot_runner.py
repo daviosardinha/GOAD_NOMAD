@@ -21,12 +21,12 @@ class RdpBotRunnerTests(unittest.TestCase):
             "TARGET_IP='10.4.10.22'",
             "EXPECTED_INTERFACE='vmnet10'",
             "EXPECTED_SOURCE='10.4.10.254'",
-            "/from-stdin:force",
-            "/cert:tofu",
+            "/args-from:stdin",
+            "RDP_CERT_SHA256='df04438dc21da0b7fdf61f3694df1b9d658fc4bc965d082c06516aeec8453dfe'",
             'id -u',
             'stat -c',
             'exec xvfb-run',
-            '< "$CREDENTIAL_FILE"',
+            'cat -- "$CREDENTIAL_FILE"',
         ):
             with self.subTest(expected=expected):
                 self.assertIn(expected, source)
@@ -86,7 +86,7 @@ class RdpBotRunnerTests(unittest.TestCase):
             self.write_executable(
                 bin_dir / 'xfreerdp3',
                 '#!/bin/sh\nprintf "%s\\n" "$@" > "$RDP_TEST_ARGV"\n'
-                'IFS= read -r password\nprintf "%s\\n" "$password" > "$RDP_TEST_STDIN"\n',
+                'cat > "$RDP_TEST_STDIN"\n',
             )
             env = dict(os.environ)
             env.update(
@@ -106,12 +106,13 @@ class RdpBotRunnerTests(unittest.TestCase):
     def test_dummy_credential_only_reaches_stdin(self):
         result, args, received = self.invoke_mock()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn('/from-stdin:force', args)
-        self.assertIn('/cert:tofu', args)
-        self.assertIn('/v:10.4.10.22', args)
+        self.assertIn('/args-from:stdin', args)
+        self.assertNotIn('/v:10.4.10.22', args)
         self.assertNotIn('DUMMY_CREDENTIAL_DO_NOT_USE', args)
         self.assertNotIn('DUMMY_CREDENTIAL_DO_NOT_USE', result.stdout + result.stderr)
-        self.assertEqual(received, 'DUMMY_CREDENTIAL_DO_NOT_USE\n')
+        self.assertIn('/v:10.4.10.22', received)
+        self.assertIn('/p:DUMMY_CREDENTIAL_DO_NOT_USE', received)
+        self.assertIn('/cert:fingerprint:sha256:df04438dc21da0b7fdf61f3694df1b9d658fc4bc965d082c06516aeec8453dfe', received)
 
     def test_world_readable_secret_fails_closed(self):
         result, args, _ = self.invoke_mock(secret_mode=0o644)
