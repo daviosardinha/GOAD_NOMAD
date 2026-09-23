@@ -63,6 +63,62 @@ function Get-FixtureRules($descriptor) {
     })
 }
 
+# Compare ACEs as a multiset, independent of order or SDDL formatting.
+# Diagnostic only: this is not yet a condition for mutating any AD object.
+function Get-AceSignatures($descriptor) {
+    @($descriptor.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]) |
+        ForEach-Object {
+            @(
+                $_.IdentityReference.Value,
+                [int]$_.AccessControlType,
+                [int]$_.ActiveDirectoryRights,
+                $_.ObjectType.ToString('D'),
+                $_.InheritedObjectType.ToString('D'),
+                [int]$_.InheritanceType,
+                [bool]$_.IsInherited
+            ) -join '|'
+        })
+}
+
+function Get-AceMultisetDelta($reference, $candidate) {
+    $refCounts = @{}
+    $candidateCounts = @{}
+    foreach ($signature in @(Get-AceSignatures $reference)) {
+        if (-not $refCounts.ContainsKey($signature)) { $refCounts[$signature] = 0 }
+        $refCounts[$signature]++
+    }
+    foreach ($signature in @(Get-AceSignatures $candidate)) {
+        if (-not $candidateCounts.ContainsKey($signature)) { $candidateCounts[$signature] = 0 }
+        $candidateCounts[$signature]++
+    }
+    $missing = 0
+    $extra = 0
+    $sample = @()
+    foreach ($key in @($refCounts.Keys + $candidateCounts.Keys | Sort-Object -Unique)) {
+        $refCount = [int]$refCounts[$key]
+        $candidateCount = [int]$candidateCounts[$key]
+        if ($refCount -gt $candidateCount) {
+            $missing += $refCount - $candidateCount
+            if ($sample.Count -lt 6) { $sample += "Missing ($($refCount - $candidateCount)) $key" }
+        }
+        if ($candidateCount -gt $refCount) {
+            $extra += $candidateCount - $refCount
+            if ($sample.Count -lt 6) { $sample += "Extra ($($candidateCount - $refCount)) $key" }
+        }
+    }
+    return @{
+        OriginalAceCount = (@(Get-AceSignatures $reference)).Count
+        CandidateAceCount = (@(Get-AceSignatures $candidate)).Count
+        MissingAceCount = $missing
+        ExtraAceCount = $extra
+        DeltaSample = $sample
+        InitialDaclProtected = $reference.AreAccessRulesProtected
+        CandidateDaclProtected = $candidate.AreAccessRulesProtected
+        InitialDaclCanonical = $reference.AreAccessRulesCanonical
+        CandidateDaclCanonical = $candidate.AreAccessRulesCanonical
+    }
+}
+
 function Save-FixtureState($state) {
     $json = ConvertTo-Json -InputObject $state -Depth 4
     $temp = $statePath + '.tmp'
@@ -159,6 +215,8 @@ if ($Mode -eq 'audit') {
     # the training ACE, owned training account and protected preimage behind.
     $removePreviewStatus = 'NotApplicable'
     $removePreviewMatchesInitial = $false
+    $removePreviewRemainingFixtureAces = -1
+    $removePreviewAceDelta = @{}
     if ($null -ne $state -and $matching.Count -eq 1) {
         try {
             $copy = [System.DirectoryServices.ActiveDirectorySecurity]::new()
@@ -168,6 +226,10 @@ if ($Mode -eq 'audit') {
                 $removePreviewStatus = 'Cloned ACL did not retain exactly one fixture ACE'
             } else {
                 $copy.RemoveAccessRuleSpecific($copyMatching[0])
+                $removePreviewRemainingFixtureAces = @(Get-FixtureRules $copy).Count
+                $original = [System.DirectoryServices.ActiveDirectorySecurity]::new()
+                $original.SetSecurityDescriptorSddlForm($state.InitialDacl, $aclSection)
+                $removePreviewAceDelta = Get-AceMultisetDelta $original $copy
                 $removePreviewMatchesInitial = (
                     $copy.GetSecurityDescriptorSddlForm($aclSection) -ceq $state.InitialDacl
                 )
@@ -209,6 +271,8 @@ if ($Mode -eq 'audit') {
         DaclMatchesApplied = ($null -ne $state -and $dacl -ceq $state.AppliedDacl)
         DaclRemovalPreviewStatus = $removePreviewStatus
         DaclRemovalPreviewMatchesInitial = $removePreviewMatchesInitial
+        DaclRemovalPreviewRemainingFixtureAces = $removePreviewRemainingFixtureAces
+        DaclRemovalPreviewAceDelta = $removePreviewAceDelta
     }
     return
 }
