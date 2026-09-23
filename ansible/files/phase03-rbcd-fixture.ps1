@@ -94,7 +94,10 @@ function Get-AceMultisetDelta($reference, $candidate) {
     $missing = 0
     $extra = 0
     $sample = @()
-    foreach ($key in @($refCounts.Keys + $candidateCounts.Keys | Sort-Object -Unique)) {
+    $allKeys = @{}
+    foreach ($key in $refCounts.Keys) { $allKeys[$key] = $true }
+    foreach ($key in $candidateCounts.Keys) { $allKeys[$key] = $true }
+    foreach ($key in $allKeys.Keys) {
         $refCount = [int]$refCounts[$key]
         $candidateCount = [int]$candidateCounts[$key]
         if ($refCount -gt $candidateCount) {
