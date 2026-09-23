@@ -6,12 +6,14 @@ TARGET_HOSTS='dc02:srv02:ws01'
 REQUIRE_SESSIONS=false
 PHASE01=false
 SOURCE_ONLY=false
+BOT_MODE=legacy
 usage() {
     printf '%s\n' \
-        'Usage: bash scripts/validate-rdp-runtime.sh [--source-only] [--host ws01] [--require-sessions] [--phase01]' \
+        'Usage: bash scripts/validate-rdp-runtime.sh [--source-only] [--host ws01] [--require-sessions] [--phase01] [--bot-mode legacy|headless]' \
         'Default: source gate, 3389 reachability, effective policy for all three NORTH hosts.' \
         '--require-sessions: also require observed Robb/CASTELBLACK and Rickon/WS01 RDP sessions.' \
         '--phase01: run the existing read-only Phase 01 validator unchanged.' \
+        '--bot-mode: legacy requires WINTERFELL connect_bot healthy; headless requires it disabled.' \
         'No credential attempts are made. A policy PASS is not a fresh desktop-logon PASS.' \
         'Run from the configured Kingdoms management/operator host with NORTH connectivity.' \
         'Optional: KINGDOMS_RDP_ANSIBLE, KINGDOMS_RDP_INVENTORY, KINGDOMS_RDP_LOG_DIR.'
@@ -25,11 +27,14 @@ while [[ $# -gt 0 ]]; do
             TARGET_HOSTS=ws01; shift 2 ;;
         --require-sessions) REQUIRE_SESSIONS=true; shift ;;
         --phase01) PHASE01=true; shift ;;
+        --bot-mode)
+            [[ "${2:-}" == legacy || "${2:-}" == headless ]] || fail '--bot-mode must be legacy or headless'
+            BOT_MODE="$2"; shift 2 ;;
         -h|--help) usage; exit 0 ;;
         *) usage >&2; fail "Unknown argument: $1" ;;
     esac
 done
-if ${SOURCE_ONLY} && { ${REQUIRE_SESSIONS} || ${PHASE01} || [[ "${TARGET_HOSTS}" != 'dc02:srv02:ws01' ]]; }; then
+if ${SOURCE_ONLY} && { ${REQUIRE_SESSIONS} || ${PHASE01} || [[ "${TARGET_HOSTS}" != 'dc02:srv02:ws01' ]] || [[ "${BOT_MODE}" != legacy ]]; }; then
     fail '--source-only cannot be combined with runtime options'
 fi
 cd "${ROOT}"
@@ -64,7 +69,7 @@ done
     ANSIBLE_CONFIG="${ROOT}/ansible/ansible.cfg" timeout 900 "${ANSIBLE_PLAYBOOK}" \
         -i "${ROOT}/ad/GOAD/data/inventory" -i "${INVENTORY}" \
         validate-kingdoms-rdp.yml \
-        -e "rdp_target_hosts=${TARGET_HOSTS}" -e "rdp_require_sessions=${REQUIRE_SESSIONS}"
+        -e "rdp_target_hosts=${TARGET_HOSTS}" -e "rdp_require_sessions=${REQUIRE_SESSIONS}" -e "rdp_bot_mode=${BOT_MODE}"
 ) 2>&1 | tee "${LOG_DIR}/rdp-policy.log"
 for host in "${HOSTS[@]}"; do
     grep -Fq "RDP_POLICY_CONTRACT=${host}:PASS" "${LOG_DIR}/rdp-policy.log" || fail "Missing evidence for ${host}"

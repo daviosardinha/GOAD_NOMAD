@@ -1,0 +1,18 @@
+# Install into ~/.config/systemd/user/ only after explicit controlled handover.
+# This unit never modifies or disables WINTERFELL's legacy connect_bot.
+[Unit]
+Description=Kingdoms NORTH Robb headless RDP training client
+Documentation=https://github.com/daviosardinha/GOAD_NOMAD/blob/kingdoms/rdp-bot-recovery/docs/rdp-bot-recovery.md
+StartLimitIntervalSec=3600
+StartLimitBurst=3
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/bash %h/Documents/GOAD_NOMAD/scripts/rdp-bot-headless.sh
+Restart=always
+RestartSec=120
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

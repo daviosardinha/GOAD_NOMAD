@@ -221,6 +221,24 @@ foreach ($identity in $principalFailures.Keys) {
         throw "Expected principal rejection for '$identity'; got: $failure"
     }
 }
+# Headless mode must require the preserved legacy task to be disabled, while
+# keeping its rollback principal intact.
+$fixture = New-HostFixture 'WINTERFELL'
+$fixture.TaskState = 'Disabled'
+$headlessOutput = @(Invoke-HostCollector @{ ExpectedHost = 'WINTERFELL'; DirectoryJson = $directoryJson; BotMode = 'headless' })
+if ($headlessOutput -notcontains 'CONNECT_BOT_MODE=HEADLESS' -or
+    $headlessOutput -notcontains 'CONNECT_BOT_LEGACY_STATE=Disabled' -or
+    $headlessOutput -notcontains 'CONNECT_BOT_PRINCIPAL_CHECK=PASS') {
+    throw 'Headless bot mode did not accept a disabled, intact legacy task'
+}
+$fixture = New-HostFixture 'WINTERFELL'
+$headlessFailure = $null
+try { $null = Invoke-HostCollector @{ ExpectedHost = 'WINTERFELL'; DirectoryJson = $directoryJson; BotMode = 'headless' } }
+catch { $headlessFailure = $_.Exception.Message }
+if (-not $headlessFailure -or -not $headlessFailure.StartsWith('legacy connect_bot must remain disabled')) {
+    throw "Headless bot mode accepted an enabled legacy task: $headlessFailure"
+}
+
 # A bare username must not be accepted if Windows resolves it to another SID.
 $fixture = New-HostFixture 'WINTERFELL'
 $fixture.TaskOwner = 'robb.stark'
@@ -229,4 +247,4 @@ $failure = $null
 try { $null = Invoke-HostCollector @{ ExpectedHost = 'WINTERFELL'; DirectoryJson = $directoryJson } }
 catch { $failure = $_.Exception.Message }
 if (-not $failure -or -not $failure.StartsWith('connect_bot runs as unexpected account')) { throw 'Bare-name SID collision was not rejected' }
-Write-Output 'PASS: three-host matrix, twenty negative cases, sessions, six equivalent principal formats and seven principal rejections (Windows APIs mocked)'
+Write-Output 'PASS: three-host matrix, legacy/headless bot modes, negative cases, sessions and principal validation (Windows APIs mocked)'

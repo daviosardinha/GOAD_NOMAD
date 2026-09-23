@@ -4,7 +4,8 @@
 param(
     [Parameter(Mandatory=$true)][string]$ExpectedHost,
     [Parameter(Mandatory=$true)][string]$DirectoryJson,
-    [bool]$RequireSessions = $false
+    [bool]$RequireSessions = $false,
+    [ValidateSet('legacy','headless')][string]$BotMode = 'legacy'
 )
 $ErrorActionPreference = 'Stop'
 function Resolve-KingdomsAccountSid {
@@ -217,10 +218,18 @@ if ($requiredSession -and $sessions -notcontains $requiredSession) {
 if ($ExpectedHost -ieq 'WINTERFELL') {
     $task = Get-ScheduledTask -TaskName connect_bot -TaskPath '\'
     $info = Get-ScheduledTaskInfo -TaskName connect_bot -TaskPath '\'
-    if ($task.State.ToString() -notin @('Ready','Running') -or $info.LastTaskResult -ne 0) {
-        throw 'connect_bot health check failed'
+    $taskState = $task.State.ToString()
+    Write-Output "CONNECT_BOT_MODE=$($BotMode.ToUpperInvariant())"
+    Write-Output "CONNECT_BOT_LEGACY_STATE=$taskState"
+    if ($BotMode -eq 'legacy') {
+        if ($taskState -notin @('Ready','Running') -or $info.LastTaskResult -ne 0) {
+            throw 'connect_bot health check failed'
+        }
+    } elseif ($taskState -ne 'Disabled') {
+        throw 'legacy connect_bot must remain disabled while headless bot mode is validated'
     }
-    # Compare account identities, not Task Scheduler's display/storage format.
+    # Preserve rollback integrity: even while disabled, the legacy task must
+    # still belong to the intended Robb identity.
     $taskIdentity = [string]$task.Principal.UserId
     Write-Output "CONNECT_BOT_PRINCIPAL=$taskIdentity"
     try {
