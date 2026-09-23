@@ -63,7 +63,7 @@ class Phase03RBCDSourceTests(unittest.TestCase):
         self.assertNotIn("Set-ADGroupMember", source)
         self.assertIn("State = 'would-add-exact-attribute-ace'", source)
         self.assertIn("State = 'would-restore-original-attribute-and-dacl'", source)
-        self.assertEqual(source.count("$Ansible.Changed = $true"), 5)
+        self.assertEqual(source.count("$Ansible.Changed = $true"), 6)
 
     def test_operator_requires_instance_and_clean_upstream(self):
         source = ENTRY.read_text()
