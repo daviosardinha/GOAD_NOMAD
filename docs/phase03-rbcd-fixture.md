@@ -1,6 +1,6 @@
 # Kingdoms Phase 03 — CASTELBLACK RBCD attribute fixture (draft)
 
-Branch: kingdom/phase03-rbcd-fixture (dependent on kingdoms/rdp-access-contract).
+Branch: kingdoms/phase03-rbcd-fixture (dependent on kingdoms/rdp-access-contract).
 This is an opt-in, NORTH-only feature branch. Do **not** merge or import the
 playbook into ansible/main.yml until the runtime acceptance below passes.
 
