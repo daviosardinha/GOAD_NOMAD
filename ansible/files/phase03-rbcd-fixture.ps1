@@ -287,8 +287,19 @@ if ($Mode -eq 'audit') {
                 $removePreviewMatchesInitial = (
                     $copy.GetSecurityDescriptorSddlForm($aclSection) -ceq $state.InitialDacl
                 )
+                $rawEqual = (
+                    $removePreviewRawAceDelta.MissingAceCount -eq 0 -and
+                    $removePreviewRawAceDelta.ExtraAceCount -eq 0 -and
+                    $removePreviewRawAceDelta.InitialDaclControlMask -eq
+                        $removePreviewRawAceDelta.CandidateDaclControlMask -and
+                    $removePreviewRawAceDelta.InitialDaclCanonical -eq
+                        $removePreviewRawAceDelta.CandidateDaclCanonical -and
+                    $removePreviewRemainingFixtureAces -eq 0
+                )
                 $removePreviewStatus = $(if ($removePreviewMatchesInitial) {
                     'ExactOriginalDacl'
+                } elseif ($rawEqual) {
+                    'EquivalentRawAcesAndDaclFlags'
                 } else {
                     'DaclDiffersFromOriginal'
                 })
@@ -470,4 +481,10 @@ if ($training.Count -eq 1) {
     $Ansible.Changed = $true
 }
 Remove-Item -LiteralPath $statePath -Force
-$Ansible.Result = @{ Mode = 'reset'; State = 'baseline-restored'; Target = 'CASTELBLACK' }
+$Ansible.Result = @{
+    Mode = 'reset'
+    State = 'baseline-restored'
+    Target = 'CASTELBLACK'
+    AclVerifiedBy = 'ExactRawAceMultisetAndDaclControlFlags'
+    OriginalAceCount = $preflight.OriginalAceCount
+}
