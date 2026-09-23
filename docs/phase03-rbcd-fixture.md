@@ -50,8 +50,11 @@ The optional training account may be created through the relayed Rickon
 LDAP session; RESET removes it only if its name, DN, group membership and
 mS-DS-CreatorSID prove it is the account Rickon created for this exercise.
 RESET also checks that any RBCD descriptor has exactly that account as its
-sole trustee. A different trustee or unrelated AD change stops automated
-cleanup. Never delete arbitrary machine accounts or clear a pre-existing
+sole explicit allow trustee. It accepts both byte[] and ActiveDirectorySecurity
+representations returned by the AD PowerShell module but will not silently cast
+an unknown representation. The read-only audit reports the descriptor's CLR
+type, parse status and trustee SID without printing the attribute bytes. A
+different trustee or unrelated AD change stops automated cleanup. Never delete arbitrary machine accounts or clear a pre-existing
 delegation attribute merely to make this lesson pass.
 
 ## Source-first deployment
