@@ -41,19 +41,14 @@ unattended fix: that logon type needs a user to be logged on to WINTERFELL.
   checks, including restrictive file permissions and rejection of an
   unexpected network source.
 
-The FreeRDP password is read from a local user-owned credential file through
-`/from-stdin:force`. It is never stored in this branch, the systemd unit,
+The FreeRDP password is read from a local user-owned credential file and fed through
+`/args-from:stdin`. It is never stored in this branch, the systemd unit,
 process arguments or the command history. The file does remain readable to
 the account that runs the bot and anyone with sufficient local privileges;
 protect the Kali host and use a **lab-only** account. Set the file's mode to
 0600 (0400 also works) and its parent directory to 0700.
 
-FreeRDP uses `/cert:tofu`, not `/cert:ignore`. Trust on first use is *not*
-independent certificate validation: check the server certificate fingerprint
-through a trusted management channel before the first candidate connection.
-A later unexpected certificate change must stop the rollout pending review.
-After a legitimate lab rebuild, reverify the new fingerprint before
-re-establishing trust. This service's source path assumes the operator checkout
+FreeRDP now pins the independently verified CASTELBLACK SHA-256 certificate fingerprint with `/cert:fingerprint:sha256:<hex>` and never uses `/cert:ignore`. The currently verified fingerprint is `df04438dc21da0b7fdf61f3694df1b9d658fc4bc965d082c06516aeec8453dfe`. A later certificate change must fail closed and stop the rollout pending trusted out-of-band verification. After a legitimate lab rebuild, reverify the new fingerprint before updating the source. This service's source path assumes the operator checkout
 is `~/Documents/GOAD_NOMAD`; edit the local unit if that changes.
 
 **Important curriculum distinction:** the new client originates from the
