@@ -154,6 +154,34 @@ if ($null -ne $state -and $acl.Owner -ine $state.InitialOwner) {
 }
 
 if ($Mode -eq 'audit') {
+    # Rehearse the ACL cleanup entirely in memory. This is particularly
+    # important after an interrupted reset has already cleared RBCD but left
+    # the training ACE, owned training account and protected preimage behind.
+    $removePreviewStatus = 'NotApplicable'
+    $removePreviewMatchesInitial = $false
+    if ($null -ne $state -and $matching.Count -eq 1) {
+        try {
+            $copy = [System.DirectoryServices.ActiveDirectorySecurity]::new()
+            $copy.SetSecurityDescriptorBinaryForm($acl.GetSecurityDescriptorBinaryForm())
+            $copyMatching = @(Get-FixtureRules $copy)
+            if ($copyMatching.Count -ne 1) {
+                $removePreviewStatus = 'Cloned ACL did not retain exactly one fixture ACE'
+            } else {
+                $copy.RemoveAccessRuleSpecific($copyMatching[0])
+                $removePreviewMatchesInitial = (
+                    $copy.GetSecurityDescriptorSddlForm($aclSection) -ceq $state.InitialDacl
+                )
+                $removePreviewStatus = $(if ($removePreviewMatchesInitial) {
+                    'ExactOriginalDacl'
+                } else {
+                    'DaclDiffersFromOriginal'
+                })
+            }
+        } catch {
+            # Never leak full AD descriptor contents in diagnostic output.
+            $removePreviewStatus = 'InMemoryAclSimulationFailed: ' + $_.Exception.GetType().Name
+        }
+    }
     $rbcdTrustees = @()
     $rbcdParseStatus = 'Absent'
     if ($null -ne $rbcd) {
@@ -179,6 +207,8 @@ if ($Mode -eq 'audit') {
         TrainingAccountPresent = ($training.Count -ne 0)
         ManagedFixture = ($null -ne $state)
         DaclMatchesApplied = ($null -ne $state -and $dacl -ceq $state.AppliedDacl)
+        DaclRemovalPreviewStatus = $removePreviewStatus
+        DaclRemovalPreviewMatchesInitial = $removePreviewMatchesInitial
     }
     return
 }
