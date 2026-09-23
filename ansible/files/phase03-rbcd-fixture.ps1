@@ -169,7 +169,8 @@ if ($Mode -eq 'apply') {
     }
 
     if ($Ansible.CheckMode) {
-        $Ansible.Result = @{ Mode = 'apply'; State = 'would-add-exact-attribute-ace'; Target = 'CASTELBLACK' }
+        $Ansible.Changed = $true
+        $Ansible.Result = @{ Mode = 'apply'; State = 'would-add-exact-attribute-ace'; Target = 'CASTELBLACK'; Attribute = 'msDS-AllowedToActOnBehalfOfOtherIdentity'; Grantee = 'NORTH\rickon.stark'; WouldChange = $true }
         return
     }
 
@@ -223,7 +224,8 @@ if ($null -ne $rbcd) {
     }
 }
 if ($Ansible.CheckMode) {
-    $Ansible.Result = @{ Mode = 'reset'; State = 'would-restore-original-attribute-and-dacl' }
+    $Ansible.Changed = $true
+    $Ansible.Result = @{ Mode = 'reset'; State = 'would-restore-original-attribute-and-dacl'; Target = 'CASTELBLACK'; WouldChange = $true }
     return
 }
 
