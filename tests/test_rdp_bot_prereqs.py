@@ -24,7 +24,8 @@ class RdpBotPrerequisitesTests(unittest.TestCase):
             'Xvfb',
             'xauth',
             'stat',
-            '/from-stdin',
+            '/args-from',
+            'fingerprint',
         ):
             with self.subTest(expected=expected):
                 self.assertIn(expected, source)
