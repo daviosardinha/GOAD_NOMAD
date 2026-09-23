@@ -9,6 +9,7 @@ readonly TARGET_IP='10.4.10.22'
 readonly EXPECTED_INTERFACE='vmnet10'
 readonly EXPECTED_SOURCE='10.4.10.254'
 readonly CREDENTIAL_FILE="${KINGDOMS_RDP_BOT_SECRET_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/kingdoms/robb-rdp.password}"
+readonly RDP_CERT_SHA256='df04438dc21da0b7fdf61f3694df1b9d658fc4bc965d082c06516aeec8453dfe'
 
 fail() { printf '[FAIL] %s\n' "$*" >&2; exit 1; }
 
@@ -23,8 +24,10 @@ route="$(ip -4 route get "$TARGET_IP" 2>/dev/null)" || fail 'Cannot find the NOR
    " $route " == *" src $EXPECTED_SOURCE "* ]] ||
     fail 'NORTH route changed: expected CASTELBLACK via vmnet10 from 10.4.10.254.'
 
-# Never accept credentials on argv or in the process environment. A single
-# newline-terminated file is read on stdin by FreeRDP, not by the shell.
+# Never accept credentials on argv or in the process environment. The local
+# owner-only file is transformed into FreeRDP's /args-from:stdin stream so
+# the password never appears in the process list and FreeRDP does not try to
+# manipulate a non-TTY credential stdin.
 [[ -f "$CREDENTIAL_FILE" && ! -L "$CREDENTIAL_FILE" && -r "$CREDENTIAL_FILE" ]] ||
     fail 'Create a readable, non-symlink, owner-only credential file before running.'
 [[ "$(stat -c '%u' -- "$CREDENTIAL_FILE")" == "$(id -u)" ]] ||
@@ -33,11 +36,13 @@ mode="$(stat -c '%a' -- "$CREDENTIAL_FILE")" || fail 'Cannot stat credential fil
 (( (8#$mode & 8#077) == 0 )) || fail 'Credential file grants group/other access (use chmod 600).'
 [[ -s "$CREDENTIAL_FILE" ]] || fail 'Credential file is empty.'
 
-printf '[INFO] Starting a single NORTH\\robb.stark headless session to CASTELBLACK; credentials are read from stdin.\n'
-# TOFU pins the first observed certificate. Confirm the target certificate by
-# a trusted management channel before handover; a changed pin must fail closed.
-# The -clipboard option disables clipboard redirection in this dedicated session.
-exec xvfb-run -a -s '-screen 0 1280x800x24 -nolisten tcp' \
-    xfreerdp3 /v:"$TARGET_IP" /d:NORTH /u:robb.stark \
-    /from-stdin:force /cert:tofu /size:1280x800 /audio-mode:2 \
-    -clipboard /log-level:ERROR < "$CREDENTIAL_FILE"
+printf '[INFO] Starting a single NORTH\\robb.stark headless session to CASTELBLACK with an explicitly pinned SHA-256 certificate.\n'
+# The certificate was verified independently on CASTELBLACK before handover.
+# FreeRDP reads the complete argument set from stdin; the password is therefore
+# absent from argv and the shell environment. The -clipboard option disables
+# clipboard redirection in this dedicated session.
+{
+    printf '%s\n' "/v:$TARGET_IP" '/d:NORTH' '/u:robb.stark'
+    printf '/p:'; cat -- "$CREDENTIAL_FILE"
+    printf '%s\n' "/cert:fingerprint:sha256:$RDP_CERT_SHA256" '/size:1280x800' '/audio-mode:2' '-clipboard' '/log-level:ERROR'
+} | exec xvfb-run -a -s '-screen 0 1280x800x24 -nolisten tcp' xfreerdp3 /args-from:stdin
