@@ -60,7 +60,6 @@ PLAYBOOK="$HOME/.goad/.venv/bin/ansible-playbook"
 run_playbook() {
     ANSIBLE_CONFIG="$ROOT/ansible/ansible.cfg" "$PLAYBOOK" \
         -i "$ROOT/ad/GOAD/data/inventory" \
-        -i "$ROOT/ad/GOAD/providers/vmware/inventory" \
         -i "$MANAGEMENT" \
         -i "$ROOT/globalsettings.ini" \
         "$ROOT/ansible/phase03-rbcd.yml" \
