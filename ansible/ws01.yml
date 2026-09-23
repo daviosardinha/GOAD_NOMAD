@@ -34,9 +34,10 @@
   roles:
     - { role: 'commonwkstn', tags: 'workstation' }
   tasks:
-    # Keep WS01 representative of a traditional domain workstation: expose
-    # modern direct-hosted SMB on the Domain profile without enabling the
-    # broader legacy File and Printer Sharing / NetBIOS firewall group.
+    # Phase 00 intentionally fingerprints WS01 over direct-hosted SMB. Keep
+    # TCP/445 reachable on the Domain profile while leaving legacy NetBIOS
+    # ports closed. Phase 01 still expects NULL/Guest share listing to be
+    # rejected, and later phases decide authorization with valid identities.
     - name: Windows | Ensure SMB Server service is running on WS01
       win_service:
         name: LanmanServer
@@ -54,7 +55,7 @@
         Localport: "445"
         Protocol: "TCP"
         Action: "Allow"
-        Description: "Expose SMB on the Domain profile for the Kingdoms workstation baseline"
+        Description: "Expose SMB on the Domain profile for the Kingdoms Phase 00 service map"
   vars:
     member_domain: "{{lab.hosts[dict_key].domain}}"
     domain_username: "{{admin_user}}@{{member_domain}}"
@@ -67,3 +68,4 @@
     - { role: 'settings/user_rights', tags: 'adjust_rights' }
   vars:
     local_groups: "{{lab.hosts[dict_key].local_groups | default({}) }}"
+    exact_local_groups: "{{lab.hosts[dict_key].exact_local_groups | default([]) }}"

@@ -429,6 +429,55 @@ if (
             and b'GOAD_KINGDOMS_GUEST_READY' in result.std_out
         )
 
+    def _authenticated_guest_recovery_ready(self, machine, timeout=60):
+        """Prove enough pre-provision guest health for one recovery cycle.
+
+        A failed first Vagrant bring-up can stop before fix_ip.ps1 assigns the
+        canonical KINGDOMS address. Requiring that address before permitting the
+        recovery vagrant up --provision creates a circular dependency: the
+        provisioner that assigns the address is never allowed to run.
+
+        For this narrow failed-first-up path, require only authenticated
+        forwarded WinRM plus a running VMware Tools service/process. The
+        recovery cycle must still finish by passing the normal
+        _ensure_vmware_tools gate, which requires the canonical KINGDOMS
+        address before installation may continue.
+        """
+        try:
+            port = self._winrm_forwarded_port(machine)
+        except Exception:
+            return False
+
+        if not port or not self._wait_winrm_ready(port, timeout):
+            return False
+
+        try:
+            result = self._winrm_session(port).run_ps(r"""
+$ErrorActionPreference = 'Stop'
+$svc = Get-Service -Name VMTools -ErrorAction Stop
+$file = Test-Path 'C:\Program Files\VMware\VMware Tools\vmtoolsd.exe'
+$proc = Get-Process -Name vmtoolsd -ErrorAction SilentlyContinue
+
+if (
+    $svc.Status -eq 'Running' -and
+    $file -and
+    $proc
+) {
+    Write-Output 'GOAD_KINGDOMS_RECOVERY_READY'
+}
+""")
+        except Exception as exc:
+            Log.warning(
+                f'GOAD Kingdoms: pre-provision recovery readiness failed for '
+                f'{machine}: {type(exc).__name__}'
+            )
+            return False
+
+        return (
+            result.status_code == 0
+            and b'GOAD_KINGDOMS_RECOVERY_READY' in result.std_out
+        )
+
     def _ensure_vmware_tools(self, machine):
         """Use authenticated guest state as authority for KINGDOMS readiness.
 
@@ -458,13 +507,14 @@ if (
                     )
                 return True
 
-            # Guest state is not yet proven. Keep the existing installation and
-            # recovery behavior.
-            if super()._ensure_vmware_tools(machine):
-                return True
+            # Guest state is not yet proven. The inherited helper may install or
+            # repair VMware Tools, but its success is not sufficient for
+            # Kingdoms: it can succeed while the lab-facing NIC is still APIPA
+            # or before fix_ip.ps1 has assigned the canonical address.
+            super()._ensure_vmware_tools(machine)
 
-            # Recovery may have fixed Windows while VIX telemetry remained stale.
-            # Re-check authenticated guest state before declaring failure.
+            # Always re-prove the strict Kingdoms state after any inherited
+            # repair. NAT WinRM and healthy Tools are recovery signals only.
             if self._authenticated_guest_install_ready(machine):
                 vmx = self._vmx_path(machine)
                 if vmx and not self._poll_guest_ip_bounded(vmx, 10):
@@ -724,10 +774,24 @@ Write-Output 'GOAD_VMTOOLS_RESTARTED'
             Log.info(f'GOAD_NOMAD: bringing up {machine}')
             first_up = self.command.run_vagrant(['up', machine], self.path)
 
-            if not self._ensure_vmware_tools(machine):
-                return False
+            tools_ready = self._ensure_vmware_tools(machine)
+            recovery_ready = False
+            if not tools_ready:
+                recovery_ready = self._authenticated_guest_recovery_ready(machine)
+                if not recovery_ready:
+                    return False
+                Log.warning(
+                    f'GOAD Kingdoms: {machine} has authenticated WinRM and healthy '
+                    'VMware Tools but has not reached its canonical KINGDOMS address; '
+                    'allowing one bounded recovery provision cycle'
+                )
 
-            if not first_up:
+            # A failed first up always gets the deterministic recovery cycle.
+            # Also recover an existing/resumed guest when Vagrant itself returns
+            # success but strict Kingdoms readiness is still missing. This is the
+            # exact interrupted state where the NAT adapter works, the lab NIC is
+            # APIPA, and fix_ip.ps1 has not completed.
+            if not first_up or not tools_ready:
                 if not self._recover_failed_windows_vagrant_up(machine):
                     Log.error(
                         f'GOAD_NOMAD: {machine} still failed after clean Vagrant recovery'
@@ -907,6 +971,59 @@ Write-Output 'GOAD_VMTOOLS_RESTARTED'
         if not self._require_cached_sudo():
             return False
         return super().prepare_install()
+
+    def _fresh_install_bootstrap_pending(self):
+        """Return True only between fresh provider bring-up and the first playbook.
+
+        A zero-state install has healthy Windows/WinRM endpoints before Active
+        Directory exists. The normal provisioning mode transition is deliberately
+        AD-aware, so using it here creates a circular dependency: it waits for
+        NTDS/DC Locator before Ansible has had a chance to promote the DCs.
+
+        The install timing profile gives us an explicit lifecycle marker for this
+        narrow state. Installed/maintenance instances have a recorded runtime mode
+        and continue through the normal AD-aware mode controller.
+        """
+        profile = getattr(self, '_kingdoms_install_profile', None)
+        return (
+            self.lab_name == 'GOAD'
+            and self.get_runtime_mode() == 'unknown'
+            and isinstance(profile, dict)
+            and profile.get('provider_success') is True
+            and profile.get('status') == 'ansible_running'
+        )
+
+    def prepare_provisioning(self):
+        """Prepare fresh pre-AD bootstrap without weakening installed lifecycle."""
+        if not self.is_goad_nomad_segmented():
+            return super().prepare_provisioning()
+
+        if not self._fresh_install_bootstrap_pending():
+            return super().prepare_provisioning()
+
+        Log.info(
+            'GOAD Kingdoms: fresh install bootstrap before AD exists; '
+            'preparing routed WinRM management without AD readiness'
+        )
+
+        if not self._require_cached_sudo():
+            return False
+        if not self._apply_router_policy('provisioning'):
+            return False
+        if not self._enable_provisioning_routes():
+            return False
+        if not self._validate_management_plane():
+            Log.error(
+                'GOAD Kingdoms: fresh pre-AD management plane is not ready; '
+                'refusing to start Ansible'
+            )
+            return False
+
+        Log.success(
+            'GOAD Kingdoms: fresh pre-AD management plane ready; '
+            'Ansible may create the directory services'
+        )
+        return True
 
     def set_runtime_mode(self, mode):
         # Re-check immediately before every provisioning/exercise transition.

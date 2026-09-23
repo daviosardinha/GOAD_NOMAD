@@ -1,0 +1,234 @@
+"""Kingdoms RDP contract; stdlib-only tests, no lab access or credential probes."""
+import copy
+import hashlib
+import importlib.util
+import json
+from pathlib import Path
+import shutil
+import subprocess
+import unittest
+
+ROOT = Path(__file__).resolve().parents[1]
+PLUGIN = ROOT / 'ansible/roles/linux/guacamole_create_connections/filter_plugins/kingdoms_rdp.py'
+spec = importlib.util.spec_from_file_location('kingdoms_rdp', PLUGIN)
+rdp = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(rdp)
+
+
+class RdpAccessContractTests(unittest.TestCase):
+    def setUp(self):
+        self.lab = json.loads((ROOT / 'ad/GOAD/data/config.json').read_text())['lab']
+        self.hosts = self.lab['hosts']
+        self.domain = 'north.sevenkingdoms.local'
+        self.users = self.lab['domains'][self.domain]['users']
+
+    def text(self, path):
+        return (ROOT / path).read_text()
+
+    def allowed(self, host, user, domain=None, groups=None):
+        domain = domain or self.domain
+        groups = self.users[user]['groups'] if groups is None else groups
+        return rdp.kingdoms_rdp_allowed(self.hosts[host], domain, user, groups, self.lab['domains'])
+
+    def test_exact_three_host_allowlists(self):
+        expected = {'dc02': [], 'srv02': ['north\\robb.stark'], 'ws01': ['north\\rickon.stark']}
+        for host, members in expected.items():
+            with self.subTest(host=host):
+                self.assertEqual(self.hosts[host]['local_groups']['Remote Desktop Users'], members)
+                self.assertEqual(self.hosts[host]['exact_local_groups'], ['Remote Desktop Users'])
+
+    def test_no_other_hosts_opt_in(self):
+        opted_in = {key for key, value in self.hosts.items() if value.get('exact_local_groups')}
+        self.assertEqual(opted_in, {'dc02', 'srv02', 'ws01'})
+
+    def test_five_user_fifteen_connection_matrix(self):
+        for user in ('hodor', 'brandon.stark', 'jon.snow', 'samwell.tarly', 'rickon.stark'):
+            for host in ('dc02', 'srv02', 'ws01'):
+                with self.subTest(user=user, host=host):
+                    self.assertEqual(self.allowed(host, user), user == 'rickon.stark' and host == 'ws01')
+
+    def test_robb_exception_is_host_specific(self):
+        self.assertTrue(self.allowed('dc02', 'robb.stark'))
+        self.assertTrue(self.allowed('srv02', 'robb.stark'))
+        self.assertFalse(self.allowed('ws01', 'robb.stark'))
+
+    def test_existing_admin_routes_retained(self):
+        for user in ('eddard.stark', 'catelyn.stark', 'robb.stark'):
+            self.assertTrue(self.allowed('dc02', user))
+        self.assertTrue(self.allowed('srv02', 'jeor.mormont'))
+        self.assertTrue(self.allowed('ws01', 'eddard.stark'))
+
+    def test_same_name_other_domain_not_allowed(self):
+        self.assertFalse(self.allowed('ws01', 'rickon.stark', 'sevenkingdoms.local', []))
+        self.assertFalse(self.allowed('srv02', 'robb.stark', 'sevenkingdoms.local', []))
+        self.assertFalse(self.allowed('ws01', 'outsider', 'essos.local', ['Domain Admins']))
+
+    def test_case_insensitive_qualified_identity(self):
+        host = copy.deepcopy(self.hosts['ws01'])
+        host['local_groups']['Remote Desktop Users'] = ['NORTH\\RICKON.STARK']
+        self.assertTrue(rdp.kingdoms_rdp_allowed(host, self.domain, 'rickon.stark', [], self.lab['domains']))
+
+    def test_unmanaged_legacy_hosts_keep_existing_generation(self):
+        host = {'domain': 'legacy.local', 'local_groups': {'Remote Desktop Users': ['legacy\\Team']}}
+        self.assertTrue(rdp.kingdoms_rdp_allowed(host, self.domain, 'someone', ['Team'], self.lab['domains']))
+
+    def test_non_rdp_lab_data_unchanged_from_audited_baseline(self):
+        # Intentional future non-RDP curriculum changes must explicitly rebaseline
+        # this guard after review, not quietly pass as an RDP-only change.
+        lab = copy.deepcopy(self.lab)
+        for key in ('dc02', 'srv02', 'ws01'):
+            lab['hosts'][key]['local_groups'].pop('Remote Desktop Users')
+            lab['hosts'][key].pop('exact_local_groups')
+        digest = hashlib.sha256(json.dumps(lab, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+        self.assertEqual(digest, 'e1d1fdc7e11504344abea9ef00a17d20f6def0d6d12a1e756a9a31fec7ab22a2')
+
+    def test_protected_foundation_files_unchanged(self):
+        expected = {
+            'ansible/roles/settings/user_rights/tasks/main.yml': '7325210bd188b827c9f289fb42488742c17b665edf4033a01ff1d5888f58f6f4',
+            'ansible/roles/common/tasks/main.yml': 'aec530b0addc9088c89a57e6500c02deba0516c95d436c4745f54ed1238f9b1d',
+            'ad/GOAD/scripts/rdp_scheduler.ps1': 'af1fa86d8cccb9a81addf95aecb30d3a8d93672075c34f7627869445a9f2c0d2',
+            'ad/GOAD/files/dc02/bot_rdp.ps1': '4ead342fe794a1260093db797d73ce421cd1724a58a8ee6df14b0bf6e2d744b5',
+            'ansible/roles/phase01/dc/files/anonymous-sid-translation-gpo.ps1': '97a4d301de121a7359da4b19d30408e490178345065974a738b200c8f7e468b1',
+            'scripts/validate-phase01.py': '989b3565ff3a627fe1945373c821f646bab126b8b033a134829c0925aa649b5e',
+        }
+        for path, digest in expected.items():
+            with self.subTest(path=path):
+                self.assertEqual(hashlib.sha256((ROOT / path).read_bytes()).hexdigest(), digest)
+
+    def test_pure_is_opt_in_and_restricted_to_rdp(self):
+        text = self.text('ansible/roles/settings/adjust_rights/tasks/main.yml')
+        self.assertIn("'pure' if item.key in (exact_local_groups | default([])) else 'present'", text)
+        self.assertIn("difference(['Remote Desktop Users'])", text)
+        self.assertIn('difference(local_groups.keys() | list)', text)
+        self.assertNotIn('state: pure', text)
+
+    def test_all_provisioning_entry_points_pass_opt_in(self):
+        for path in ('ansible/ad-relations.yml', 'ansible/ws01.yml', 'ansible/kingdoms-rdp.yml'):
+            with self.subTest(path=path):
+                self.assertIn('exact_local_groups:', self.text(path))
+                self.assertIn('settings/adjust_rights', self.text(path))
+
+    def test_targeted_migration_does_not_reprovision_services_or_admins(self):
+        text = self.text('ansible/kingdoms-rdp.yml')
+        self.assertIn('hosts: dc02:srv02:ws01', text)
+        self.assertNotIn('import_playbook:', text)
+        self.assertNotIn('role: common', text)
+        self.assertNotIn('Administrators:', text)
+        self.assertIn("$cs.Domain -ine 'north.sevenkingdoms.local'", text)
+
+    def test_existing_runtime_checks_require_exclusive_rickon(self):
+        for path in ('scripts/validate-ws01-runtime.sh', 'scripts/validate-network-segmentation-runtime.sh'):
+            with self.subTest(path=path):
+                self.assertIn('$rdpUsers.Count -ne 1', self.text(path))
+                self.assertIn('scripts/validate-rdp-runtime.sh', self.text(path))
+
+    def test_runtime_reads_effective_allow_and_deny_and_nested_aliases(self):
+        text = self.text('scripts/rdp-host-evidence.ps1')
+        for token in ('SeRemoteInteractiveLogonRight', 'SeDenyRemoteInteractiveLogonRight',
+                      'LsaEnumerateAccountsWithUserRight', 'S-1-5-32-544', 'S-1-5-32-555',
+                      "$_ -notlike 'S-1-5-32-*'", '$tokens.Count -ne $before', 'gpresult.exe'):
+            self.assertIn(token, text)
+        self.assertIn('tokenGroups', self.text('scripts/rdp-directory-evidence.ps1'))
+
+    def test_runtime_does_not_modify_windows_state(self):
+        for path in ('scripts/rdp-host-evidence.ps1', 'scripts/rdp-directory-evidence.ps1'):
+            text = self.text(path)
+            for forbidden in ('Set-AD', 'Add-LocalGroupMember', 'Remove-LocalGroupMember',
+                              'LsaAddAccountRights', 'LsaRemoveAccountRights', 'Start-ScheduledTask',
+                              'gpupdate', 'secedit.exe', 'logoff.exe'):
+                with self.subTest(path=path, forbidden=forbidden):
+                    self.assertNotIn(forbidden, text)
+
+    def test_directory_collector_skips_implicit_ad_drive_initialization(self):
+        text = self.text('scripts/rdp-directory-evidence.ps1')
+        disable = "$Env:ADPS_LoadDefaultDrive = '0'"
+        module_import = 'Import-Module ActiveDirectory'
+        self.assertIn(disable, text)
+        self.assertLess(text.index(disable), text.index(module_import))
+
+    def test_directory_token_groups_use_explicit_base_search(self):
+        text = self.text('scripts/rdp-directory-evidence.ps1')
+        self.assertIn('Get-ADUser -Identity $name -Server $cs.Name', text)
+        self.assertIn('-SearchBase $resolved.DistinguishedName -SearchScope Base', text)
+        self.assertIn('-Server $cs.Name -Properties tokenGroups,Enabled', text)
+        self.assertIn('$matches.Count -ne 1', text)
+        self.assertIn('$userSid -ne (ConvertTo-KingdomsSidValue $resolved.SID)', text)
+        self.assertNotIn('-Identity $name -Properties tokenGroups', text)
+
+    def test_sid_conversion_is_type_aware(self):
+        text = self.text('scripts/rdp-directory-evidence.ps1')
+        self.assertIn('$Sid -is [System.Security.Principal.SecurityIdentifier]', text)
+        self.assertIn('$Sid -is [byte[]]', text)
+        self.assertIn('$Sid -is [string]', text)
+        self.assertIn('Unsupported directory SID representation', text)
+        for path in ('scripts/rdp-directory-evidence.ps1', 'scripts/rdp-host-evidence.ps1'):
+            self.assertNotIn('New-Object System.Security.Principal', self.text(path))
+
+    @unittest.skipUnless(shutil.which('pwsh'), 'PowerShell required for mocked directory queries')
+    def test_directory_collector_mocked_queries(self):
+        result = subprocess.run(
+            ['pwsh', '-NoProfile', '-NonInteractive', '-File',
+             str(ROOT / 'tests/test_rdp_directory_evidence.ps1')],
+            capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_runtime_never_claims_real_logins(self):
+        self.assertIn('DESKTOP_LOGON_MATRIX=NOT_EXECUTED', self.text('scripts/rdp-host-evidence.ps1'))
+        self.assertIn('WTSQuerySessionInformationW', self.text('scripts/rdp-host-evidence.ps1'))
+        self.assertIn('Existing session evidence may predate', self.text('scripts/validate-rdp-runtime.sh'))
+
+    def test_directory_transport_explicitly_preserves_json_text(self):
+        text = self.text('ansible/validate-kingdoms-rdp.yml')
+        self.assertIn("hostvars['dc02'].rdp_directory.output[0] | from_json | to_json", text)
+        self.assertIn('exactly the six expected identities', self.text('scripts/rdp-host-evidence.ps1'))
+
+    def test_bot_principal_is_compared_by_sid_not_name_format(self):
+        text = self.text('scripts/rdp-host-evidence.ps1')
+        self.assertIn("Resolve-KingdomsAccountSid 'NORTH\\robb.stark'", text)
+        self.assertIn('$actualBotSid -ne $expectedBotSid', text)
+        self.assertIn('CONNECT_BOT_PRINCIPAL=$taskIdentity', text)
+        self.assertNotIn('$task.Principal.UserId -inotmatch', text)
+
+    @unittest.skipUnless(shutil.which('pwsh'), 'PowerShell required for host policy fixtures')
+    def test_host_collector_fixture_matrix(self):
+        result = subprocess.run(
+            ['pwsh', '-NoProfile', '-NonInteractive', '-File',
+             str(ROOT / 'tests/test_rdp_host_evidence.ps1')],
+            capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_guacamole_does_not_merge_legacy_ws01_over_kingdoms(self):
+        text = self.text('extensions/guacamole/ansible/install.yml')
+        self.assertIn("not (item == 'ws01' and 'ws01' in lab.hosts)", text)
+        self.assertEqual(text.count('when: item.ansible_facts is defined'), 2)
+
+    def test_guacamole_uses_same_predicate_for_create_and_cleanup(self):
+        text = self.text('ansible/roles/linux/guacamole_create_connections/tasks/users_hosts.yml')
+        self.assertEqual(text.count('kingdoms_rdp_allowed('), 3)
+        self.assertIn('state: absent', text)
+        self.assertIn("'Remote Desktop Users' in hosts_data.value.get('exact_local_groups', [])", text)
+        self.assertIn('RDP-ws01-casterlyrock-', text)
+        self.assertNotIn('password: {{user_password}} |', text)
+
+    def test_guacamole_ws01_password_and_cache_handling(self):
+        text = self.text('ansible/roles/linux/guacamole_create_connections/tasks/main.yml')
+        self.assertIn('default(domains[item.value.domain].domain_password)', text)
+        self.assertIn('connection_list: []', text)
+        self.assertIn('RDP-ws01-casterlyrock-localadmin', text)
+
+    def test_runtime_shell_syntax_and_help(self):
+        script = ROOT / 'scripts/validate-rdp-runtime.sh'
+        subprocess.run(['bash', '-n', str(script)], check=True)
+        result = subprocess.run(['bash', str(script), '--help'], check=True, capture_output=True, text=True)
+        self.assertIn('No credential attempts are made', result.stdout)
+
+    def test_invalid_runtime_options_fail_closed(self):
+        script = ROOT / 'scripts/validate-rdp-runtime.sh'
+        for args in (['--host', 'dc01'], ['--bogus'], ['--source-only', '--phase01']):
+            with self.subTest(args=args):
+                result = subprocess.run(['bash', str(script), *args], capture_output=True)
+                self.assertNotEqual(result.returncode, 0)
+
+
+if __name__ == '__main__':
+    unittest.main()

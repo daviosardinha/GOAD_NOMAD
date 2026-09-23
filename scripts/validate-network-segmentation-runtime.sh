@@ -98,6 +98,7 @@ find_ansible_playbook() {
         "${ROOT}/venv/bin/ansible-playbook"
         "${deploy_root}/.venv/bin/ansible-playbook"
         "${deploy_root}/venv/bin/ansible-playbook"
+        "${HOME}/.goad/.venv/bin/ansible-playbook"
         "${HOME}/.local/bin/ansible-playbook"
     )
 
@@ -322,8 +323,8 @@ $rdpUsers = @(
     Get-LocalGroupMember -Group 'Remote Desktop Users' |
         ForEach-Object { $_.Name.ToLowerInvariant() }
 )
-if ($rdpUsers -notcontains 'north\rickon.stark') {
-    throw "Rickon missing from Remote Desktop Users: $($rdpUsers -join ',')"
+if ($rdpUsers.Count -ne 1 -or $rdpUsers -notcontains 'north\rickon.stark') {
+    throw "WS01 RDP group must contain only Rickon: $($rdpUsers -join ',')"
 }
 
 $admins = @(
@@ -483,6 +484,10 @@ for bot in connect_bot ntlm_bot responder_bot; do
     printf '%s\n' "${out}" | grep -Fq "${bot}=PASS" || fatal "${bot} validation failed"
 done
 pass "GOAD bot health"
+
+# Preserve the existing lifecycle checks and add the complete NORTH RDP policy
+# contract. A task exit code alone does not prove Robb has an RDP session.
+bash "${ROOT}/scripts/validate-rdp-runtime.sh"
 
 out="$(vagrant_ps GOAD-SRV02 <<'PS'
 $ErrorActionPreference = 'Stop'

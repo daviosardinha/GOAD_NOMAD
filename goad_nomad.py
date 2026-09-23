@@ -196,9 +196,40 @@ class GoadNomad(BaseGoad):
             return provider
         return None
 
+    def do_create(self, arg=''):
+        """Create a new instance, with an explicit non-interactive CLI path.
+
+        Interactive console installs retain the upstream confirmation prompt.
+        A command-line -t install is already an explicit operator action and
+        must not block or silently abort because stdin is not a TTY.
+        """
+        if arg != '--non-interactive':
+            return super().do_create(arg)
+
+        if self.lab_manager.get_current_instance() is not None:
+            return self.do_install_instance()
+
+        Log.success('Current Settings')
+        self.lab_manager.current_settings.show()
+        print()
+        Log.info(
+            'GOAD Kingdoms: explicit CLI install accepted; '
+            'creating the lab without an interactive confirmation prompt'
+        )
+        Log.info('Create instance folder')
+        if not self.lab_manager.create_instance():
+            Log.error('Instance creation failed')
+            return False
+
+        return self.do_install_instance()
     def do_install(self, arg=''):
-        """Run the canonical interactive install with a total elapsed timer."""
-        return self._run_with_install_timer(lambda: self.do_create(arg))
+        """Run a full install and return success only for an installed instance."""
+        result = self._run_with_install_timer(lambda: self.do_create(arg))
+        if result is False:
+            return False
+
+        instance = self.lab_manager.get_current_instance()
+        return instance is not None and instance.get_status() == READY
 
     def do_provide(self, arg=''):
         """Run the provider and return the result from *this* attempt.
@@ -416,6 +447,25 @@ class GoadNomad(BaseGoad):
         else:
             Log.error('GOAD_NOMAD runtime validation failed')
 
+    def do_destroy(self, arg=''):
+        """Destroy the loaded instance and return the provider result.
+
+        Interactive console use keeps the provider's normal confirmation.
+        Non-interactive CLI dispatch uses the provider's explicit forced
+        destroy entry point so Vagrant never tries to prompt without a TTY.
+        """
+        provider = self.lab_manager.get_current_instance_provider()
+        if provider is None:
+            Log.error('No provider loaded for the current instance')
+            return False
+
+        if arg == '--non-interactive':
+            destroy_non_interactive = getattr(provider, 'destroy_non_interactive', None)
+            if callable(destroy_non_interactive):
+                return bool(destroy_non_interactive())
+
+        return bool(provider.destroy())
+
     def do_status(self, arg=''):
         super().do_status(arg)
         provider = self._nomad_provider(require_instance=True)
@@ -472,11 +522,14 @@ def _dispatch_task(goad, args):
             if args.run_playbook is not None:
                 goad.do_provision(args.run_playbook)
             elif args.ansible_only:
-                goad.do_provision_lab()
+                if not goad.do_provision_lab():
+                    return 1
             else:
-                goad.do_install_instance()
+                if not goad.do_install_instance():
+                    return 1
         else:
-            goad.do_install()
+            if not goad.do_install('--non-interactive'):
+                return 1
     elif args.task == 'check':
         goad.do_check()
     elif args.task == 'start':
@@ -487,7 +540,8 @@ def _dispatch_task(goad, args):
         goad.do_stop()
         goad.do_start()
     elif args.task == 'destroy':
-        goad.do_destroy()
+        if not goad.do_destroy('--non-interactive'):
+            return 1
     elif args.task == 'status':
         goad.do_status()
     elif args.task == 'snapshot':

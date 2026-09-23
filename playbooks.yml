@@ -96,11 +96,16 @@ GOAD:
   - ad-acl.yml
   - servers.yml
   - security.yml
+  # Prove every Windows machine is AD-healthy before domain-context
+  # vulnerability tasks. Only members/workstations may self-repair trust/time.
+  - kingdoms-health.yml
   - vulnerabilities.yml
   # Phase 01 follows ACLs and existing IIS content/security provisioning.
   - phase01.yml
-  # Seed all 20 promoted Windows LPE techniques as the final install stage.
+  # Seed all 20 promoted Windows LPE techniques, then fail closed if AD health
+  # drifted during vulnerability/LPE provisioning.
   - ws01-lpe-install.yml
+  - kingdoms-health-final.yml
 
 default:
   - build.yml

@@ -1,0 +1,28 @@
+---
+# Kingdoms pre-vulnerability health gate.
+# Domain controllers fail closed. Members/workstations may repair only their
+# machine trust and domain-time state, then must re-prove the full contract.
+
+- import_playbook: data.yml
+  vars:
+    data_path: "../ad/{{domain_name}}/data/"
+
+- name: Kingdoms domain controller health gate
+  hosts: dc
+  gather_facts: false
+  roles:
+    - role: kingdoms_health/dc
+  vars:
+    kingdoms_health_domain: "{{ lab.hosts[dict_key].domain }}"
+
+- name: Kingdoms member and workstation health gate with bounded repair
+  hosts: server:workstation
+  gather_facts: false
+  roles:
+    - role: kingdoms_health/member
+  vars:
+    kingdoms_health_domain: "{{ lab.hosts[dict_key].domain }}"
+    kingdoms_health_domain_controller: "{{ lab.hosts[lab.domains[kingdoms_health_domain].dc].hostname }}.{{ kingdoms_health_domain }}"
+    kingdoms_health_domain_admin: "{{ admin_user }}@{{ kingdoms_health_domain }}"
+    kingdoms_health_domain_password: "{{ lab.domains[kingdoms_health_domain].domain_password }}"
+    kingdoms_health_repair: true

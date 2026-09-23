@@ -256,6 +256,40 @@ The merged `main` clean-install source gate passed after the maintenance fix.
 
 ---
 
+## Maintenance backlog — post-release technical debt
+
+These items were identified while stabilizing the current fresh-install/runtime lifecycle. They are deliberately tracked as maintenance work rather than being folded opportunistically into release acceptance.
+
+### Ansible / dependency maintenance
+
+- [ ] Migrate deprecated `ansible.windows.win_domain` to `microsoft.ad.domain`.
+- [ ] Migrate deprecated `ansible.windows.win_domain_controller` to `microsoft.ad.domain_controller`.
+- [ ] Migrate deprecated `ansible.windows.win_domain_membership` to `microsoft.ad.membership`.
+- [ ] Migrate deprecated `community.windows.win_domain_group_membership` to the supported `microsoft.ad` group-management equivalent.
+- [ ] Pin and regression-test compatible `ansible.windows`, `community.windows`, and `microsoft.ad` collection versions so future collection upgrades cannot silently break provisioning.
+- [ ] Remove the `reset_connection task does not support when conditional` warning in the trust/NAT transition flow without changing lifecycle semantics.
+
+### Idempotency / lifecycle cleanup
+
+- [ ] Review child-domain/DNS replay tasks that still report `changed` on subsequent validation runs and make genuinely repeatable configuration idempotent where possible.
+- [ ] Improve non-interactive destroy behavior. `./goad.sh -t destroy -i <instance>` currently reaches interactive `vagrant destroy`; scripted use should confirm once at the Kingdoms controller boundary and then destroy non-interactively.
+- [ ] Keep the current fail-closed AD readiness and exercise-isolation contracts intact while making the maintenance changes above.
+
+### Fresh-install performance
+
+- [ ] Reduce VMware Tools / VIX guest-IP telemetry recovery overhead when authenticated WinRM and guest-side VMware Tools health are already authoritative.
+- [ ] Profile and shorten the slowest fresh-build recovery cycles, especially WS01 and member-server first boot, without weakening readiness checks.
+- [ ] Cache/pin PowerShell Gallery dependencies such as ActiveDirectoryDSC to reduce download latency and transient external failures.
+- [ ] Evaluate safe dependency-aware parallelism for independent topology branches instead of serializing every machine.
+- [ ] Add a faster development path that can reuse cached artifacts/base state, while keeping the true zero-state build as the release acceptance path.
+- [ ] Consider explicit install/validation modes such as fast, full, and release after the current lifecycle is frozen.
+
+### Low-priority naming cleanup
+
+- [ ] Review remaining internal `GOAD_NOMAD` compatibility identifiers after lifecycle stabilization. Do not rename state files, scripts, or compatibility contracts purely cosmetically if doing so risks regressions.
+
+---
+
 # Student learning path
 
 GOAD Kingdoms preserves the style of Mayfly's GOAD walkthrough while adding learning stages that the original flat/server-focused environment did not provide.
