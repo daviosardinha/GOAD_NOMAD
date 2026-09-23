@@ -27,7 +27,7 @@ class Phase03RBCDSourceTests(unittest.TestCase):
             task_names,
             [
                 "Audit, apply or reset the exact Rickon-to-CASTELBLACK attribute ACE",
-                "Display read-only fixture evidence",
+                "Display read-only audit or safe dry-run preview",
             ],
         )
         win = play[0]["tasks"][0]["ansible.windows.win_powershell"]
@@ -40,6 +40,8 @@ class Phase03RBCDSourceTests(unittest.TestCase):
         self.assertIn("lab.hosts.srv02", conditions)
         self.assertNotIn("dc01", conditions)
         self.assertNotIn("dc03", conditions)
+        self.assertIn("or ansible_check_mode", play[0]["tasks"][1]["when"])
+        self.assertIn("not ansible_check_mode", play[0]["tasks"][0]["no_log"])
 
     def test_attribute_acl_scope_and_guarded_reset(self):
         source = SCRIPT.read_text()
@@ -59,6 +61,9 @@ class Phase03RBCDSourceTests(unittest.TestCase):
         self.assertIn("throw 'RBCD contains unexpected trustees", source)
         self.assertIn("Remove-ADComputer -Identity $training[0].DistinguishedName", source)
         self.assertNotIn("Set-ADGroupMember", source)
+        self.assertIn("State = 'would-add-exact-attribute-ace'", source)
+        self.assertIn("State = 'would-restore-original-attribute-and-dacl'", source)
+        self.assertEqual(source.count("$Ansible.Changed = $true"), 5)
 
     def test_operator_requires_instance_and_clean_upstream(self):
         source = ENTRY.read_text()
