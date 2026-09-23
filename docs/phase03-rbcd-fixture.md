@@ -42,8 +42,14 @@ directory is intended to be SYSTEM/Administrators-only. The ledger records
 CASTELBLACK's object GUID, Rickon's SID and the original and installed DACL
 SDDL. In this first version, the *original RBCD attribute must be absent*;
 the fixture explicitly refuses to overwrite an existing RBCD value. The
-initial DACL must match exactly when resetting; unrelated DACL changes
-cause an abort for manual review rather than a destructive restore.
+installed DACL must match the protected post-apply ledger before any reset.
+For restoration, the reset removes exactly the fixture ACE from an in-memory
+copy of the current descriptor, then checks every original raw ACE (including
+object-specific ACE flags), the DACL control flags, canonical status and the
+object owner against the protected baseline. It checks them again after
+Set-Acl. Windows can normalize ACE order and SDDL formatting; byte-for-byte
+SDDL equality is not required, but permission and control-flag equality are.
+Any extra/missing raw ACE or flag aborts before an ACL write.
 
 The reserved lesson account name K03RBCD$ must be **absent** before APPLY.
 The optional training account may be created through the relayed Rickon
@@ -114,9 +120,14 @@ If RESET fails after clearing the RBCD attribute, the controlled lab may be in
 a **partially reset** state (no RBCD, but one fixture ACE, owned K03RBCD$
 and the protected preimage remain). Do not delete the account, remove the ACE
 or delete the preimage by hand. Use the updated AUDIT diagnostic
-DaclRemovalPreviewStatus/DaclRemovalPreviewMatchesInitial, which clones the
-current security descriptor in memory and rehearses removing the fixture ACE
-without making any AD changes. Review those results before retrying RESET.
+DaclRemovalPreviewStatus/DaclRemovalPreviewMatchesInitial and the raw-ACE
+comparison in DaclRemovalPreviewRawAceDelta. It clones the current descriptor
+in memory and rehearses removing the fixture ACE without any AD changes.
+If the raw-ACE comparison has zero missing/extra entries, matching DACL control
+flags and no remaining fixture ACE, the audit reports
+EquivalentRawAcesAndDaclFlags even when the SDDL text differs. Otherwise,
+stop for manual review; do not clear the ledger. Run RESET --check first and
+require Preflight: OriginalRawAcesAndDaclFlagsVerified before live cleanup.
 
 ## Reset and regression gate
 
@@ -127,11 +138,13 @@ without making any AD changes. Review those results before retrying RESET.
     bash scripts/phase03-rbcd.sh audit --instance cebee3-goad-vmware
 
 RESET checks object identity, ACL drift, the RBCD trustee and the
-training-computer creator before any destructive change. It restores the
-original empty RBCD state, removes only the exact fixture ACE and,
-only when its ownership is proven, deletes K03RBCD$. The second RESET
-must change nothing. Failure or ambiguity requires manual investigation
-while preserving the preimage file.
+training-computer creator before any destructive change. Its new preflight
+requires exact raw-ACE multiset and DACL flag equivalence before it changes
+anything. It restores the original empty RBCD state, removes only the exact
+fixture ACE and confirms ACL equivalence after Set-Acl. Only when its ownership
+is proven does it delete K03RBCD$. The second RESET must change nothing.
+Failure or ambiguity requires manual investigation while preserving the
+preimage file.
 
 Verify the preexisting Phase 00–02 gates, WINTERFELL's scheduled bots,
 Rickon's WS01 RDP foothold, CASTELBLACK MSSQL access, segmentation,
