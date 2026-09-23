@@ -80,14 +80,44 @@ function Get-AceSignatures($descriptor) {
         })
 }
 
-function Get-AceMultisetDelta($reference, $candidate) {
+# Use each ACE's actual binary representation to guard writes; the human-readable
+# rule comparison alone might miss flags in object-specific AD ACEs.
+function Get-RawAceSignatures($descriptor) {
+    $raw = [System.Security.AccessControl.RawSecurityDescriptor]::new(
+        [byte[]]$descriptor.GetSecurityDescriptorBinaryForm(), 0
+    )
+    if ($null -eq $raw.DiscretionaryAcl) {
+        throw 'A DACL is missing; refusing to compare or restore the fixture.'
+    }
+    foreach ($entry in $raw.DiscretionaryAcl) {
+        $bytes = [byte[]]::new($entry.BinaryLength)
+        $entry.GetBinaryForm($bytes, 0)
+        [Convert]::ToBase64String($bytes)
+    }
+}
+
+function Get-DaclControlMask($descriptor) {
+    $raw = [System.Security.AccessControl.RawSecurityDescriptor]::new(
+        [byte[]]$descriptor.GetSecurityDescriptorBinaryForm(), 0
+    )
+    # PRESENT, DEFAULTED, UNTRUSTED, AUTO_INHERIT_REQ, AUTO_INHERITED, PROTECTED.
+    return ([int]$raw.ControlFlags -band 0x154C)
+}
+
+function Get-AceMultisetDelta($reference, $candidate, [switch]$Raw) {
+    $referenceSignatures = @(Get-AceSignatures $reference)
+    $candidateSignatures = @(Get-AceSignatures $candidate)
+    if ($Raw) {
+        $referenceSignatures = @(Get-RawAceSignatures $reference)
+        $candidateSignatures = @(Get-RawAceSignatures $candidate)
+    }
     $refCounts = @{}
     $candidateCounts = @{}
-    foreach ($signature in @(Get-AceSignatures $reference)) {
+    foreach ($signature in $referenceSignatures) {
         if (-not $refCounts.ContainsKey($signature)) { $refCounts[$signature] = 0 }
         $refCounts[$signature]++
     }
-    foreach ($signature in @(Get-AceSignatures $candidate)) {
+    foreach ($signature in $candidateSignatures) {
         if (-not $candidateCounts.ContainsKey($signature)) { $candidateCounts[$signature] = 0 }
         $candidateCounts[$signature]++
     }
@@ -110,8 +140,8 @@ function Get-AceMultisetDelta($reference, $candidate) {
         }
     }
     return @{
-        OriginalAceCount = (@(Get-AceSignatures $reference)).Count
-        CandidateAceCount = (@(Get-AceSignatures $candidate)).Count
+        OriginalAceCount = $referenceSignatures.Count
+        CandidateAceCount = $candidateSignatures.Count
         MissingAceCount = $missing
         ExtraAceCount = $extra
         DeltaSample = $sample
@@ -119,7 +149,26 @@ function Get-AceMultisetDelta($reference, $candidate) {
         CandidateDaclProtected = $candidate.AreAccessRulesProtected
         InitialDaclCanonical = $reference.AreAccessRulesCanonical
         CandidateDaclCanonical = $candidate.AreAccessRulesCanonical
+        InitialDaclControlMask = Get-DaclControlMask $reference
+        CandidateDaclControlMask = Get-DaclControlMask $candidate
     }
+}
+
+# Fail closed if any original ACE differs, if a fixture ACE remains, or if DACL
+# inheritance/control flags changed. Equality is independent of ACE ordering.
+function Assert-OriginalDaclEquivalent($reference, $candidate) {
+    if (@(Get-FixtureRules $candidate).Count -ne 0) {
+        throw 'The proposed restored DACL still contains a fixture ACE.'
+    }
+    $delta = Get-AceMultisetDelta $reference $candidate -Raw
+    if ($delta.MissingAceCount -ne 0 -or
+        $delta.ExtraAceCount -ne 0 -or
+        $delta.InitialDaclControlMask -ne $delta.CandidateDaclControlMask -or
+        $delta.InitialDaclCanonical -ne $delta.CandidateDaclCanonical -or
+        $delta.InitialDaclProtected -ne $delta.CandidateDaclProtected) {
+        throw 'Raw ACEs or DACL control flags differ from the protected preimage; refusing reset.'
+    }
+    return $delta
 }
 
 function Save-FixtureState($state) {
@@ -220,6 +269,7 @@ if ($Mode -eq 'audit') {
     $removePreviewMatchesInitial = $false
     $removePreviewRemainingFixtureAces = -1
     $removePreviewAceDelta = @{}
+    $removePreviewRawAceDelta = @{}
     if ($null -ne $state -and $matching.Count -eq 1) {
         try {
             $copy = [System.DirectoryServices.ActiveDirectorySecurity]::new()
@@ -233,6 +283,7 @@ if ($Mode -eq 'audit') {
                 $original = [System.DirectoryServices.ActiveDirectorySecurity]::new()
                 $original.SetSecurityDescriptorSddlForm($state.InitialDacl, $aclSection)
                 $removePreviewAceDelta = Get-AceMultisetDelta $original $copy
+                $removePreviewRawAceDelta = Get-AceMultisetDelta $original $copy -Raw
                 $removePreviewMatchesInitial = (
                     $copy.GetSecurityDescriptorSddlForm($aclSection) -ceq $state.InitialDacl
                 )
@@ -276,6 +327,7 @@ if ($Mode -eq 'audit') {
         DaclRemovalPreviewMatchesInitial = $removePreviewMatchesInitial
         DaclRemovalPreviewRemainingFixtureAces = $removePreviewRemainingFixtureAces
         DaclRemovalPreviewAceDelta = $removePreviewAceDelta
+        DaclRemovalPreviewRawAceDelta = $removePreviewRawAceDelta
     }
     return
 }
@@ -368,9 +420,31 @@ if ($null -ne $rbcd) {
         throw 'RBCD contains unexpected trustees. Preserve it for manual review.'
     }
 }
+# Rehearse the complete ACL restoration and prove it matches the ledger
+# *before* touching either the RBCD attribute or the object ACL.
+$original = [System.DirectoryServices.ActiveDirectorySecurity]::new()
+$original.SetSecurityDescriptorSddlForm($state.InitialDacl, $aclSection)
+$restored = [System.DirectoryServices.ActiveDirectorySecurity]::new()
+$restored.SetSecurityDescriptorBinaryForm($acl.GetSecurityDescriptorBinaryForm())
+if ($matching.Count -eq 1) {
+    $restoredMatching = @(Get-FixtureRules $restored)
+    if ($restoredMatching.Count -ne 1) {
+        throw 'Cloned ACL does not contain the one expected fixture ACE.'
+    }
+    $restored.RemoveAccessRuleSpecific($restoredMatching[0])
+}
+$preflight = Assert-OriginalDaclEquivalent $original $restored
+
 if ($Ansible.CheckMode) {
     $Ansible.Changed = $true
-    $Ansible.Result = @{ Mode = 'reset'; State = 'would-restore-original-attribute-and-dacl'; Target = 'CASTELBLACK'; WouldChange = $true }
+    $Ansible.Result = @{
+        Mode = 'reset'
+        State = 'would-restore-original-attribute-and-dacl'
+        Target = 'CASTELBLACK'
+        WouldChange = $true
+        Preflight = 'OriginalRawAcesAndDaclFlagsVerified'
+        OriginalAceCount = $preflight.OriginalAceCount
+    }
     return
 }
 
@@ -380,13 +454,13 @@ if ($null -ne $rbcd) {
 }
 
 if ($matching.Count -eq 1) {
-    $acl.RemoveAccessRuleSpecific($rule)
-    if ($acl.GetSecurityDescriptorSddlForm($aclSection) -cne $state.InitialDacl) {
-        throw 'Removing the fixture ACE did not recreate the original DACL; refusing Set-Acl.'
-    }
-    Set-Acl -Path $adPath -AclObject $acl -ErrorAction Stop
-    if ((Get-Acl -Path $adPath).GetSecurityDescriptorSddlForm($aclSection) -cne $state.InitialDacl) {
-        throw 'The original DACL was not restored; preserve the preimage for review.'
+    # Remove only the observed exact ACE. Do not replace unrelated ACL entries
+    # or demand identical Windows-generated SDDL ordering.
+    Set-Acl -Path $adPath -AclObject $restored -ErrorAction Stop
+    $observed = Get-Acl -Path $adPath
+    $postCheck = Assert-OriginalDaclEquivalent $original $observed
+    if ($observed.Owner -ine $state.InitialOwner) {
+        throw 'CASTELBLACK owner changed during ACL restoration; preserve the preimage.'
     }
     $Ansible.Changed = $true
 }
