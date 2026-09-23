@@ -80,7 +80,8 @@ function Read-FixtureState {
         $state.RickonSid -ne $rickon.SID.Value -or
         $state.TargetDn -ine $targetDn -or
         $state.TrainingComputer -ne $exerciseComputerSam -or
-        -not $state.InitialDacl) {
+        -not $state.InitialDacl -or
+        -not $state.InitialOwner) {
         throw 'Fixture preimage does not match this domain, object or grantee; refusing.'
     }
     return $state
@@ -93,7 +94,7 @@ function Assert-ExpectedTrainingComputer {
     $item = $training[0]
     if ($item.DistinguishedName -ine $exerciseComputerDn -or
         $item.SamAccountName -ine $exerciseComputerSam -or
-        @($item.MemberOf).Count -ne 0) {
+        @($item.MemberOf | Where-Object { $null -ne $_ }).Count -ne 0) {
         throw 'Exercise computer was renamed, moved or given group membership. Review manually.'
     }
     $createdBy = $item.'mS-DS-CreatorSID'
@@ -113,6 +114,9 @@ function Assert-ExpectedTrainingComputer {
 $matching = @(Get-FixtureRules $acl)
 $dacl = $acl.GetSecurityDescriptorSddlForm($aclSection)
 $state = Read-FixtureState
+if ($null -ne $state -and $acl.Owner -ine $state.InitialOwner) {
+    throw 'CASTELBLACK object owner changed since the fixture preimage; review before continuing.'
+}
 
 if ($Mode -eq 'audit') {
     $Ansible.Result = @{
@@ -150,6 +154,7 @@ if ($Mode -eq 'apply') {
             RickonSid = $rickon.SID.Value
             TrainingComputer = $exerciseComputerSam
             InitialDacl = $dacl
+            InitialOwner = $acl.Owner
             AppliedDacl = ''
             CreatedUtc = [datetime]::UtcNow.ToString('o')
         }
