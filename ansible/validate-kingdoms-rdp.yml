@@ -39,6 +39,7 @@
           # Preserve a JSON string through Ansible's native-type conversion.
           DirectoryJson: "{{ hostvars['dc02'].rdp_directory.output[0] | from_json | to_json }}"
           RequireSessions: "{{ rdp_require_sessions | default(false) | bool }}"
+          BotMode: "{{ rdp_bot_mode | default('legacy') }}"
       changed_when: false
       register: rdp_evidence
 
