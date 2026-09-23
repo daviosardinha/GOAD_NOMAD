@@ -31,10 +31,15 @@ fi
 
 if command -v xfreerdp3 >/dev/null 2>&1; then
     help_text="$(xfreerdp3 /help 2>&1 || true)"
-    if [[ "$help_text" == *"/from-stdin"* ]]; then
-        ok "FreeRDP supports credential input over stdin"
+    if [[ "$help_text" == *"/args-from"* ]]; then
+        ok "FreeRDP supports argument input over stdin/file descriptors"
     else
-        bad "FreeRDP /from-stdin support not confirmed; no password will be passed on command line"
+        bad "FreeRDP /args-from support not confirmed; no password will be passed on the process command line"
+    fi
+    if [[ "$help_text" == *"fingerprint"* ]]; then
+        ok "FreeRDP supports explicit certificate fingerprint pinning"
+    else
+        bad "FreeRDP certificate fingerprint pinning support not confirmed"
     fi
 fi
 
