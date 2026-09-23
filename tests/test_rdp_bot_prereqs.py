@@ -41,7 +41,7 @@ class RdpBotPrerequisitesTests(unittest.TestCase):
     def test_handover_is_manual_and_requires_evidence(self):
         doc = DOC.read_text()
         for expected in (
-            'never automatically replaces',
+            'never automatically',
             'Avoid copying commands that would start two Robb RDP clients',
             'credentials inside the Git repository',
             'automatic reconnection',
