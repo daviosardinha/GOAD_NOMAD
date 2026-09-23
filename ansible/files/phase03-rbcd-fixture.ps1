@@ -87,6 +87,41 @@ function Read-FixtureState {
     return $state
 }
 
+# The AD PowerShell module may materialize this NT-Sec-Desc attribute as
+# ActiveDirectorySecurity rather than the byte[] returned by LDAP libraries.
+# Normalize it without trusting or rewriting the descriptor.
+function Convert-RbcdToBytes($value) {
+    if ($null -eq $value) {
+        return $null
+    }
+    if ($value -is [byte[]]) {
+        return ,([byte[]]$value)
+    }
+    if ($value -is [System.DirectoryServices.ActiveDirectorySecurity]) {
+        return ,([byte[]]$value.GetSecurityDescriptorBinaryForm())
+    }
+    throw ("Unsupported RBCD attribute CLR type: {0}; refusing reset." -f $value.GetType().FullName)
+}
+
+function Get-RbcdTrusteeSids($value) {
+    $rawBytes = Convert-RbcdToBytes $value
+    if ($null -eq $rawBytes -or $rawBytes.Length -eq 0) {
+        throw 'RBCD attribute exists but has no parseable security descriptor.'
+    }
+    $descriptor = [System.Security.AccessControl.RawSecurityDescriptor]::new([byte[]]$rawBytes, 0)
+    if ($null -eq $descriptor.DiscretionaryAcl) {
+        throw 'RBCD descriptor does not contain a DACL.'
+    }
+    return @($descriptor.DiscretionaryAcl | ForEach-Object {
+        # Only an explicit allow ACE for our exact trustee can be cleaned up.
+        if ($_.AceType -ne [System.Security.AccessControl.AceType]::AccessAllowed -or
+            $_.AceFlags -ne [System.Security.AccessControl.AceFlags]::None) {
+            throw 'RBCD contains an unexpected ACE type or ACE flags.'
+        }
+        $_.SecurityIdentifier.Value
+    })
+}
+
 function Assert-ExpectedTrainingComputer {
     if ($training.Count -eq 0) {
         return
@@ -127,6 +162,8 @@ if ($Mode -eq 'audit') {
         RickonSid = $rickon.SID.Value
         FixtureAceCount = $matching.Count
         RbcdPresent = ($null -ne $rbcd)
+        RbcdValueType = $(if ($null -ne $rbcd) { $rbcd.GetType().FullName } else { 'Absent' })
+        TrainingAccountCount = $training.Count
         TrainingAccountPresent = ($training.Count -ne 0)
         ManagedFixture = ($null -ne $state)
         DaclMatchesApplied = ($null -ne $state -and $dacl -ceq $state.AppliedDacl)
@@ -213,13 +250,12 @@ if (($matching.Count -eq 1 -and $dacl -cne $state.AppliedDacl) -or
 Assert-ExpectedTrainingComputer
 
 if ($null -ne $rbcd) {
-    if ($training.Count -ne 1 -or $rbcd -isnot [byte[]]) {
-        throw 'The RBCD attribute has an unexpected value or no owned training computer.'
+    if ($training.Count -ne 1) {
+        throw ("Expected one owned exercise computer; observed {0}. Refusing reset." -f $training.Count)
     }
-    $descriptor = [System.Security.AccessControl.RawSecurityDescriptor]::new([byte[]]$rbcd, 0)
-    $entries = @($descriptor.DiscretionaryAcl)
-    if ($entries.Count -ne 1 -or
-        $entries[0].SecurityIdentifier.Value -ne $training[0].SID.Value) {
+    $rbcdSids = @(Get-RbcdTrusteeSids $rbcd)
+    if ($rbcdSids.Count -ne 1 -or
+        $rbcdSids[0] -ne $training[0].SID.Value) {
         throw 'RBCD contains unexpected trustees. Preserve it for manual review.'
     }
 }
