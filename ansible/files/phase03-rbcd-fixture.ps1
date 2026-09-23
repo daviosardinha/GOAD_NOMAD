@@ -154,6 +154,16 @@ if ($null -ne $state -and $acl.Owner -ine $state.InitialOwner) {
 }
 
 if ($Mode -eq 'audit') {
+    $rbcdTrustees = @()
+    $rbcdParseStatus = 'Absent'
+    if ($null -ne $rbcd) {
+        try {
+            $rbcdTrustees = @(Get-RbcdTrusteeSids $rbcd)
+            $rbcdParseStatus = 'Parsed'
+        } catch {
+            $rbcdParseStatus = 'Rejected: ' + $_.Exception.Message
+        }
+    }
     $Ansible.Result = @{
         Mode = 'audit'
         Host = $hostIdentity.Name
@@ -163,6 +173,8 @@ if ($Mode -eq 'audit') {
         FixtureAceCount = $matching.Count
         RbcdPresent = ($null -ne $rbcd)
         RbcdValueType = $(if ($null -ne $rbcd) { $rbcd.GetType().FullName } else { 'Absent' })
+        RbcdParseStatus = $rbcdParseStatus
+        RbcdTrusteeSids = $rbcdTrustees
         TrainingAccountCount = $training.Count
         TrainingAccountPresent = ($training.Count -ne 0)
         ManagedFixture = ($null -ne $state)
