@@ -110,6 +110,14 @@ one exact ACE and no RBCD attribute before exercise execution.
 If any intermediate operation fails, do not rerun the entire chain
 blindly; audit the current object and ledger first.
 
+If RESET fails after clearing the RBCD attribute, the controlled lab may be in
+a **partially reset** state (no RBCD, but one fixture ACE, owned K03RBCD$
+and the protected preimage remain). Do not delete the account, remove the ACE
+or delete the preimage by hand. Use the updated AUDIT diagnostic
+DaclRemovalPreviewStatus/DaclRemovalPreviewMatchesInitial, which clones the
+current security descriptor in memory and rehearses removing the fixture ACE
+without making any AD changes. Review those results before retrying RESET.
+
 ## Reset and regression gate
 
     bash scripts/phase03-rbcd.sh audit --instance cebee3-goad-vmware
