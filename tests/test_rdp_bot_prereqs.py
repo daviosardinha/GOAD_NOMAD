@@ -22,6 +22,8 @@ class RdpBotPrerequisitesTests(unittest.TestCase):
             'xfreerdp3',
             'xvfb-run',
             'Xvfb',
+            'xauth',
+            'stat',
             '/from-stdin',
         ):
             with self.subTest(expected=expected):
