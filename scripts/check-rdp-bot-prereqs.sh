@@ -10,7 +10,7 @@ failures=0
 ok() { printf '[PASS] %s\n' "$*"; }
 bad() { printf '[FAIL] %s\n' "$*" >&2; failures=$((failures + 1)); }
 
-for executable in xfreerdp3 xvfb-run Xvfb ip; do
+for executable in xfreerdp3 xvfb-run Xvfb xauth ip stat; do
     if command -v "$executable" >/dev/null 2>&1; then
         ok "$executable: $(command -v "$executable")"
     else
