@@ -1,0 +1,55 @@
+---
+# Targeted NORTH-only RBCD fixture. Do not import into main.yml before runtime acceptance.
+# Usage: ansible-playbook ansible/phase03-rbcd.yml -e phase03_rbcd_action=audit|apply|reset
+- name: Kingdoms Phase 03 - scoped CASTELBLACK RBCD fixture
+  hosts: dc02
+  gather_facts: false
+  any_errors_fatal: true
+  vars_files:
+    - ../ad/GOAD/data/config.json
+  vars:
+    phase03_rbcd_action: audit
+  pre_tasks:
+    - name: Fail closed outside the expected NORTH management inventory
+      ansible.builtin.assert:
+        that:
+          - domain_name == 'GOAD'
+          - inventory_hostname == 'dc02'
+          - ansible_host == '10.4.10.11'
+          - lab.hosts.dc02.hostname | lower == 'winterfell'
+          - lab.hosts.srv02.hostname | lower == 'castelblack'
+          - lab.hosts.srv02.domain | lower == 'north.sevenkingdoms.local'
+          - phase03_rbcd_action in ['audit', 'apply', 'reset']
+        fail_msg: The RBCD fixture is reserved for WINTERFELL and CASTELBLACK in GOAD Kingdoms.
+
+    - name: Check live controller identity and domain before any AD operation
+      ansible.windows.win_powershell:
+        script: |
+          $Ansible.Changed = $false
+          $system = Get-CimInstance Win32_ComputerSystem
+          if ($system.Name -ine 'WINTERFELL' -or
+              $system.Domain -ine 'north.sevenkingdoms.local' -or
+              $system.DomainRole -lt 4) {
+              throw 'Expected WINTERFELL, the NORTH domain controller; refusing Phase 03 fixture.'
+          }
+      changed_when: false
+
+  tasks:
+    - name: Audit, apply or reset the exact Rickon-to-CASTELBLACK attribute ACE
+      ansible.windows.win_powershell:
+        script: "{{ lookup('file', playbook_dir + '/files/phase03-rbcd-fixture.ps1') }}"
+        parameters:
+          Mode: "{{ phase03_rbcd_action }}"
+      register: phase03_rbcd_fixture
+      become: true
+      become_method: runas
+      become_user: "{{ admin_user }}@north.sevenkingdoms.local"
+      vars:
+        ansible_become_password: "{{ lab.domains['north.sevenkingdoms.local'].domain_password }}"
+      # State and ACL backups remain on the domain controller; no credentials printed.
+      no_log: "{{ phase03_rbcd_action != 'audit' and not ansible_check_mode }}"
+
+    - name: Display read-only audit or safe dry-run preview
+      ansible.builtin.debug:
+        var: phase03_rbcd_fixture.result
+      when: phase03_rbcd_action == 'audit' or ansible_check_mode
