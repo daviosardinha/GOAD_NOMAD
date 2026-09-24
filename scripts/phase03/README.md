@@ -12,6 +12,14 @@ Current checkpoint:
   state-changing fixture has been added yet.
 - `diagnostics/` preserves sanitized versions of the temporary headless-RDP
   and WPAD/mitm6 investigation helpers.
+- `rickon-headless.sh`, `check-rickon-prereqs.sh`, and
+  `install-rickon-headless.sh` are the permanent fail-closed Rickon→WS01
+  victim-session candidate. The service definition is
+  `ops/systemd/kingdoms-phase03-rickon.service`.
+- The production candidate requires a local owner-only Rickon password file
+  and a separately verified owner-only WS01 RDP SHA-256 fingerprint file.
+  Neither is stored in Git. The installer copies the user unit but does not
+  enable or start it.
 
 Do not commit passwords, NetNTLMv2 captures, NT hashes, Kerberos keys or raw
 secret-bearing evidence. Runtime evidence belongs in the operator evidence
