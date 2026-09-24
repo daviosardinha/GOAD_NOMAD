@@ -43,7 +43,9 @@ Historical Drop The MIC/NTLMv1 material remains optional/conditional. NORTH has 
 | PetitPotam/MS-EFSR | Callback proven on CASTELBLACK | PROVEN ON CASTELBLACK |
 | Interactive SMB relay | Robb and Eddard relayed to CASTELBLACK; retained local SMB shells created; Robb could enumerate shares but C$ access was denied, while Eddard opened and listed C$ | PROVEN |
 | SOCKS relay | Robb and Eddard sessions retained behind SOCKS5 on 127.0.0.1:1080 and reused with credential-less SMB clients; Robb C$ denied, Eddard C$ listed | PROVEN |
-| LSASS/DPAPI/shares/execution consequences | Not yet runtime-proven as a separated consequence set | GAP |
+| SMB share authorization consequence | Robb could enumerate shares but C$ was denied; Eddard opened and listed C$ | PROVEN |
+| SMB remote execution consequence | Eddard relay executed `whoami & hostname` as `NT AUTHORITY\SYSTEM` on CASTELBLACK; Robb relay authenticated but execution failed with DCERPC access denied | PROVEN |
+| LSASS/DPAPI credential-material consequences | Not yet runtime-proven as separated consequence sets | GAP |
 | Shadow Credentials | Not yet configured/proven | GAP |
 | ADIDNS | Generic capability exists, no Phase 03 fixture yet | GAP |
 | WebDAV/.lnk/.url | No dedicated WS01 Phase 03 victim flow yet | GAP |
@@ -60,8 +62,8 @@ Historical Drop The MIC/NTLMv1 material remains optional/conditional. NORTH has 
 
 ## Next acceptance gate
 
-1. Keep the neutral runtime established after SOCKS cleanup.
-2. Build and prove the post-relay consequence set against the already-proven CASTELBLACK SMB relay surface.
-3. Separate authorization/read-only share access from administrative remote-execution and credential-material consequences.
-4. Preserve Robb/Eddard as the explicit limited-vs-administrative comparison.
+1. Keep the neutral runtime established after SMB-execution cleanup.
+2. Prove the LSASS credential-material consequence against the already-proven CASTELBLACK administrative relay surface.
+3. Keep LSASS and DPAPI as separate acceptance gates.
+4. Preserve Robb/Eddard as the explicit limited-vs-administrative comparison where the technique supports it.
 5. Stop and validate each consequence independently before moving to Shadow Credentials.
