@@ -4,7 +4,7 @@ set -uo pipefail
 
 PCAP="${PCAP:-/tmp/kingdoms-wpad.pcap}"
 WS01_V4="${WS01_V4:-10.4.10.31}"
-WS01_V6="${WS01_V6:-fe80::10:4:10:31}"
+WS01_MAC="${WS01_MAC:-00:50:56:20:10:31}"
 ATTACKER_V6="${ATTACKER_V6:-fe80::250:56ff:fec0:a}"
 
 PASS=0
@@ -39,13 +39,16 @@ reply="$(awk -F'|' -v atk="$ATTACKER_V6" '$3==atk && $5=="7"{print $2; exit}' <<
 [[ -n "$reply" ]] && pass 'Attacker DHCPv6 Reply observed' || fail 'Attacker DHCPv6 Reply missing'
 
 if [[ -n "$solicit" && -n "$advertise" && -n "$request" && -n "$reply" ]]; then
-  python3 - "$solicit" "$advertise" "$request" "$reply" <<'PY'
+  if python3 - "$solicit" "$advertise" "$request" "$reply" <<'PY'
 import sys
 s,a,r,q=map(float,sys.argv[1:])
-if not (s <= a <= r <= q):
-    raise SystemExit(1)
+raise SystemExit(0 if s <= a <= r <= q else 1)
 PY
-  [[ $? -eq 0 ]] && pass 'DHCPv6 Solicit -> Advertise -> Request -> Reply ordering' || fail 'DHCPv6 ordering is invalid'
+  then
+    pass 'DHCPv6 Solicit -> Advertise -> Request -> Reply ordering'
+  else
+    fail 'DHCPv6 ordering is invalid'
+  fi
 fi
 
 echo
@@ -67,13 +70,16 @@ http_time="$(awk -F'|' 'NF>=6{print $2; exit}' <<<"$http")"
 [[ -n "$http_time" ]] && pass 'WS01 automatically requested GET /wpad.dat' || fail 'Automatic GET /wpad.dat from WS01 missing'
 
 if [[ -n "$reply" && -n "$dns_time" && -n "$http_time" ]]; then
-  python3 - "$reply" "$dns_time" "$http_time" <<'PY'
+  if python3 - "$reply" "$dns_time" "$http_time" <<'PY'
 import sys
 reply,dns,http=map(float,sys.argv[1:])
-if not (reply <= dns <= http):
-    raise SystemExit(1)
+raise SystemExit(0 if reply <= dns <= http else 1)
 PY
-  [[ $? -eq 0 ]] && pass 'DHCPv6 Reply -> WPAD DNS -> HTTP GET ordering' || fail 'WPAD sequence ordering is invalid'
+  then
+    pass 'DHCPv6 Reply -> WPAD DNS -> HTTP GET ordering'
+  else
+    fail 'WPAD sequence ordering is invalid'
+  fi
 fi
 
 echo
