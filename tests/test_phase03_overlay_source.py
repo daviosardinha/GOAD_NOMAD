@@ -259,6 +259,14 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         self.assertNotIn('rm -f -- "$BASELINE"', script)
         self.assertNotIn("kdestroy", script)
 
+    def test_phase03_status_docs_are_not_duplicated_or_corrupted(self):
+        scope = (ROOT / "docs" / "kingdoms-phase03-north-scope.md").read_text()
+        runtime = (ROOT / "docs" / "kingdoms-phase03-runtime-checkpoint.md").read_text()
+        self.assertEqual(scope.count("# Kingdoms — Phase 03 NORTH Scope and GOAD Part 4 Parity"), 1)
+        self.assertEqual(runtime.count("# Kingdoms — Phase 03 Runtime Checkpoint"), 1)
+        self.assertIn("| RBCD rollback |", scope)
+        self.assertIn("RBCD is therefore closed end-to-end", runtime)
+
     def test_checkpoint_does_not_modify_lab_yet(self):
         text = PLAYBOOK.read_text().lower()
         self.assertNotIn("win_regedit", text)
