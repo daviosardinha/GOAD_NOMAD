@@ -13,13 +13,14 @@ CERT_PLAYBOOK = ROOT / "ansible" / "phase03-read-ws01-rdp-cert.yml"
 CERT_PROBE = ROOT / "scripts" / "phase03" / "probe-ws01-rdp-cert.py"
 SESSION_VALIDATE = ROOT / "scripts" / "phase03" / "validate-rickon-session.sh"
 SESSION_PLAYBOOK = ROOT / "ansible" / "phase03-validate-rickon-session.yml"
+RESTART_TEST = ROOT / "scripts" / "phase03" / "test-rickon-restart.sh"
 
 
 class Phase03RickonHeadlessTests(unittest.TestCase):
     def test_required_files_exist_and_parse(self):
-        for path in (RUNNER, CHECK, INSTALL, UNIT, CERT_READ, CERT_PLAYBOOK, CERT_PROBE, SESSION_VALIDATE, SESSION_PLAYBOOK):
+        for path in (RUNNER, CHECK, INSTALL, UNIT, CERT_READ, CERT_PLAYBOOK, CERT_PROBE, SESSION_VALIDATE, SESSION_PLAYBOOK, RESTART_TEST):
             self.assertTrue(path.is_file(), path)
-        for path in (RUNNER, CHECK, INSTALL, CERT_READ, SESSION_VALIDATE):
+        for path in (RUNNER, CHECK, INSTALL, CERT_READ, SESSION_VALIDATE, RESTART_TEST):
             result = subprocess.run(
                 ["bash", "-n", str(path)],
                 capture_output=True,
@@ -98,6 +99,13 @@ class Phase03RickonHeadlessTests(unittest.TestCase):
         self.assertIn("changed_when: false", playbook)
         self.assertIn("$($LASTEXITCODE):", playbook)
         self.assertNotIn("$LASTEXITCODE:", playbook)
+
+    def test_restart_validator_proves_cleanup_and_reconnect(self):
+        text = RESTART_TEST.read_text()
+        self.assertIn("systemctl --user restart", text)
+        self.assertIn("old Xvfb display survived restart", text)
+        self.assertIn("old FreeRDP PID still exists", text)
+        self.assertIn("validate-rickon-session.sh", text)
 
     def test_no_known_lab_passwords(self):
         corpus = "\n".join(p.read_text(errors="replace") for p in (RUNNER, CHECK, INSTALL, UNIT)).lower()
