@@ -25,10 +25,12 @@ fi
 
 echo
 echo '===== SOURCE CONTRACT ====='
-if python3 -m unittest tests.test_phase03_overlay_source; then
-  pass 'Phase 03 overlay source contract'
+if python3 -m unittest \
+    tests.test_phase03_overlay_source \
+    tests.test_phase03_rickon_headless; then
+  pass 'Phase 03 overlay + Rickon victim source contracts'
 else
-  fail 'Phase 03 overlay source contract'
+  fail 'Phase 03 overlay + Rickon victim source contracts'
 fi
 
 echo
