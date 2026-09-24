@@ -61,15 +61,19 @@ Manual navigation to `http://wpad/wpad.dat` does not satisfy the acceptance crit
 
 ## Headless victim architecture
 
-Validated temporary architecture:
+The permanent Phase 03 Rickon victim candidate is now runtime-proven:
 
-- Robb bot: systemd user service, Xvfb display `:99`, CASTELBLACK.
-- Rickon test session: separate Xvfb display (observed as `:100`), WS01.
-- FreeRDP reads arguments from stdin.
+- Robb bot remains a separate systemd user service on CASTELBLACK and was not modified.
+- Rickon runs through `kingdoms-phase03-rickon.service` and connects to WS01.
+- Rickon and Robb use independent Xvfb process trees; observed displays may be reused after clean teardown and are not treated as stable identifiers.
+- WS01 independently reported `rickon.stark` as an **Active** interactive RDP session.
+- The Rickon service survived a controlled restart: the old service, xvfb-run, Xvfb and FreeRDP PIDs disappeared, a new service instance established exactly one WS01 RDP socket, and WS01 again reported Rickon Active.
+- FreeRDP reads arguments from stdin; the password is absent from process argv.
 - The Rickon password is stored outside the repository under the operator config directory with mode 0600.
-- No password is permitted in Git, shell argv, process environment, documentation or evidence files.
+- WS01 RDP certificate pinning is enforced using a locally stored, owner-only SHA-256 fingerprint verified independently from Windows and from a network-side TLS probe.
+- No password or secret-bearing runtime material is stored in Git.
 
-The temporary diagnostics used for this validation are tracked under `scripts/phase03/diagnostics/`. They are not yet the production Phase 03 victim service.
+The temporary investigation helpers remain under `scripts/phase03/diagnostics/`; the permanent candidate is under `scripts/phase03/` and `ops/systemd/`.
 
 ## Remaining configuration work
 
@@ -80,7 +84,6 @@ The permanent NORTH Phase 03 overlay still needs:
 - `scripts/apply-phase03.sh`
 - `scripts/validate-phase03-runtime.sh`
 - `scripts/reset-phase03.sh`
-- deterministic Rickon/WS01 victim automation with certificate pinning
 - deterministic WPAD/mitm6 scenario
 - explicit LDAP/LDAPS training posture in source
 - controlled/reversible RBCD fixture
