@@ -103,8 +103,9 @@ class Phase03RickonHeadlessTests(unittest.TestCase):
     def test_restart_validator_proves_cleanup_and_reconnect(self):
         text = RESTART_TEST.read_text()
         self.assertIn("systemctl --user restart", text)
-        self.assertIn("old Xvfb display survived restart", text)
+        self.assertIn("old Xvfb PID still exists", text)
         self.assertIn("old FreeRDP PID still exists", text)
+        self.assertIn("Xvfb_PID=", text)
         self.assertIn("validate-rickon-session.sh", text)
 
     def test_no_known_lab_passwords(self):
