@@ -75,8 +75,8 @@ EOF
 echo
 echo '===== OBTAIN PHASE03RBCD TGT ====='
 export KRB5_CONFIG="$KRB5_CONFIG_FILE"
-KRB5CCNAME="FILE:$TGT_CACHE" \
-  sh -c 'printf "%s\n" "$1" | exec "$2" "$3"' _ "$PASSWORD" "$KINIT" "${COMPUTER}@${REALM}"
+export KRB5CCNAME="FILE:$TGT_CACHE"
+printf "%s\n" "$PASSWORD" | "$KINIT" "${COMPUTER}@${REALM}"
 "$KLIST" -f -c "$TGT_CACHE"
 
 echo
