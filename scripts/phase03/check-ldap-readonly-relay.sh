@@ -53,7 +53,7 @@ if [[ -z "$NTLMRELAYX" ]]; then
 else
   pass "ntlmrelayx: $NTLMRELAYX"
   help="$("$NTLMRELAYX" -h 2>&1 || true)"
-  for opt in     '-t'     '--no-dump'     '--no-da'     '--no-acl'     '--smb2support'     '--no-http-server'     '--no-wcf-server'     '--no-raw-server'; do
+  for opt in     '-t'     '--no-dump'     '--no-da'     '--no-acl'     '-smb2support'     '--no-http-server'     '--no-wcf-server'     '--no-raw-server'; do
     grep -Fq -- "$opt" <<<"$help" &&
       pass "ntlmrelayx supports $opt" ||
       fail "ntlmrelayx missing expected option: $opt"
