@@ -17,7 +17,7 @@
           $raw = $target.'msDS-AllowedToActOnBehalfOfOtherIdentity'
           if ($null -eq $raw -or $raw.Length -eq 0) { throw 'WS01 RBCD descriptor is empty' }
 
-          $sd = New-Object System.Security.AccessControl.RawSecurityDescriptor($raw, 0)
+          $sd = [System.Security.AccessControl.RawSecurityDescriptor]::new([byte[]]$raw, 0)
           $sids = @()
           foreach ($ace in $sd.DiscretionaryAcl) {
               if ($null -ne $ace.SecurityIdentifier) {
