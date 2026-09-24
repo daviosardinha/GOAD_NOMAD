@@ -19,6 +19,19 @@ find_ntlmrelayx() {
   return 1
 }
 
+find_responder_conf() {
+  local c
+  for c in \
+    /etc/responder/Responder.conf \
+    /usr/share/responder/Responder.conf \
+    /opt/tools/Responder/Responder.conf; do
+    [[ -f "$c" ]] || continue
+    printf '%s\n' "$c"
+    return 0
+  done
+  return 1
+}
+
 cd "$ROOT" || exit 1
 
 echo '===== INTERACTIVE SMB RELAY PREFLIGHT ====='
@@ -55,6 +68,27 @@ NTLMRELAYX="$(find_ntlmrelayx || true)"
   echo 'FAIL: ntlmrelayx not found' >&2
   exit 1
 }
+
+RESPONDER_CONF="$(find_responder_conf || true)"
+[[ -n "$RESPONDER_CONF" ]] || {
+  echo 'FAIL: Responder.conf not found' >&2
+  exit 1
+}
+
+responder_smb="$(awk -F= '/^[[:space:]]*SMB[[:space:]]*=/{gsub(/[[:space:]]/,"",$2); print tolower($2); exit}' "$RESPONDER_CONF")"
+responder_http="$(awk -F= '/^[[:space:]]*HTTP[[:space:]]*=/{gsub(/[[:space:]]/,"",$2); print tolower($2); exit}' "$RESPONDER_CONF")"
+
+[[ "$responder_smb" == "off" ]] || {
+  echo "FAIL: Responder SMB server must be Off in $RESPONDER_CONF" >&2
+  exit 1
+}
+
+[[ "$responder_http" == "off" ]] || {
+  echo "FAIL: Responder HTTP server must be Off in $RESPONDER_CONF" >&2
+  exit 1
+}
+
+echo "PASS: Responder poisoner-only config ($RESPONDER_CONF): SMB=Off HTTP=Off"
 
 HELP="$("$NTLMRELAYX" -h 2>&1 || true)"
 for opt in -t -i -smb2support --keep-relaying; do
