@@ -100,6 +100,16 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         self.assertIn("kingdoms-mitm6.log", shell)
         self.assertIn("validate-rickon-session.sh", shell)
 
+    def test_wpad_chain_validator_requires_same_capture_sequence(self):
+        script = (ROOT / "scripts" / "phase03" / "validate-wpad-chain.sh").read_text()
+        self.assertIn("DHCPv6 Solicit", script)
+        self.assertIn("DHCPv6 Advertise", script)
+        self.assertIn("DHCPv6 Request", script)
+        self.assertIn("DHCPv6 Reply", script)
+        self.assertIn("attacker-controlled IPv6 DNS", script)
+        self.assertIn("GET /wpad.dat", script)
+        self.assertIn("reply <= dns <= http", script)
+
     def test_checkpoint_does_not_modify_lab_yet(self):
         text = PLAYBOOK.read_text().lower()
         self.assertNotIn("win_regedit", text)
