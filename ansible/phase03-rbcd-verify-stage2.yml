@@ -1,0 +1,42 @@
+---
+- name: Verify NORTH RBCD Stage 2 without changing Active Directory
+  hosts: dc02
+  gather_facts: false
+  tasks:
+    - name: Read WS01 RBCD descriptor and PHASE03RBCD SID
+      ansible.windows.win_powershell:
+        script: |
+          $ErrorActionPreference = 'Stop'
+          $Ansible.Changed = $false
+          Import-Module ActiveDirectory
+
+          $candidate = Get-ADComputer -LDAPFilter '(sAMAccountName=PHASE03RBCD$)' -Properties ObjectSid
+          if ($null -eq $candidate) { throw 'PHASE03RBCD$ is missing' }
+
+          $target = Get-ADComputer -Identity 'WS01' -Properties msDS-AllowedToActOnBehalfOfOtherIdentity
+          $raw = $target.'msDS-AllowedToActOnBehalfOfOtherIdentity'
+          if ($null -eq $raw -or $raw.Length -eq 0) { throw 'WS01 RBCD descriptor is empty' }
+
+          $sd = New-Object System.Security.AccessControl.RawSecurityDescriptor($raw, 0)
+          $sids = @()
+          foreach ($ace in $sd.DiscretionaryAcl) {
+              if ($null -ne $ace.SecurityIdentifier) {
+                  $sids += $ace.SecurityIdentifier.Value
+              }
+          }
+
+          $candidateSid = $candidate.ObjectSid.Value
+          $present = $sids -contains $candidateSid
+
+          Write-Output "PHASE03_RBCD_STAGE2_RBCD_PRESENT=True"
+          Write-Output "PHASE03_RBCD_STAGE2_CANDIDATE_SID=$candidateSid"
+          Write-Output "PHASE03_RBCD_STAGE2_ALLOWED_SIDS=$($sids -join ',')"
+          Write-Output "PHASE03_RBCD_STAGE2_DELEGATION_PRESENT=$present"
+
+          if (-not $present) { throw 'PHASE03RBCD$ SID is not present in WS01 RBCD descriptor' }
+      register: stage2_verify
+
+    - name: Emit Stage 2 verification markers
+      ansible.builtin.debug:
+        msg: "{{ stage2_verify.output | default([]) }}"
+      changed_when: false
