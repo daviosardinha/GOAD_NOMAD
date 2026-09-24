@@ -42,7 +42,7 @@ Legend: PROVEN = observed on cebee3 or supplied preflight; SOURCE = provisioned 
 | PrinterBug | WINTERFELL Spooler is running; Phase 03 runtime testing produced PrinterBug/MS-RPRN callbacks in NORTH | PROVEN callback family; preserve fresh per-host evidence |
 | Other RPC (PetitPotam/DFSCoerce/Coercer) | MS-EFSR/PetitPotam-family callback was proven on CASTELBLACK. Do not claim WINTERFELL/WS01 until each has fresh host-specific evidence | PARTIALLY PROVEN |
 | WebDAV client | Existing \`[webdav]\` inventory targets CASTELBLACK/BRAAVOS Server WebDAV-Redirector; **not WS01** | GAP for WS01 HTTP/WebDAV lesson |
-| mitm6 / WPAD | WS01 accepted rogue DHCPv6 information in earlier scoped testing; automatic WPAD DNS queries from WS01 are proven; harmless manual PAC retrieval works. Automatic GET /wpad.dat is still not proven | PARTIALLY PROVEN; automatic PAC retrieval GAP |
+| mitm6 / WPAD | Same-capture proof now shows WS01 DHCPv6 Solicit/Advertise/Request/Reply, attacker IPv6 DNS `fe80::250:56ff:fec0:a`, WPAD DNS over that IPv6 path, and automatic `GET /wpad.dat` from 10.4.10.31 with HTTP 200 | PROVEN |
 | ADIDNS | Generic \`add_dns_record\` Ansible role exists, but no Phase03 vulnerable scoped record/ACL in NORTH | GAP |
 | Writable-share trigger | CASTELBLACK has \`openshares\` and existing file deployment; no dedicated .lnk/.url + victim interaction contract | GAP |
 | LDAP relay → RBCD | LDAP target posture + MAQ candidate; **do not assume target-object ACL or valid computer-account context** | GAP for actual relay and reversible proof |
