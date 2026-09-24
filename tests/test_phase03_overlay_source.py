@@ -90,6 +90,16 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         self.assertIn('-Z "$USER"', script)
         self.assertIn("kingdoms-wpad-tcpdump.log", script)
 
+    def test_ws01_renew6_trigger_is_scoped_and_observable(self):
+        shell = (DIAG / "trigger-ws01-renew6.sh").read_text()
+        playbook = (ROOT / "ansible" / "phase03-trigger-ws01-renew6.yml").read_text()
+        self.assertIn("hosts: ws01", playbook)
+        self.assertIn("10.4.10.31", playbook)
+        self.assertIn("ipconfig.exe /renew6", playbook)
+        self.assertIn("Get-DnsClientServerAddress", playbook)
+        self.assertIn("kingdoms-mitm6.log", shell)
+        self.assertIn("validate-rickon-session.sh", shell)
+
     def test_checkpoint_does_not_modify_lab_yet(self):
         text = PLAYBOOK.read_text().lower()
         self.assertNotIn("win_regedit", text)
