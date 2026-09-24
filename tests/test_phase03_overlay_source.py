@@ -109,6 +109,9 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         self.assertIn("attacker-controlled IPv6 DNS", script)
         self.assertIn("GET /wpad.dat", script)
         self.assertIn("reply <= dns <= http", script)
+        self.assertIn("WS01_MAC", script)
+        self.assertIn("eth.src", script)
+        self.assertNotIn('WS01_V6=', script)
 
     def test_checkpoint_does_not_modify_lab_yet(self):
         text = PLAYBOOK.read_text().lower()
