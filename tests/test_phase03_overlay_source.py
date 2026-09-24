@@ -117,7 +117,7 @@ class Phase03OverlaySourceTests(unittest.TestCase):
     def test_wpad_cleanup_is_scoped_and_preserves_evidence(self):
         script = (DIAG / "stop-wpad-runtime.sh").read_text()
         self.assertIn("mitm6", script)
-        self.assertIn("http.server", script)
+        self.assertIn("http[.]server", script)
         self.assertIn("tcpdump", script)
         self.assertIn("kill -TERM", script)
         self.assertIn("kill -KILL", script)
