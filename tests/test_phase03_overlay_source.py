@@ -124,6 +124,23 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         self.assertNotIn('rm -f "$PCAP"', script)
         self.assertIn("dnsmasq", script)
 
+    def test_ldap_readonly_relay_profile_is_mutation_disabled(self):
+        preflight = (ROOT / "scripts" / "phase03" / "check-ldap-readonly-relay.sh").read_text()
+        start = (ROOT / "scripts" / "phase03" / "start-ldap-readonly-relay.sh").read_text()
+        stop = (ROOT / "scripts" / "phase03" / "stop-ldap-readonly-relay.sh").read_text()
+        for option in ("--no-dump", "--no-da", "--no-acl"):
+            self.assertIn(option, preflight)
+            self.assertIn(option, start)
+        for option in ("--no-http-server", "--no-wcf-server", "--no-raw-server"):
+            self.assertIn(option, start)
+        self.assertIn('ldaps://$TARGET', start)
+        self.assertIn("TCP/445", preflight)
+        self.assertIn("Responder is not running", preflight)
+        self.assertIn("kill -TERM", stop)
+        self.assertNotIn("--delegate-access", start)
+        self.assertNotIn("--shadow-credentials", start)
+        self.assertNotIn("--add-computer", start)
+
     def test_checkpoint_does_not_modify_lab_yet(self):
         text = PLAYBOOK.read_text().lower()
         self.assertNotIn("win_regedit", text)
