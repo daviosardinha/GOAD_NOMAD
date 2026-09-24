@@ -1,0 +1,36 @@
+---
+- name: Validate Rickon interactive RDP session on WS01
+  hosts: ws01
+  gather_facts: false
+  tasks:
+    - name: Read interactive sessions from WS01
+      ansible.windows.win_powershell:
+        script: |
+          $ErrorActionPreference = 'Stop'
+          $Ansible.Changed = $false
+
+          $lines = & quser.exe 2>&1
+          if ($LASTEXITCODE -ne 0) {
+              throw "quser failed with exit code $LASTEXITCODE: $($lines -join ' | ')"
+          }
+
+          $match = $lines | Where-Object {
+              $_ -match '(?i)rickon\.stark' -and $_ -match '(?i)Active'
+          } | Select-Object -First 1
+
+          if ($null -eq $match) {
+              Write-Output 'PHASE03_RICKON_ACTIVE=FALSE'
+              Write-Output ('PHASE03_QUSER=' + ($lines -join ' || '))
+              exit 0
+          }
+
+          $normalized = ($match -replace '^\s*>?\s*', '') -replace '\s+', ' '
+          Write-Output 'PHASE03_RICKON_ACTIVE=TRUE'
+          Write-Output "PHASE03_RICKON_QUSER=$normalized"
+      changed_when: false
+      register: rickon_session
+
+    - name: Emit Rickon session markers
+      ansible.builtin.debug:
+        msg: "{{ rickon_session.output | default([]) }}"
+      changed_when: false
