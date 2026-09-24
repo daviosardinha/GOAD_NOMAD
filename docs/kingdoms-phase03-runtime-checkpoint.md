@@ -52,7 +52,7 @@ Validated acceptance sequence from the same packet capture:
 7. WS01 sends WPAD DNS queries to that attacker-controlled IPv6 DNS path.
 8. WS01 automatically sends `GET /wpad.dat` over HTTP and receives 200.
 
-The proof is preserved as reproducible logic in `scripts/phase03/validate-wpad-chain.sh`. Raw PCAP/log evidence remains operator-side and is intentionally not committed.
+The proof is preserved as reproducible logic in `scripts/phase03/validate-wpad-chain.sh`. The final same-capture validator completed with **PASS: 8 / FAIL: 0**. Raw PCAP/log evidence remains operator-side and is intentionally not committed.
 
 Manual navigation to `http://wpad/wpad.dat` is not used as acceptance evidence.
 
