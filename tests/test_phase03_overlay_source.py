@@ -169,6 +169,29 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         self.assertIn("python3 -m json.tool", wrapper)
         for forbidden in ("Set-AD", "New-ADComputer", "Remove-ADComputer"):
             self.assertNotIn(forbidden, playbook)
+    def test_all_phase03_shell_scripts_parse(self):
+        phase03 = ROOT / "scripts" / "phase03"
+        for script in sorted(phase03.rglob("*.sh")):
+            with self.subTest(script=script):
+                result = subprocess.run(["bash", "-n", str(script)], capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_rbcd_stage1_creates_only_reserved_candidate(self):
+        start = (ROOT / "scripts" / "phase03" / "start-rbcd-stage1-add-computer.sh").read_text()
+        verify = (ROOT / "ansible" / "phase03-rbcd-verify-stage1.yml").read_text()
+        self.assertIn("--add-computer", start)
+        self.assertIn("PHASE03RBCD", start)
+        self.assertIn("--no-dump", start)
+        self.assertIn("--no-da", start)
+        self.assertIn("--no-acl", start)
+        self.assertNotIn("--delegate-access", start)
+        self.assertNotIn("--shadow-credentials", start)
+        self.assertIn("phase03-rbcd-baseline.json", start)
+        self.assertIn("phase03-rbcd-password", start)
+        self.assertIn("PHASE03_RBCD_STAGE1_CANDIDATE_EXISTS", verify)
+        self.assertIn("PHASE03_RBCD_STAGE1_RBCD_PRESENT", verify)
+        for forbidden in ("Set-AD", "New-ADComputer", "Remove-ADComputer"):
+            self.assertNotIn(forbidden, verify)
     def test_checkpoint_does_not_modify_lab_yet(self):
         text = PLAYBOOK.read_text().lower()
         self.assertNotIn("win_regedit", text)
