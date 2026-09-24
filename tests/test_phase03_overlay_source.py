@@ -311,7 +311,7 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         runtime = (ROOT / "docs" / "kingdoms-phase03-runtime-checkpoint.md").read_text()
         scope = (ROOT / "docs" / "kingdoms-phase03-north-scope.md").read_text()
         self.assertIn("SMB remote execution on CASTELBLACK is **PROVEN**", runtime)
-        self.assertIn("NT AUTHORITY\\\\SYSTEM", runtime)
+        self.assertIn(r"NT AUTHORITY\SYSTEM", runtime)
         self.assertIn("rpc_s_access_denied", runtime)
         self.assertIn("RemoteRegistry", runtime)
         self.assertIn("| SMB remote execution consequence |", scope)
