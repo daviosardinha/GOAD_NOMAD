@@ -17,7 +17,18 @@
           $raw = $target.'msDS-AllowedToActOnBehalfOfOtherIdentity'
           if ($null -eq $raw -or $raw.Length -eq 0) { throw 'WS01 RBCD descriptor is empty' }
 
-          $sd = [System.Security.AccessControl.RawSecurityDescriptor]::new([byte[]]$raw, 0)
+          $rawType = $raw.GetType().FullName
+          Write-Output "PHASE03_RBCD_STAGE2_RAW_TYPE=$rawType"
+
+          if ($raw -is [System.DirectoryServices.ActiveDirectorySecurity]) {
+              $binary = $raw.GetSecurityDescriptorBinaryForm()
+          } elseif ($raw -is [byte[]]) {
+              $binary = [byte[]]$raw
+          } else {
+              throw "Unexpected RBCD descriptor type: $rawType"
+          }
+
+          $sd = [System.Security.AccessControl.RawSecurityDescriptor]::new($binary, 0)
           $sids = @()
           foreach ($ace in $sd.DiscretionaryAcl) {
               if ($null -ne $ace.SecurityIdentifier) {
