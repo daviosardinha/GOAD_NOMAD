@@ -272,8 +272,8 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         self.assertIn("10.4.10.22", script)
         self.assertIn("vmnet10", script)
         self.assertIn("-smb2support", script)
-        self.assertIn("  -i \\", script)
-        self.assertIn("--keep-relaying", script)
+        self.assertTrue(any(line.strip() == "-i" for line in script.splitlines()))
+        self.assertTrue(any(line.strip() == "--keep-relaying" for line in script.splitlines()))
         self.assertIn("127.0.0.1:11000+", script)
         self.assertNotIn("-socks", script)
 
