@@ -70,8 +70,43 @@ echo "===== PHASE 03 READINESS ====="
 bash scripts/validate-phase03-readiness.sh || exit 1
 
 echo
+echo "===== INVENTORY PREFLIGHT ====="
+HOST_LIST="$(
+  ANSIBLE_CONFIG="$ROOT/ansible/ansible.cfg" \
+  ansible-playbook \
+    -i "$DATA_INVENTORY" \
+    -i "$PROVIDER_INVENTORY" \
+    "$PLAYBOOK" \
+    --list-hosts \
+    -e phase03_apply=true 2>&1
+)"
+LIST_RC=$?
+printf '%s\n' "$HOST_LIST"
+[[ $LIST_RC -eq 0 ]] || {
+  echo "FAIL: Ansible could not parse the Phase 03 inventories" >&2
+  exit "$LIST_RC"
+}
+
+for required_host in dc02 srv02 ws01; do
+  if ! grep -Eq "(^|[[:space:]])${required_host}([[:space:]]|$)" <<<"$HOST_LIST"; then
+    echo "FAIL: required Phase 03 host missing from parsed inventory: $required_host" >&2
+    exit 1
+  fi
+done
+
+if grep -Eq 'hosts \(0\):|skipping: no hosts matched' <<<"$HOST_LIST"; then
+  echo "FAIL: Phase 03 inventory matched no hosts" >&2
+  exit 1
+fi
+
+echo
 echo "===== GUARDED PHASE 03 ENTRYPOINT ====="
-ANSIBLE_CONFIG="$ROOT/ansible/ansible.cfg" ansible-playbook   -i "$PROVIDER/inventory"   "$PLAYBOOK"   -e phase03_apply=true
+ANSIBLE_CONFIG="$ROOT/ansible/ansible.cfg" \
+ansible-playbook \
+  -i "$DATA_INVENTORY" \
+  -i "$PROVIDER_INVENTORY" \
+  "$PLAYBOOK" \
+  -e phase03_apply=true
 
 rc=$?
 [[ $rc -eq 0 ]] || exit "$rc"
