@@ -11,7 +11,7 @@
 
           $lines = & quser.exe 2>&1
           if ($LASTEXITCODE -ne 0) {
-              throw "quser failed with exit code $LASTEXITCODE: $($lines -join ' | ')"
+              throw "quser failed with exit code $($LASTEXITCODE): $($lines -join ' | ')"
           }
 
           $match = $lines | Where-Object {
