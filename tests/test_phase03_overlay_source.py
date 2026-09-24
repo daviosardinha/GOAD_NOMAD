@@ -114,6 +114,16 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         self.assertIn('eth.src == $WS01_MAC', script)
         self.assertNotIn("WS01_V6", script)
 
+    def test_wpad_cleanup_is_scoped_and_preserves_evidence(self):
+        script = (DIAG / "stop-wpad-runtime.sh").read_text()
+        self.assertIn("mitm6", script)
+        self.assertIn("http.server", script)
+        self.assertIn("tcpdump", script)
+        self.assertIn("kill -TERM", script)
+        self.assertIn("kill -KILL", script)
+        self.assertNotIn('rm -f "$PCAP"', script)
+        self.assertIn("dnsmasq", script)
+
     def test_checkpoint_does_not_modify_lab_yet(self):
         text = PLAYBOOK.read_text().lower()
         self.assertNotIn("win_regedit", text)
