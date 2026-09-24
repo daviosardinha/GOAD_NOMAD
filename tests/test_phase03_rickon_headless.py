@@ -11,13 +11,15 @@ UNIT = ROOT / "ops" / "systemd" / "kingdoms-phase03-rickon.service"
 CERT_READ = ROOT / "scripts" / "phase03" / "read-ws01-rdp-cert.sh"
 CERT_PLAYBOOK = ROOT / "ansible" / "phase03-read-ws01-rdp-cert.yml"
 CERT_PROBE = ROOT / "scripts" / "phase03" / "probe-ws01-rdp-cert.py"
+SESSION_VALIDATE = ROOT / "scripts" / "phase03" / "validate-rickon-session.sh"
+SESSION_PLAYBOOK = ROOT / "ansible" / "phase03-validate-rickon-session.yml"
 
 
 class Phase03RickonHeadlessTests(unittest.TestCase):
     def test_required_files_exist_and_parse(self):
-        for path in (RUNNER, CHECK, INSTALL, UNIT, CERT_READ, CERT_PLAYBOOK, CERT_PROBE):
+        for path in (RUNNER, CHECK, INSTALL, UNIT, CERT_READ, CERT_PLAYBOOK, CERT_PROBE, SESSION_VALIDATE, SESSION_PLAYBOOK):
             self.assertTrue(path.is_file(), path)
-        for path in (RUNNER, CHECK, INSTALL, CERT_READ):
+        for path in (RUNNER, CHECK, INSTALL, CERT_READ, SESSION_VALIDATE):
             result = subprocess.run(
                 ["bash", "-n", str(path)],
                 capture_output=True,
@@ -82,6 +84,18 @@ class Phase03RickonHeadlessTests(unittest.TestCase):
         self.assertIn("RDP_SHA256=", text)
         self.assertNotIn("username", text.lower())
         self.assertNotIn("password", text.lower())
+
+    def test_session_validator_checks_live_windows_state(self):
+        shell = SESSION_VALIDATE.read_text()
+        playbook = SESSION_PLAYBOOK.read_text()
+        self.assertIn("Exactly one WS01 RDP socket", shell)
+        self.assertIn("password is absent from process argv", shell)
+        self.assertIn("PHASE03_RICKON_ACTIVE=TRUE", shell)
+        self.assertIn("hosts: ws01", playbook)
+        self.assertIn("quser.exe", playbook)
+        self.assertIn("rickon\\.stark", playbook)
+        self.assertIn("Active", playbook)
+        self.assertIn("changed_when: false", playbook)
 
     def test_no_known_lab_passwords(self):
         corpus = "\n".join(p.read_text(errors="replace") for p in (RUNNER, CHECK, INSTALL, UNIT)).lower()
