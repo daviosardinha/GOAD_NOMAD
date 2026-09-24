@@ -35,14 +35,14 @@ Legend: PROVEN = observed on cebee3 or supplied preflight; SOURCE = provisioned 
 | LLMNR + NBT-NS | \`ad/GOAD/data/config.json\` sets WINTERFELL vulns; live Responder poisoned both BRAVOS and MEREN | PROVEN |
 | mDNS | Live Responder log shows poisoned requests; not an independent permanent victim vulnerability | PROVEN on test |
 | Robb + Eddard SMB authentication | \`ad/GOAD/scripts/responder.ps1\` 2-min Robb; \`ntlm_relay.ps1\` 5-min Eddard; NetNTLMv2 captured | PROVEN |
-| SMB targets | Supplied NetExec preflight: WINTERFELL signing True; CASTELBLACK and WS01 False | PROVEN posture; relay outcome pending |
-| MSSQL UNC trigger | CASTELBLACK sql_svc, Jon sysadmin, local-path xp_dirtree validated by Phase03 readiness | PROVEN prerequisite; outbound-auth proof pending |
+| SMB relay | WINTERFELL signing True; CASTELBLACK and WS01 False. Eddard authentication was relayed to CASTELBLACK with administrative impact and SAM extraction | PROVEN on CASTELBLACK |
+| MSSQL UNC trigger | CASTELBLACK sql_svc, Jon sysadmin, and xp_dirtree were validated; outbound SMB authentication was observed as NORTH\\sql_svc | PROVEN callback |
 | LDAP/LDAPS target | WINTERFELL signing/CBT externally observed not enforced and 389/636 reachable; **source config does not explicitly pin these settings under dc02 vulns** | PROVEN observed posture; source gap |
-| MAQ | Previous Phase03 readiness reports NORTH MAQ nonzero (typically 10) | prerequisite; verify current exact value before RBCD |
-| PrinterBug | WINTERFELL Spooler observed running; no actual callback proof | SOURCE/runtime prerequisite |
-| Other RPC (PetitPotam/DFSCoerce/Coercer) | Existing Windows systems/protocols only; no version-specific callback proof | CONDITIONAL |
+| MAQ | Phase03 readiness reports NORTH MachineAccountQuota = 10 | PROVEN prerequisite |
+| PrinterBug | WINTERFELL Spooler is running; Phase 03 runtime testing produced PrinterBug/MS-RPRN callbacks in NORTH | PROVEN callback family; preserve fresh per-host evidence |
+| Other RPC (PetitPotam/DFSCoerce/Coercer) | MS-EFSR/PetitPotam-family callback was proven on CASTELBLACK. Do not claim WINTERFELL/WS01 until each has fresh host-specific evidence | PARTIALLY PROVEN |
 | WebDAV client | Existing \`[webdav]\` inventory targets CASTELBLACK/BRAAVOS Server WebDAV-Redirector; **not WS01** | GAP for WS01 HTTP/WebDAV lesson |
-| mitm6 / WPAD | WS01 IPv6 observed; DHCPv6, name resolution, WPAD and HTTP relay not yet exercised together | GAP |
+| mitm6 / WPAD | WS01 accepted rogue DHCPv6 information in earlier scoped testing; automatic WPAD DNS queries from WS01 are proven; harmless manual PAC retrieval works. Automatic GET /wpad.dat is still not proven | PARTIALLY PROVEN; automatic PAC retrieval GAP |
 | ADIDNS | Generic \`add_dns_record\` Ansible role exists, but no Phase03 vulnerable scoped record/ACL in NORTH | GAP |
 | Writable-share trigger | CASTELBLACK has \`openshares\` and existing file deployment; no dedicated .lnk/.url + victim interaction contract | GAP |
 | LDAP relay → RBCD | LDAP target posture + MAQ candidate; **do not assume target-object ACL or valid computer-account context** | GAP for actual relay and reversible proof |
@@ -67,7 +67,7 @@ Use dedicated files such as \`ansible/phase03.yml\`, separate Phase03 DC/member/
 
 **WINTERFELL (DC):** Preserve both functioning scheduled bots; explicitly pin/test the *effective* LDAP signing and channel-binding training posture via correct NTDS configuration (do not rely only on a legacy registry path). Verify rather than assume LDAP target rights, machine-account quota and Spooler. Create only narrowly scoped ADIDNS training records/permissions and dedicated test objects for controlled RBCD and (advanced) Shadow Credentials; record original object state so cleanup restores exact prior values. Do not modify domain-wide ACLs broadly.
 
-**CASTELBLACK (member):** Retain existing unsigned SMB, sql_svc MSSQL, IIS and existing shares. Add only dedicated Phase03 exercise subdirectories, controlled .lnk/.url resources, and a limited auth-coercion test path. Prove sql_svc UNC callback; do not assume SQL rights outside the observed sysadmin context. Validate Eddard SMB relay and actual resulting local/remote permissions before optional SAM/LSASS/DPAPI/share demonstration.
+**CASTELBLACK (member):** Retain existing unsigned SMB, sql_svc MSSQL, IIS and existing shares. Add only dedicated Phase03 exercise subdirectories, controlled .lnk/.url resources, and a limited auth-coercion test path. The sql_svc UNC callback and Eddard→CASTELBLACK administrative SMB relay with SAM extraction are already proven; preserve them as regression tests. LSASS/DPAPI/share consequences remain technique-specific proofs.
 
 **WS01 (workstation):** Preserve Rickon's existing RDP contract and Phase04 LPE fixtures. Configure/test WebClient as a Windows **client** (the Server WebDAV-Redirector role is not a direct Windows10 drop-in), IPv6/DHCPv6 victim behavior, controlled WPAD discovery, and a noninteractive simulated browsing trigger scoped to the new Phase03 share artifacts. Keep all victim triggers enable/disable-able and deterministic.
 
@@ -79,7 +79,7 @@ Use dedicated files such as \`ansible/phase03.yml\`, separate Phase03 DC/member/
 
 1. Source tests check scope, exact host inventory, bots' periodicity, no changes to previous phases, safe Ansible tags/role conditions, and planned apply/prove/reset coverage.
 2. Runtime prerequisites pass \`validate-phase03-readiness.sh\` unchanged in purpose. Capture-only proof shows both bots and correct NetNTLMv2 labels without user-provided secrets appearing in evidence.
-3. Technique-specific **runtime proof** separately covers: Eddard→CASTELBLACK SMB relay and access level, Robb capture/crack teaching artifact, MSSQL service callback, supported RPC callback(s), scoped ADIDNS, .lnk/.url victim interaction, WebDAV/WPAD, mitm6 IPv6 steering, LDAP read-only relay and reversible RBCD. Optional Shadow Credentials only after explicit ACL preflight and reset proof.
+3. Technique-specific **runtime proof** preserves already-proven Eddard→CASTELBLACK administrative SMB relay + SAM extraction, Robb/Eddard capture behavior, MSSQL sql_svc callback and supported RPC callback(s), then adds the remaining scoped ADIDNS, .lnk/.url victim interaction, automatic WebDAV/WPAD PAC retrieval, deterministic mitm6 steering, LDAP read-only relay and reversible RBCD. Optional Shadow Credentials only after explicit ACL preflight and reset proof.
 4. Each state-changing exercise backs up its exact prior AD/filesystem state, changes only named Phase03 objects, and restores them; no blanket deletion of unrelated records, GPOs, credentials or student work. Never reset/destroy cebee3 to clear an exercise.
 5. Regression re-runs Phase00–02 source and runtime gates plus Phase03 validation; existing RDP contract, Phase02 MSSQL access, DNS bots, machine secure channels, time convergence, router isolation and WS01 later LPE fixtures must still work.
 6. After runtime proof, update Kingdoms Notion Phase03 sections, using **new NORTH screenshots** rather than relabeling historical ESSOS captures as current evidence.
