@@ -281,6 +281,15 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         self.assertIn("SMB=Off HTTP=Off", script)
         self.assertNotIn("-socks", script)
 
+    def test_status_docs_record_interactive_smb_relay_as_proven(self):
+        runtime = (ROOT / "docs" / "kingdoms-phase03-runtime-checkpoint.md").read_text()
+        scope = (ROOT / "docs" / "kingdoms-phase03-north-scope.md").read_text()
+        self.assertIn("Interactive SMB relay to CASTELBLACK is **PROVEN**", runtime)
+        self.assertIn("NORTH\\ROBB.STARK", runtime)
+        self.assertIn("NORTH\\EDDARD.STARK", runtime)
+        self.assertIn("| Interactive SMB relay |", scope)
+        self.assertIn("| SOCKS relay |", scope)
+
     def test_checkpoint_does_not_modify_lab_yet(self):
         text = PLAYBOOK.read_text().lower()
         self.assertNotIn("win_regedit", text)
