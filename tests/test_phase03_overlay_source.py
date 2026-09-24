@@ -239,7 +239,7 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         self.assertIn('KRB5CCNAME="$TGT_CACHE"', script)
         self.assertIn('KRB5CCNAME="$ST_CACHE"', script)
         self.assertIn('export KRB5CCNAME="FILE:$TGT_CACHE"', script)
-        self.assertIn('printf "%s\n" "$PASSWORD" | "$KINIT"', script)
+        self.assertIn(r'printf "%s\n" "$PASSWORD" | "$KINIT"', script)
         self.assertNotIn("sh -c", script)
         self.assertNotIn('KRB5CCNAME="FILE:$TGT_CACHE" \\\n    "$GETST"', script)
         self.assertNotIn('export KRB5CCNAME="FILE:$ST_CACHE"', script)
