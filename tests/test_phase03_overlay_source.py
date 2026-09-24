@@ -90,6 +90,14 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         self.assertIn('-Z "$USER"', script)
         self.assertIn("kingdoms-wpad-tcpdump.log", script)
 
+    def test_mitm6_background_launch_never_prompts_for_sudo(self):
+        script = (DIAG / "start-mitm6-ws01.sh").read_text()
+        self.assertIn("sudo -v", script)
+        self.assertIn("sudo -n stdbuf", script)
+        self.assertNotIn("sudo stdbuf", script)
+        self.assertLess(script.index("sudo -v"), script.index("sudo -n stdbuf"))
+        self.assertIn("sudo authentication leaked into the background mitm6 launch", script)
+
     def test_ws01_renew6_trigger_is_scoped_and_observable(self):
         shell = (DIAG / "trigger-ws01-renew6.sh").read_text()
         playbook = (ROOT / "ansible" / "phase03-trigger-ws01-renew6.yml").read_text()
