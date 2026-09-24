@@ -84,6 +84,12 @@ class Phase03OverlaySourceTests(unittest.TestCase):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(forbidden, corpus)
 
+    def test_wpad_observer_handles_privileged_capture_file(self):
+        script = (DIAG / "start-wpad-observers.sh").read_text()
+        self.assertIn('sudo rm -f "$PCAP"', script)
+        self.assertIn('-Z "$USER"', script)
+        self.assertIn("kingdoms-wpad-tcpdump.log", script)
+
     def test_checkpoint_does_not_modify_lab_yet(self):
         text = PLAYBOOK.read_text().lower()
         self.assertNotIn("win_regedit", text)
