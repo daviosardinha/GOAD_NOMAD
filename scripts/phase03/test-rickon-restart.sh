@@ -13,14 +13,14 @@ old_main="$(systemctl --user show "$SERVICE" -p MainPID --value)"
 old_socket="$(sudo ss -ntp 2>/dev/null | grep "${WS01}:3389" || true)"
 old_freerdp="$(sed -n 's/.*pid=\([0-9]\+\).*/\1/p' <<<"$old_socket" | head -n1)"
 old_runner="$(
-  ps -o ppid= -p "$old_freerdp" 2>/dev/null |
-    tr -d '[:space:]'
+  pgrep -P "$old_main" -f '/usr/bin/xvfb-run|xvfb-run' 2>/dev/null |
+    head -n1
 )"
 old_xvfb=""
 if [[ "$old_runner" =~ ^[1-9][0-9]*$ ]]; then
   old_xvfb="$(
-    pgrep -P "$old_runner" -x Xvfb 2>/dev/null |
-      head -n1
+    ps -eo pid=,ppid=,comm= |
+      awk -v p="$old_runner" '$2 == p && $3 == "Xvfb" {print $1; exit}'
   )"
 fi
 
@@ -28,11 +28,22 @@ echo '===== BEFORE ====='
 printf 'MainPID=%s\nRunner_PID=%s\nFreeRDP_PID=%s\nXvfb_PID=%s\n' "$old_main" "$old_runner" "$old_freerdp" "$old_xvfb"
 printf '%s\n' "$old_socket"
 
-[[ "$old_main" =~ ^[1-9][0-9]*$ &&
-   "$old_runner" =~ ^[1-9][0-9]*$ &&
-   "$old_freerdp" =~ ^[1-9][0-9]*$ &&
-   "$old_xvfb" =~ ^[1-9][0-9]*$ ]] || {
-  echo 'FAIL: current Rickon service/session is not healthy enough to test restart' >&2
+[[ "$old_main" =~ ^[1-9][0-9]*$ ]] || {
+  echo 'FAIL: current Rickon systemd MainPID is invalid' >&2
+  exit 1
+}
+[[ "$old_runner" =~ ^[1-9][0-9]*$ ]] || {
+  echo 'FAIL: could not identify xvfb-run child of the Rickon service MainPID' >&2
+  ps -o pid,ppid,stat,etime,cmd --forest -g "$(ps -o sid= -p "$old_main" | tr -d ' ')" 2>/dev/null || true
+  exit 1
+}
+[[ "$old_freerdp" =~ ^[1-9][0-9]*$ ]] || {
+  echo 'FAIL: could not identify FreeRDP from the WS01 socket' >&2
+  exit 1
+}
+[[ "$old_xvfb" =~ ^[1-9][0-9]*$ ]] || {
+  echo 'FAIL: could not identify Xvfb child of xvfb-run' >&2
+  ps -eo pid,ppid,stat,comm,args | awk -v p="$old_runner" '$2 == p || $1 == p'
   exit 1
 }
 
