@@ -275,6 +275,10 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         self.assertTrue(any(line.strip() == "-i" for line in script.splitlines()))
         self.assertTrue(any(line.strip() == "--keep-relaying" for line in script.splitlines()))
         self.assertIn("127.0.0.1:11000+", script)
+        self.assertIn("Responder.conf", script)
+        self.assertIn("Responder SMB server must be Off", script)
+        self.assertIn("Responder HTTP server must be Off", script)
+        self.assertIn("SMB=Off HTTP=Off", script)
         self.assertNotIn("-socks", script)
 
     def test_checkpoint_does_not_modify_lab_yet(self):
