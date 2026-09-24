@@ -25,7 +25,14 @@
           }
 
           if ($baseline.RBCDPresent) {
-              $baseline.RBCDBase64 = [Convert]::ToBase64String([byte[]]$rbcd)
+              if ($rbcd -is [System.DirectoryServices.ActiveDirectorySecurity]) {
+                  $rbcdBytes = $rbcd.GetSecurityDescriptorBinaryForm()
+              } elseif ($rbcd -is [byte[]]) {
+                  $rbcdBytes = [byte[]]$rbcd
+              } else {
+                  throw "Unexpected RBCD descriptor type: $($rbcd.GetType().FullName)"
+              }
+              $baseline.RBCDBase64 = [Convert]::ToBase64String($rbcdBytes)
           }
 
           $Ansible.Result = $baseline
