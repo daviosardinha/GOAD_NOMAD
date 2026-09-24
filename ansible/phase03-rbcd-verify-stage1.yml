@@ -1,0 +1,28 @@
+---
+- name: Verify RBCD Stage 1 candidate creation without changing Active Directory
+  hosts: dc02
+  gather_facts: false
+  tasks:
+    - name: Read PHASE03RBCD candidate and WS01 RBCD state
+      ansible.windows.win_powershell:
+        script: |
+          $ErrorActionPreference = 'Stop'
+          $Ansible.Changed = $false
+          Import-Module ActiveDirectory
+
+          $candidate = Get-ADComputer -LDAPFilter '(sAMAccountName=PHASE03RBCD$)' -Properties ObjectSid,DistinguishedName
+          $target = Get-ADComputer -Identity 'WS01' -Properties msDS-AllowedToActOnBehalfOfOtherIdentity
+          $rbcd = $target.'msDS-AllowedToActOnBehalfOfOtherIdentity'
+
+          Write-Output "PHASE03_RBCD_STAGE1_CANDIDATE_EXISTS=$([bool]($null -ne $candidate))"
+          if ($null -ne $candidate) {
+              Write-Output "PHASE03_RBCD_STAGE1_CANDIDATE_DN=$($candidate.DistinguishedName)"
+              Write-Output "PHASE03_RBCD_STAGE1_CANDIDATE_SID=$($candidate.ObjectSid.Value)"
+          }
+          Write-Output "PHASE03_RBCD_STAGE1_RBCD_PRESENT=$([bool]($null -ne $rbcd -and $rbcd.Length -gt 0))"
+      register: stage1
+
+    - name: Emit Stage 1 verification markers
+      ansible.builtin.debug:
+        msg: "{{ stage1.output | default([]) }}"
+      changed_when: false
