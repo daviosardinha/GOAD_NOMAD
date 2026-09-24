@@ -3,7 +3,7 @@
 Status: SOURCE/READ-ONLY AUDIT; no vulnerability overlay applied by this document.
 Reference: [GOAD Part 4 — Network Poisoning and NTLM Relaying](https://app.notion.com/p/30c79e9ad7c980beac23e1bb440a74e9)
 Course: [03 — Poison the Wells](https://app.notion.com/p/3d679e9ad7c981eb80dbd1ea9dc69b81)
-Repo basis: \`kingdoms/rdp-access-contract\` at \`befa4132c65efe4eae31b05980250815f2d65ca2\`.
+Repo basis: \`kingdoms/phase03-overlay\`, created from validated Phase 03 readiness baseline \`893720a69bdd8464f1ceaeb0cf2fd81a8bdabaf3\`.
 Known-good live reference: \`cebee3-goad-vmware\` (do **not** reset/destroy). Old \`6ebce2-goad-vmware\` stays powered off when cebee3 runs.
 
 ## Decision
@@ -84,6 +84,6 @@ Use dedicated files such as \`ansible/phase03.yml\`, separate Phase03 DC/member/
 5. Regression re-runs Phase00–02 source and runtime gates plus Phase03 validation; existing RDP contract, Phase02 MSSQL access, DNS bots, machine secure channels, time convergence, router isolation and WS01 later LPE fixtures must still work.
 6. After runtime proof, update Kingdoms Notion Phase03 sections, using **new NORTH screenshots** rather than relabeling historical ESSOS captures as current evidence.
 
-## Immediate state at time of audit
+## Current checkpoint
 
-User preflight: branch \`kingdoms/rdp-access-contract\`, cebee3 exercise mode, 7/7 VMs running, NORTH route 10.4.10.22 through vmnet10 from 10.4.10.254, local dnsmasq bound loopback-only on 53; tools Responder/ntlmrelayx/NetExec installed; both NORTH member SMB targets report signing False. Responder's active listeners are not shown. Nothing in this audit changes the running lab.
+The 2026-09-24 neutral-baseline rerun of \`scripts/validate-phase03-readiness.sh\` completed with **58 PASS / 0 WARN / 0 FAIL** on \`cebee3-goad-vmware\`. Runtime proof details and the safe headless/WPAD diagnostics are preserved in \`docs/kingdoms-phase03-runtime-checkpoint.md\` and \`scripts/phase03/diagnostics/\`. The permanent Phase 03 overlay is still not applied.
