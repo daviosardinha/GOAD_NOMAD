@@ -1,0 +1,53 @@
+---
+- name: Trigger a scoped DHCPv6 renewal on WS01 for Phase 03 observation
+  hosts: ws01
+  gather_facts: false
+  tasks:
+    - name: Renew IPv6 configuration on the NORTH-facing WS01 adapter
+      ansible.windows.win_powershell:
+        script: |
+          $ErrorActionPreference = 'Stop'
+          $Ansible.Changed = $true
+
+          $cfg = Get-NetIPConfiguration |
+              Where-Object {
+                  $_.IPv4Address -and
+                  $_.IPv4Address.IPAddress -eq '10.4.10.31'
+              } |
+              Select-Object -First 1
+
+          if ($null -eq $cfg) {
+              throw 'Could not locate the WS01 adapter carrying 10.4.10.31'
+          }
+
+          $alias = [string]$cfg.InterfaceAlias
+          Write-Output "PHASE03_INTERFACE=$alias"
+
+          $output = & ipconfig.exe /renew6 "$alias" 2>&1
+          $exitCode = $LASTEXITCODE
+          $output | ForEach-Object { Write-Output "IPCONFIG=$_"} 
+
+          if ($exitCode -ne 0) {
+              throw "ipconfig /renew6 failed with exit code $($exitCode)"
+          }
+
+          Start-Sleep -Seconds 2
+
+          Get-NetIPAddress -InterfaceAlias $alias -AddressFamily IPv6 -ErrorAction SilentlyContinue |
+              Sort-Object AddressState,IPAddress |
+              ForEach-Object {
+                  Write-Output ("IPV6={0}|STATE={1}|PREFIX={2}" -f $_.IPAddress,$_.AddressState,$_.PrefixLength)
+              }
+
+          Get-DnsClientServerAddress -InterfaceAlias $alias -AddressFamily IPv6 -ErrorAction SilentlyContinue |
+              ForEach-Object {
+                  foreach ($server in $_.ServerAddresses) {
+                      Write-Output "DNSV6=$server"
+                  }
+              }
+      register: renew6_result
+
+    - name: Emit WS01 renewal evidence
+      ansible.builtin.debug:
+        msg: "{{ renew6_result.output | default([]) }}"
+      changed_when: false
