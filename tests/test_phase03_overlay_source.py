@@ -45,6 +45,11 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         self.assertIn("kingdoms/phase03-overlay", text)
         self.assertIn("validate-phase03-readiness.sh", text)
         self.assertIn("-e phase03_apply=true", text)
+        self.assertIn("ad/GOAD/data/inventory", text)
+        self.assertIn("ad/GOAD/providers/vmware/inventory", text)
+        self.assertIn("--list-hosts", text)
+        self.assertIn("required Phase 03 host missing", text)
+        self.assertNotIn('"$PROVIDER/inventory"', text)
         self.assertLess(
             text.index("validate-phase03-readiness.sh"),
             text.index("ansible-playbook"),
