@@ -307,6 +307,17 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         self.assertIn("| PROVEN |", scope)
         self.assertNotIn("SOCKS relay proof.", runtime)
 
+    def test_status_docs_record_smb_execution_consequence_as_proven(self):
+        runtime = (ROOT / "docs" / "kingdoms-phase03-runtime-checkpoint.md").read_text()
+        scope = (ROOT / "docs" / "kingdoms-phase03-north-scope.md").read_text()
+        self.assertIn("SMB remote execution on CASTELBLACK is **PROVEN**", runtime)
+        self.assertIn("NT AUTHORITY\\\\SYSTEM", runtime)
+        self.assertIn("rpc_s_access_denied", runtime)
+        self.assertIn("RemoteRegistry", runtime)
+        self.assertIn("| SMB remote execution consequence |", scope)
+        self.assertIn("| SMB share authorization consequence |", scope)
+        self.assertNotIn("LSASS/DPAPI/share/SMB-execution consequences.", runtime)
+
     def test_checkpoint_does_not_modify_lab_yet(self):
         text = PLAYBOOK.read_text().lower()
         self.assertNotIn("win_regedit", text)
