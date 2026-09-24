@@ -133,6 +133,10 @@ class Phase03OverlaySourceTests(unittest.TestCase):
             self.assertIn(option, start)
         for option in ("--no-http-server", "--no-wcf-server", "--no-raw-server"):
             self.assertIn(option, start)
+        self.assertIn("-smb2support", preflight)
+        self.assertIn("-smb2support", start)
+        self.assertNotIn("--smb2support", preflight)
+        self.assertNotIn("--smb2support", start)
         self.assertIn('ldaps://$TARGET', start)
         self.assertIn("TCP/445", preflight)
         self.assertIn("Responder is not running", preflight)
