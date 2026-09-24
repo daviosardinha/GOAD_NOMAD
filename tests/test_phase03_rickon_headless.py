@@ -107,7 +107,8 @@ class Phase03RickonHeadlessTests(unittest.TestCase):
         self.assertIn("old FreeRDP PID still exists", text)
         self.assertIn("Runner_PID=", text)
         self.assertIn("Xvfb_PID=", text)
-        self.assertIn('pgrep -P "$old_runner" -x Xvfb', text)
+        self.assertIn('pgrep -P "$old_main"', text)
+        self.assertIn('awk -v p="$old_runner"', text)
         self.assertIn("validate-rickon-session.sh", text)
 
     def test_no_known_lab_passwords(self):
