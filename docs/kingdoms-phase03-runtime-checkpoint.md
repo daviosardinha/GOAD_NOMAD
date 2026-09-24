@@ -58,7 +58,7 @@ Preflight established:
 - `PHASE03RBCD$` initially absent;
 - WS01 SELF has `WriteProperty` on the exact RBCD attribute.
 
-The exact pre-attack baseline is stored locally in mode-0600 `~/.config/kingdoms/phase03-rbcd-baseline.json`.
+The exact pre-attack baseline is retained locally in mode-0600 `~/.config/kingdoms/phase03-rbcd-baseline.json`.
 
 Stage 1 is **PROVEN**:
 
@@ -70,7 +70,7 @@ Stage 2 is **PROVEN**:
 
 - deterministic LocalSystem HTTP callback from WS01 authenticated as `NORTH\WS01$`;
 - ntlmrelayx reported delegation modification success;
-- read-only verification confirmed the WS01 RBCD DACL contains the `PHASE03RBCD$` SID.
+- read-only verification confirmed the WS01 RBCD DACL contained the `PHASE03RBCD$` SID.
 
 S4U consequence is **PROVEN**:
 
@@ -80,26 +80,30 @@ S4U consequence is **PROVEN**:
 - Kerberos-authenticated SMB access listed `ADMIN$`, `C$` and `IPC$`;
 - `C$` was opened and listed successfully without remote command execution.
 
-## Current cleanup gate
+Rollback is **PROVEN**:
 
-The only remaining RBCD task is rollback:
+- WS01 RBCD was restored to the captured baseline;
+- `PHASE03RBCD$` was removed because it did not exist in the baseline;
+- the local candidate password was removed;
+- temporary RBCD Kerberos caches/helper files were removed;
+- the mode-0600 baseline file was retained for audit/verification;
+- rollback markers returned `RBCD_MATCH=True`, `CANDIDATE_MATCH=True` and `RESET_COMPLETE=True`.
 
-1. restore WS01's RBCD attribute to the captured baseline;
-2. remove `PHASE03RBCD$` because it did not exist in the baseline;
-3. remove the local candidate password and temporary Kerberos caches;
-4. retain the mode-0600 baseline file as rollback evidence.
+RBCD is therefore closed end-to-end: **preflight -> relay -> mutation -> S4U consequence -> exact rollback**.
 
-Use `scripts/phase03/rollback-rbcd.sh`.
+## Remaining Phase 03 engineering
 
-## Remaining Phase 03 engineering after RBCD rollback
-
-- promote proven mitm6/WPAD and HTTP->LDAPS flows into permanent apply/prove/reset infrastructure;
 - interactive/SOCKS relay proof;
 - LSASS/DPAPI/share/SMB-execution consequences;
 - Shadow Credentials controlled fixture;
 - ADIDNS scenario;
 - WebDAV/.lnk/.url victim-interaction scenario;
+- promote proven mitm6/WPAD and HTTP->LDAPS flows into permanent apply/prove/reset infrastructure;
 - final regression and Notion teaching sections/screenshots.
+
+## Next acceptance gate
+
+The next attack family is **interactive/SOCKS SMB relay** in NORTH. It should reuse the already-proven CASTELBLACK relay surface and must remain independently stoppable/resettable.
 
 ## Regression rule
 
