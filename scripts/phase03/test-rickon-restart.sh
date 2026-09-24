@@ -10,7 +10,7 @@ VALIDATOR="$ROOT/scripts/phase03/validate-rickon-session.sh"
 cd "$ROOT" || exit 1
 
 old_main="$(systemctl --user show "$SERVICE" -p MainPID --value)"
-old_socket="$(sudo ss -ntp 2>/dev/null | grep "${WS01}:3389" || true)"
+old_socket="$(ss -ntp 2>/dev/null | grep "${WS01}:3389" || true)"
 old_freerdp="$(sed -n 's/.*pid=\([0-9]\+\).*/\1/p' <<<"$old_socket" | head -n1)"
 old_runner="$(
   pgrep -P "$old_main" -f '/usr/bin/xvfb-run|xvfb-run' 2>/dev/null |
@@ -53,7 +53,7 @@ systemctl --user restart "$SERVICE"
 sleep 8
 
 new_main="$(systemctl --user show "$SERVICE" -p MainPID --value)"
-new_socket="$(sudo ss -ntp 2>/dev/null | grep "${WS01}:3389" || true)"
+new_socket="$(ss -ntp 2>/dev/null | grep "${WS01}:3389" || true)"
 new_freerdp="$(sed -n 's/.*pid=\([0-9]\+\).*/\1/p' <<<"$new_socket" | head -n1)"
 
 echo
