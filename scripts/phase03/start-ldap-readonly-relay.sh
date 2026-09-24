@@ -30,7 +30,7 @@ sudo -v || exit 1
 rm -f "$LOG"
 
 echo '===== START READ-ONLY LDAPS RELAY ====='
-sudo stdbuf -oL -eL "$NTLMRELAYX"   -t "ldaps://$TARGET"   --smb2support   --no-dump   --no-da   --no-acl   --no-http-server   --no-wcf-server   --no-raw-server   >"$LOG" 2>&1 &
+sudo stdbuf -oL -eL "$NTLMRELAYX"   -t "ldaps://$TARGET"   -smb2support   --no-dump   --no-da   --no-acl   --no-http-server   --no-wcf-server   --no-raw-server   >"$LOG" 2>&1 &
 
 sleep 4
 
