@@ -178,6 +178,7 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         self.assertIn("python3 -m json.tool", wrapper)
         for forbidden in ("Set-AD", "New-ADComputer", "Remove-ADComputer"):
             self.assertNotIn(forbidden, playbook)
+
     def test_all_phase03_shell_scripts_parse(self):
         phase03 = ROOT / "scripts" / "phase03"
         for script in sorted(phase03.rglob("*.sh")):
@@ -201,6 +202,7 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         self.assertIn("PHASE03_RBCD_STAGE1_RBCD_PRESENT", verify)
         for forbidden in ("Set-AD", "New-ADComputer", "Remove-ADComputer"):
             self.assertNotIn(forbidden, verify)
+
     def test_ws01_system_http_trigger_is_temporary_and_system_scoped(self):
         shell = (DIAG / "trigger-ws01-system-http.sh").read_text()
         playbook = (ROOT / "ansible" / "phase03-trigger-ws01-system-http.yml").read_text()
@@ -212,6 +214,7 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         self.assertIn("Unregister-ScheduledTask", playbook)
         self.assertIn("ntlmrelayx is not running", shell)
         self.assertIn("TCP/80", shell)
+
     def test_rbcd_stage2_verifier_is_read_only(self):
         wrapper = (ROOT / "scripts" / "phase03" / "verify-rbcd-stage2.sh").read_text()
         playbook = (ROOT / "ansible" / "phase03-rbcd-verify-stage2.yml").read_text()
@@ -226,6 +229,7 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         self.assertIn("phase03-rbcd-verify-stage2.yml", wrapper)
         for forbidden in ("Set-AD", "New-ADComputer", "Remove-ADComputer"):
             self.assertNotIn(forbidden, playbook)
+
     def test_rbcd_s4u_proof_uses_ticket_cache_and_read_only_cifs_check(self):
         script = (ROOT / "scripts" / "phase03" / "prove-rbcd-s4u.sh").read_text()
         self.assertIn("impacket-getST", script)
@@ -235,7 +239,7 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         self.assertIn('KRB5CCNAME="$TGT_CACHE"', script)
         self.assertIn('KRB5CCNAME="$ST_CACHE"', script)
         self.assertIn('export KRB5CCNAME="FILE:$TGT_CACHE"', script)
-        self.assertIn('printf "%s\\n" "$PASSWORD" | "$KINIT"', script)
+        self.assertIn('printf "%s\n" "$PASSWORD" | "$KINIT"', script)
         self.assertNotIn("sh -c", script)
         self.assertNotIn('KRB5CCNAME="FILE:$TGT_CACHE" \\\n    "$GETST"', script)
         self.assertNotIn('export KRB5CCNAME="FILE:$ST_CACHE"', script)
@@ -244,6 +248,7 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         self.assertIn("-inputfile", script)
         self.assertNotIn("wmiexec", script)
         self.assertNotIn("psexec", script)
+
     def test_rbcd_rollback_restores_baseline_and_cleans_only_ephemera(self):
         script = (ROOT / "scripts" / "phase03" / "rollback-rbcd.sh").read_text()
         playbook = (ROOT / "ansible" / "phase03-rbcd-rollback.yml").read_text()
@@ -289,6 +294,18 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         self.assertIn("NORTH\\EDDARD.STARK", runtime)
         self.assertIn("| Interactive SMB relay |", scope)
         self.assertIn("| SOCKS relay |", scope)
+
+    def test_status_docs_record_socks_smb_relay_as_proven(self):
+        runtime = (ROOT / "docs" / "kingdoms-phase03-runtime-checkpoint.md").read_text()
+        scope = (ROOT / "docs" / "kingdoms-phase03-north-scope.md").read_text()
+        self.assertIn("SOCKS SMB relay to CASTELBLACK is **PROVEN**", runtime)
+        self.assertIn("127.0.0.1:1080", runtime)
+        self.assertIn("AdminStatus FALSE", runtime)
+        self.assertIn("AdminStatus TRUE", runtime)
+        self.assertIn("STATUS_ACCESS_DENIED", runtime)
+        self.assertIn("| SOCKS relay |", scope)
+        self.assertIn("| PROVEN |", scope)
+        self.assertNotIn("SOCKS relay proof.", runtime)
 
     def test_checkpoint_does_not_modify_lab_yet(self):
         text = PLAYBOOK.read_text().lower()
