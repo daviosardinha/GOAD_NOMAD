@@ -110,6 +110,10 @@ class Phase03RickonHeadlessTests(unittest.TestCase):
         self.assertIn('pgrep -P "$old_main"', text)
         self.assertIn('awk -v p="$old_runner"', text)
         self.assertIn("validate-rickon-session.sh", text)
+        self.assertNotIn("sudo ss", text)
+
+        session_text = SESSION_VALIDATE.read_text()
+        self.assertNotIn("sudo ss", session_text)
 
     def test_no_known_lab_passwords(self):
         corpus = "\n".join(p.read_text(errors="replace") for p in (RUNNER, CHECK, INSTALL, UNIT)).lower()
