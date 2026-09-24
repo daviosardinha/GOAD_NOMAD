@@ -10,11 +10,12 @@ INSTALL = ROOT / "scripts" / "phase03" / "install-rickon-headless.sh"
 UNIT = ROOT / "ops" / "systemd" / "kingdoms-phase03-rickon.service"
 CERT_READ = ROOT / "scripts" / "phase03" / "read-ws01-rdp-cert.sh"
 CERT_PLAYBOOK = ROOT / "ansible" / "phase03-read-ws01-rdp-cert.yml"
+CERT_PROBE = ROOT / "scripts" / "phase03" / "probe-ws01-rdp-cert.py"
 
 
 class Phase03RickonHeadlessTests(unittest.TestCase):
     def test_required_files_exist_and_parse(self):
-        for path in (RUNNER, CHECK, INSTALL, UNIT, CERT_READ, CERT_PLAYBOOK):
+        for path in (RUNNER, CHECK, INSTALL, UNIT, CERT_READ, CERT_PLAYBOOK, CERT_PROBE):
             self.assertTrue(path.is_file(), path)
         for path in (RUNNER, CHECK, INSTALL, CERT_READ):
             result = subprocess.run(
@@ -71,6 +72,16 @@ class Phase03RickonHeadlessTests(unittest.TestCase):
         self.assertIn("RDP_SHA256=", text)
         self.assertIn("changed_when: false", text)
         self.assertIn("ws01_rdp_cert.output", text)
+
+    def test_network_certificate_probe_is_non_authenticating(self):
+        text = CERT_PROBE.read_text()
+        self.assertIn('DEFAULT_HOST = "10.4.10.31"', text)
+        self.assertIn("RDP_NEGOTIATION_REQUEST", text)
+        self.assertIn("getpeercert(binary_form=True)", text)
+        self.assertIn("hashlib.sha256", text)
+        self.assertIn("RDP_SHA256=", text)
+        self.assertNotIn("username", text.lower())
+        self.assertNotIn("password", text.lower())
 
     def test_no_known_lab_passwords(self):
         corpus = "\n".join(p.read_text(errors="replace") for p in (RUNNER, CHECK, INSTALL, UNIT)).lower()
