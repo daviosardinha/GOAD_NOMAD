@@ -44,7 +44,7 @@ printf 'ActiveState=%s\nSubState=%s\nMainPID=%s\nNRestarts=%s\n' "$active" "$sub
 
 echo
 echo '===== WS01 SOCKET ====='
-socket_lines="$(sudo ss -ntp 2>/dev/null | grep "${WS01}:3389" || true)"
+socket_lines="$(ss -ntp 2>/dev/null | grep "${WS01}:3389" || true)"
 printf '%s\n' "$socket_lines"
 socket_count="$(grep -c . <<<"$socket_lines" || true)"
 [[ "$socket_count" -eq 1 ]] &&
