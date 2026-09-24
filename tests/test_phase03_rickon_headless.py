@@ -96,6 +96,8 @@ class Phase03RickonHeadlessTests(unittest.TestCase):
         self.assertIn("rickon\\.stark", playbook)
         self.assertIn("Active", playbook)
         self.assertIn("changed_when: false", playbook)
+        self.assertIn("$($LASTEXITCODE):", playbook)
+        self.assertNotIn("$LASTEXITCODE:", playbook)
 
     def test_no_known_lab_passwords(self):
         corpus = "\n".join(p.read_text(errors="replace") for p in (RUNNER, CHECK, INSTALL, UNIT)).lower()
