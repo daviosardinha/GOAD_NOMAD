@@ -6,7 +6,8 @@ PACDIR="${PACDIR:-/tmp/kingdoms-wpad}"
 HTTP_LOG="${HTTP_LOG:-/tmp/kingdoms-wpad-http.log}"
 PCAP="${PCAP:-/tmp/kingdoms-wpad.pcap}"
 
-rm -f "$HTTP_LOG" "$PCAP"
+rm -f "$HTTP_LOG" /tmp/kingdoms-wpad-tcpdump.log
+sudo rm -f "$PCAP"
 test -f "$PACDIR/wpad.dat"
 
 sudo python3 -m http.server 80 --bind :: --directory "$PACDIR" >"$HTTP_LOG" 2>&1 &
@@ -17,7 +18,9 @@ sudo ss -lntp | grep ':80 ' || {
   exit 1
 }
 
-sudo tcpdump -i "$IFACE" -nn -U -s 0 -w "$PCAP"   '(udp port 53 or udp port 546 or udp port 547 or tcp port 80)'   >/tmp/kingdoms-wpad-tcpdump.log 2>&1 &
+sudo tcpdump -i "$IFACE" -nn -U -s 0 -Z "$USER" -w "$PCAP" \
+  '(udp port 53 or udp port 546 or udp port 547 or tcp port 80)' \
+  >/tmp/kingdoms-wpad-tcpdump.log 2>&1 &
 TCPDUMP_PID=$!
 sleep 2
 kill -0 "$TCPDUMP_PID"
