@@ -8,13 +8,15 @@ RUNNER = ROOT / "scripts" / "phase03" / "rickon-headless.sh"
 CHECK = ROOT / "scripts" / "phase03" / "check-rickon-prereqs.sh"
 INSTALL = ROOT / "scripts" / "phase03" / "install-rickon-headless.sh"
 UNIT = ROOT / "ops" / "systemd" / "kingdoms-phase03-rickon.service"
+CERT_READ = ROOT / "scripts" / "phase03" / "read-ws01-rdp-cert.sh"
+CERT_PLAYBOOK = ROOT / "ansible" / "phase03-read-ws01-rdp-cert.yml"
 
 
 class Phase03RickonHeadlessTests(unittest.TestCase):
     def test_required_files_exist_and_parse(self):
-        for path in (RUNNER, CHECK, INSTALL, UNIT):
+        for path in (RUNNER, CHECK, INSTALL, UNIT, CERT_READ, CERT_PLAYBOOK):
             self.assertTrue(path.is_file(), path)
-        for path in (RUNNER, CHECK, INSTALL):
+        for path in (RUNNER, CHECK, INSTALL, CERT_READ):
             result = subprocess.run(
                 ["bash", "-n", str(path)],
                 capture_output=True,
@@ -61,6 +63,14 @@ class Phase03RickonHeadlessTests(unittest.TestCase):
         self.assertNotIn("systemctl --user start", text)
         self.assertNotIn("systemctl --user enable", text)
         self.assertIn("service was NOT enabled or started", text)
+
+    def test_certificate_probe_is_read_only_and_emits_sha256(self):
+        text = CERT_PLAYBOOK.read_text()
+        self.assertIn("hosts: ws01", text)
+        self.assertIn("register: ws01_rdp_cert", text)
+        self.assertIn("RDP_SHA256=", text)
+        self.assertIn("changed_when: false", text)
+        self.assertIn("ws01_rdp_cert.output", text)
 
     def test_no_known_lab_passwords(self):
         corpus = "\n".join(p.read_text(errors="replace") for p in (RUNNER, CHECK, INSTALL, UNIT)).lower()
