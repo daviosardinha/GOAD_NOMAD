@@ -29,35 +29,32 @@ The following were demonstrated in NORTH during Phase 03 validation sessions:
 - MSSQL `xp_dirtree` outbound-authentication callback from CASTELBLACK as the `NORTH\sql_svc` service identity.
 - PrinterBug/MS-RPRN coercion callbacks against the tested NORTH hosts.
 - MS-EFSR/PetitPotam-family callback proof on CASTELBLACK. Do not claim all NORTH hosts until each host has fresh evidence.
-- WS01 IPv6 support and previous acceptance of rogue DHCPv6 information during scoped mitm6 testing.
-- WPAD-related DNS discovery behavior from WS01.
-- Manual retrieval of a harmless `wpad.dat` over HTTP, proving connectivity only.
+- Deterministic WS01 DHCPv6 takeover was captured during scoped mitm6 testing: Solicit -> Advertise -> Request -> Reply.
+- After the DHCPv6 exchange, WS01 used the attacker link-local IPv6 address `fe80::250:56ff:fec0:a` as IPv6 DNS.
+- WS01 then queried `wpad.north.sevenkingdoms.local` through the attacker-controlled IPv6 DNS path.
+- Windows automatically requested `GET /wpad.dat` from WS01 (`10.4.10.31`) and received HTTP 200. No manual browser navigation was used for this acceptance proof.
 - Rickon Stark authenticated graphical session on WS01 through a headless FreeRDP/Xvfb client.
 - Clean headless RDP teardown: FreeRDP exits, its Xvfb display is removed, and the existing Robb/CASTELBLACK bot remains unaffected.
 - Headless Rickon credential handling using a mode-0600 local credential file, with the password absent from FreeRDP argv and environment.
 
 ## WPAD status
 
-The WPAD chain is only partially complete.
+The deterministic WS01 WPAD chain is **PROVEN**.
 
-Proven:
+Validated acceptance sequence from the same packet capture:
 
-1. Rickon authenticated on WS01.
-2. WPAD auto-detection enabled in the user session.
-3. Manual proxy disabled and no manual PAC URL configured.
-4. Automatic DNS lookups for:
-   - `wpad.north.sevenkingdoms.local`
-   - `wpad.sevenkingdoms.local`
-5. Those queries were observed from WS01 (`10.4.10.31`).
-6. A harmless PAC file can be served and fetched manually.
+1. Rickon is authenticated and Active on WS01.
+2. WS01 emits DHCPv6 **Solicit**.
+3. The scoped attacker path returns DHCPv6 **Advertise**.
+4. WS01 emits DHCPv6 **Request**.
+5. The attacker path returns DHCPv6 **Reply**.
+6. WS01 reports attacker IPv6 DNS `fe80::250:56ff:fec0:a`.
+7. WS01 sends WPAD DNS queries to that attacker-controlled IPv6 DNS path.
+8. WS01 automatically sends `GET /wpad.dat` over HTTP and receives 200.
 
-Not yet proven:
+The proof is preserved as reproducible logic in `scripts/phase03/validate-wpad-chain.sh`. Raw PCAP/log evidence remains operator-side and is intentionally not committed.
 
-- A deterministic current-run DHCPv6 takeover by mitm6.
-- WS01 using attacker-controlled DNS as part of that deterministic flow.
-- An automatic HTTP `GET /wpad.dat` caused by Windows/browser auto-discovery.
-
-Manual navigation to `http://wpad/wpad.dat` does not satisfy the acceptance criterion.
+Manual navigation to `http://wpad/wpad.dat` is not used as acceptance evidence.
 
 ## Headless victim architecture
 
@@ -84,7 +81,7 @@ The permanent NORTH Phase 03 overlay still needs:
 - `scripts/apply-phase03.sh`
 - `scripts/validate-phase03-runtime.sh`
 - `scripts/reset-phase03.sh`
-- deterministic WPAD/mitm6 scenario
+- promote the proven WPAD/mitm6 diagnostics into a permanent apply/prove/reset scenario
 - explicit LDAP/LDAPS training posture in source
 - controlled/reversible RBCD fixture
 - optional Shadow Credentials fixture after ACL preflight
