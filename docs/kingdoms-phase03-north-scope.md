@@ -42,8 +42,8 @@ Historical Drop The MIC/NTLMv1 material remains optional/conditional. NORTH has 
 | PrinterBug | Callback behavior observed | PROVEN |
 | PetitPotam/MS-EFSR | Callback proven on CASTELBLACK | PROVEN ON CASTELBLACK |
 | Interactive SMB relay | Robb and Eddard relayed to CASTELBLACK; retained local SMB shells created; Robb could enumerate shares but C$ access was denied, while Eddard opened and listed C$ | PROVEN |
-| SOCKS relay | Not yet runtime-proven in NORTH | GAP |
-| LSASS/DPAPI/shares/execution consequences | Not yet runtime-proven | GAP |
+| SOCKS relay | Robb and Eddard sessions retained behind SOCKS5 on 127.0.0.1:1080 and reused with credential-less SMB clients; Robb C$ denied, Eddard C$ listed | PROVEN |
+| LSASS/DPAPI/shares/execution consequences | Not yet runtime-proven as a separated consequence set | GAP |
 | Shadow Credentials | Not yet configured/proven | GAP |
 | ADIDNS | Generic capability exists, no Phase 03 fixture yet | GAP |
 | WebDAV/.lnk/.url | No dedicated WS01 Phase 03 victim flow yet | GAP |
@@ -60,8 +60,8 @@ Historical Drop The MIC/NTLMv1 material remains optional/conditional. NORTH has 
 
 ## Next acceptance gate
 
-1. Stop the interactive relay/Responder runtime cleanly and confirm ports 445/80/11000+ are released.
-2. Start the SOCKS relay profile against the proven CASTELBLACK target.
-3. Prove that a relayed NORTH identity can be reused through the SOCKS proxy.
-4. Keep the listener lifecycle and cleanup independent from the poisoning/coercion source.
-5. Continue into the post-relay consequence set only after the SOCKS session itself is runtime-proven.
+1. Keep the neutral runtime established after SOCKS cleanup.
+2. Build and prove the post-relay consequence set against the already-proven CASTELBLACK SMB relay surface.
+3. Separate authorization/read-only share access from administrative remote-execution and credential-material consequences.
+4. Preserve Robb/Eddard as the explicit limited-vs-administrative comparison.
+5. Stop and validate each consequence independently before moving to Shadow Credentials.
