@@ -211,6 +211,15 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         self.assertIn("Unregister-ScheduledTask", playbook)
         self.assertIn("ntlmrelayx is not running", shell)
         self.assertIn("TCP/80", shell)
+    def test_rbcd_stage2_verifier_is_read_only(self):
+        wrapper = (ROOT / "scripts" / "phase03" / "verify-rbcd-stage2.sh").read_text()
+        playbook = (ROOT / "ansible" / "phase03-rbcd-verify-stage2.yml").read_text()
+        self.assertIn("RawSecurityDescriptor", playbook)
+        self.assertIn("PHASE03_RBCD_STAGE2_DELEGATION_PRESENT", playbook)
+        self.assertIn("PHASE03RBCD$", playbook)
+        self.assertIn("phase03-rbcd-verify-stage2.yml", wrapper)
+        for forbidden in ("Set-AD", "New-ADComputer", "Remove-ADComputer"):
+            self.assertNotIn(forbidden, playbook)
     def test_checkpoint_does_not_modify_lab_yet(self):
         text = PLAYBOOK.read_text().lower()
         self.assertNotIn("win_regedit", text)
