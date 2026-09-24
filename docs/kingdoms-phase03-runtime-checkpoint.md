@@ -103,9 +103,34 @@ Interactive SMB relay to CASTELBLACK is **PROVEN**.
 
 The interactive relay runtime was then stopped and verified clean: no listeners remained on TCP/445, TCP/80 or `127.0.0.1:11000+`, and no ntlmrelayx/Responder process remained.
 
+## SOCKS SMB relay
+
+SOCKS SMB relay to CASTELBLACK is **PROVEN**.
+
+- ntlmrelayx exposed its SOCKS5 proxy on `127.0.0.1:1080` while relaying SMB authentication to `smb://10.4.10.22`.
+- Responder remained poisoner-only with SMB and HTTP servers disabled.
+- The built-in Robb/Eddard traffic generators naturally supplied repeatable NORTH authentication.
+- ntlmrelayx retained both identities simultaneously:
+  - `NORTH\ROBB.STARK` with `AdminStatus FALSE`;
+  - `NORTH\EDDARD.STARK` with `AdminStatus TRUE`.
+- A dedicated temporary ProxyChains configuration pointed only to `socks5 127.0.0.1 1080`; the global ProxyChains configuration was not modified.
+- `impacket-smbclient -no-pass` reused Robb's retained session through SOCKS: share enumeration succeeded, while `C$` returned `STATUS_ACCESS_DENIED`.
+- The same client then reused Eddard's retained session through SOCKS: `C$` opened and its root filesystem was listed successfully.
+- ntlmrelayx logged the corresponding `SOCKS: Proxying client session` events for both identities.
+
+This proves the same authorization rule as interactive relay: SOCKS retains and reuses the relayed identity; it does not create new privilege.
+
+Cleanup is **PROVEN**:
+
+- Responder and ntlmrelayx were stopped.
+- No attack process remained.
+- TCP/80, 135, 445, 1080, 5985, 5986, 6666 and 9389 were free.
+- The temporary ProxyChains configuration was removed.
+
+SOCKS SMB relay is therefore closed runtime-wise: **poison -> relay -> retained SOCKS session -> credential-less client reuse -> privilege-dependent authorization -> clean shutdown**.
+
 ## Remaining Phase 03 engineering
 
-- SOCKS relay proof.
 - LSASS/DPAPI/share/SMB-execution consequences.
 - Shadow Credentials controlled fixture.
 - ADIDNS scenario.
@@ -115,7 +140,7 @@ The interactive relay runtime was then stopped and verified clean: no listeners 
 
 ## Next acceptance gate
 
-The next acceptance gate is **SOCKS SMB relay** in NORTH, reusing the same proven CASTELBLACK relay surface but demonstrating durable session reuse through the SOCKS proxy rather than the one-port-per-session interactive client.
+The next acceptance gate is the **post-relay consequence set** on the already-proven CASTELBLACK SMB relay surface. Keep the consequences separated so we can show which actions require an administrative relayed identity and cleanly distinguish share access, remote execution and credential-material access.
 
 ## Regression rule
 
