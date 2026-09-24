@@ -200,6 +200,17 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         self.assertIn("PHASE03_RBCD_STAGE1_RBCD_PRESENT", verify)
         for forbidden in ("Set-AD", "New-ADComputer", "Remove-ADComputer"):
             self.assertNotIn(forbidden, verify)
+    def test_ws01_system_http_trigger_is_temporary_and_system_scoped(self):
+        shell = (DIAG / "trigger-ws01-system-http.sh").read_text()
+        playbook = (ROOT / "ansible" / "phase03-trigger-ws01-system-http.yml").read_text()
+        self.assertIn("hosts: ws01", playbook)
+        self.assertIn("New-ScheduledTaskPrincipal -UserId 'SYSTEM'", playbook)
+        self.assertIn("Invoke-WebRequest", playbook)
+        self.assertIn("-UseDefaultCredentials", playbook)
+        self.assertIn("10.4.10.254", playbook)
+        self.assertIn("Unregister-ScheduledTask", playbook)
+        self.assertIn("ntlmrelayx is not running", shell)
+        self.assertIn("TCP/80", shell)
     def test_checkpoint_does_not_modify_lab_yet(self):
         text = PLAYBOOK.read_text().lower()
         self.assertNotIn("win_regedit", text)
