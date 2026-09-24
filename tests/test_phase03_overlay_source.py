@@ -158,6 +158,17 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         for forbidden in ("Set-AD", "New-ADComputer", "Remove-ADComputer"):
             self.assertNotIn(forbidden, playbook)
 
+    def test_rbcd_baseline_capture_preserves_exact_pre_attack_state(self):
+        wrapper = (ROOT / "scripts" / "phase03" / "capture-rbcd-baseline.sh").read_text()
+        playbook = (ROOT / "ansible" / "phase03-rbcd-baseline.yml").read_text()
+        self.assertIn("msDS-AllowedToActOnBehalfOfOtherIdentity", playbook)
+        self.assertIn("RBCDBase64", playbook)
+        self.assertIn("CandidateExisted", playbook)
+        self.assertIn("phase03-rbcd-baseline.json", playbook)
+        self.assertIn("mode: '0600'", playbook)
+        self.assertIn("python3 -m json.tool", wrapper)
+        for forbidden in ("Set-AD", "New-ADComputer", "Remove-ADComputer"):
+            self.assertNotIn(forbidden, playbook)
     def test_checkpoint_does_not_modify_lab_yet(self):
         text = PLAYBOOK.read_text().lower()
         self.assertNotIn("win_regedit", text)
