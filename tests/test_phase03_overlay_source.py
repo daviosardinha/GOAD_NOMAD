@@ -225,6 +225,18 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         self.assertIn("phase03-rbcd-verify-stage2.yml", wrapper)
         for forbidden in ("Set-AD", "New-ADComputer", "Remove-ADComputer"):
             self.assertNotIn(forbidden, playbook)
+    def test_rbcd_s4u_proof_uses_ticket_cache_and_read_only_cifs_check(self):
+        script = (ROOT / "scripts" / "phase03" / "prove-rbcd-s4u.sh").read_text()
+        self.assertIn("impacket-getST", script)
+        self.assertIn("-impersonate", script)
+        self.assertIn("cifs/$TARGET_FQDN", script)
+        self.assertIn("PHASE03RBCD$", script)
+        self.assertIn("KRB5CCNAME", script)
+        self.assertIn("kinit", script)
+        self.assertIn("use C$", script)
+        self.assertIn("-inputfile", script)
+        self.assertNotIn("wmiexec", script)
+        self.assertNotIn("psexec", script)
     def test_checkpoint_does_not_modify_lab_yet(self):
         text = PLAYBOOK.read_text().lower()
         self.assertNotIn("win_regedit", text)
