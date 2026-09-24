@@ -41,7 +41,8 @@ Historical Drop The MIC/NTLMv1 material remains optional/conditional. NORTH has 
 | RBCD rollback | WS01 RBCD returned to baseline; `PHASE03RBCD$`, password and temporary ticket caches removed | PROVEN |
 | PrinterBug | Callback behavior observed | PROVEN |
 | PetitPotam/MS-EFSR | Callback proven on CASTELBLACK | PROVEN ON CASTELBLACK |
-| Interactive/SOCKS relay | Not yet runtime-proven in NORTH | GAP |
+| Interactive SMB relay | Robb and Eddard relayed to CASTELBLACK; retained local SMB shells created; Robb could enumerate shares but C$ access was denied, while Eddard opened and listed C$ | PROVEN |
+| SOCKS relay | Not yet runtime-proven in NORTH | GAP |
 | LSASS/DPAPI/shares/execution consequences | Not yet runtime-proven | GAP |
 | Shadow Credentials | Not yet configured/proven | GAP |
 | ADIDNS | Generic capability exists, no Phase 03 fixture yet | GAP |
@@ -59,7 +60,8 @@ Historical Drop The MIC/NTLMv1 material remains optional/conditional. NORTH has 
 
 ## Next acceptance gate
 
-1. Build the interactive/SOCKS SMB relay preflight around the proven CASTELBLACK relay target.
-2. Prove that a relayed NORTH identity can be retained and reused through the SOCKS proxy.
-3. Keep the listener lifecycle and cleanup independent from the poisoning/coercion source.
-4. Continue into the post-relay consequence set only after the SOCKS session itself is runtime-proven.
+1. Stop the interactive relay/Responder runtime cleanly and confirm ports 445/80/11000+ are released.
+2. Start the SOCKS relay profile against the proven CASTELBLACK target.
+3. Prove that a relayed NORTH identity can be reused through the SOCKS proxy.
+4. Keep the listener lifecycle and cleanup independent from the poisoning/coercion source.
+5. Continue into the post-relay consequence set only after the SOCKS session itself is runtime-proven.
