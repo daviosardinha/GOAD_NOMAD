@@ -145,6 +145,19 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         self.assertNotIn("--shadow-credentials", start)
         self.assertNotIn("--add-computer", start)
 
+    def test_rbcd_preflight_is_read_only_and_scoped_to_ws01(self):
+        wrapper = (ROOT / "scripts" / "phase03" / "check-rbcd-prereqs.sh").read_text()
+        playbook = (ROOT / "ansible" / "phase03-rbcd-preflight.yml").read_text()
+        self.assertIn("hosts: dc02", playbook)
+        self.assertIn("Get-ADComputer -Identity 'WS01'", playbook)
+        self.assertIn("msDS-AllowedToActOnBehalfOfOtherIdentity", playbook)
+        self.assertIn("PHASE03_RBCD_SELF_CAN_WRITE", playbook)
+        self.assertIn("PHASE03_RBCD_MAQ", playbook)
+        self.assertIn("PHASE03RBCD$", playbook)
+        self.assertIn("phase03-rbcd-preflight.yml", wrapper)
+        for forbidden in ("Set-AD", "New-ADComputer", "Remove-ADComputer"):
+            self.assertNotIn(forbidden, playbook)
+
     def test_checkpoint_does_not_modify_lab_yet(self):
         text = PLAYBOOK.read_text().lower()
         self.assertNotIn("win_regedit", text)
