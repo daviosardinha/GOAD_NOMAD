@@ -7,6 +7,8 @@ ROOT="${ROOT:-$HOME/Documents/GOAD_NOMAD}"
 INSTANCE="${INSTANCE:-cebee3-goad-vmware}"
 PROVIDER="${PROVIDER:-$ROOT/workspace/$INSTANCE/provider}"
 PLAYBOOK="$ROOT/ansible/phase03.yml"
+DATA_INVENTORY="$ROOT/ad/GOAD/data/inventory"
+PROVIDER_INVENTORY="${KINGDOMS_PHASE03_INVENTORY:-$ROOT/ad/GOAD/providers/vmware/inventory}"
 
 usage() {
   cat <<'EOF'
@@ -40,6 +42,16 @@ branch="$(git branch --show-current)"
 
 [[ -d "$PROVIDER" ]] || {
   echo "FAIL: provider directory missing: $PROVIDER" >&2
+  exit 1
+}
+
+[[ -f "$DATA_INVENTORY" ]] || {
+  echo "FAIL: GOAD data inventory missing: $DATA_INVENTORY" >&2
+  exit 1
+}
+
+[[ -f "$PROVIDER_INVENTORY" ]] || {
+  echo "FAIL: VMware inventory missing: $PROVIDER_INVENTORY" >&2
   exit 1
 }
 
