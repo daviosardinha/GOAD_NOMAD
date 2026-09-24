@@ -267,6 +267,16 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         self.assertIn("| RBCD rollback |", scope)
         self.assertIn("RBCD is therefore closed end-to-end", runtime)
 
+    def test_interactive_smb_relay_listener_is_scoped_to_castelblack(self):
+        script = (ROOT / "scripts" / "phase03" / "start-smb-interactive-relay.sh").read_text()
+        self.assertIn("10.4.10.22", script)
+        self.assertIn("vmnet10", script)
+        self.assertIn("-smb2support", script)
+        self.assertIn("  -i \\", script)
+        self.assertIn("--keep-relaying", script)
+        self.assertIn("127.0.0.1:11000+", script)
+        self.assertNotIn("-socks", script)
+
     def test_checkpoint_does_not_modify_lab_yet(self):
         text = PLAYBOOK.read_text().lower()
         self.assertNotIn("win_regedit", text)
