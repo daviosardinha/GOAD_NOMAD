@@ -530,6 +530,19 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         self.assertIn("F5", script)
         self.assertIn("PHASE03_WEBDAV_RICKON_DESKTOP_REFRESH=True", script)
 
+    def test_webdav_explicit_interaction_helpers_exist_and_parse(self):
+        required = [
+            ROOT / "scripts" / "phase03" / "arm-webdav-shortcut-interaction.sh",
+            ROOT / "scripts" / "phase03" / "diagnostics" / "trigger-rickon-webdav-shortcut.sh",
+            ROOT / "ansible" / "phase03-webdav-shortcut-arm.yml",
+        ]
+        for item in required:
+            with self.subTest(item=item):
+                self.assertTrue(item.is_file(), item)
+        for script in required[:2]:
+            result = subprocess.run(["bash", "-n", str(script)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_checkpoint_does_not_modify_lab_yet(self):
         text = PLAYBOOK.read_text().lower()
         self.assertNotIn("win_regedit", text)
