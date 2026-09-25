@@ -803,6 +803,33 @@ class Phase03OverlaySourceTests(unittest.TestCase):
             scope,
         )
 
+    def test_phase03_final_regression_orchestrates_closed_contracts(self):
+        script = (ROOT / "scripts" / "validate-phase03-final-regression.sh").read_text()
+
+        self.assertIn("kingdoms/phase03-overlay", script)
+        self.assertIn("arp.cache", script)
+        self.assertIn("validate-phase03-runtime.sh", script)
+        self.assertIn("check-rbcd-prereqs.sh", script)
+        self.assertIn("check-shadow-prereqs.sh", script)
+        self.assertIn("check-adidns-prereqs.sh", script)
+        self.assertIn("check-webdav-shortcut-prereqs.sh", script)
+        self.assertIn("verify-wpad-reset.sh", script)
+        self.assertIn("verify-http-ldaps-callback-clean.sh", script)
+        self.assertIn("validate-phase02-readiness.sh", script)
+        self.assertIn("validate-rdp-runtime.sh --phase01 --bot-mode headless", script)
+        self.assertIn("validate-network-segmentation-runtime.sh", script)
+        self.assertIn("validate-ws01-runtime.sh", script)
+        self.assertIn("validate-rickon-session.sh", script)
+        self.assertIn("PHASE03_FINAL_REGRESSION_COMPLETE=True", script)
+        self.assertNotIn("validate-kingdoms-release-acceptance.sh", script)
+
+        result = subprocess.run(
+            ["bash", "-n", str(ROOT / "scripts" / "validate-phase03-final-regression.sh")],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_checkpoint_does_not_modify_lab_yet(self):
         text = PLAYBOOK.read_text().lower()
         self.assertNotIn("win_regedit", text)
