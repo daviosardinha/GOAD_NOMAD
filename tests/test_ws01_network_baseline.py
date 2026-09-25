@@ -36,6 +36,14 @@ class Ws01NetworkBaselineTests(unittest.TestCase):
         self.assertNotIn("Phase 02 expects filtered/unreachable", text)
         self.assertNotIn("WS01 SMB remains filtered/unreachable", text)
 
+    def test_phase02_uses_explicit_rdp_mode_and_isolated_nxc_state(self):
+        text = PHASE02_VALIDATOR.read_text()
+
+        self.assertIn('RDP_BOT_MODE="${PHASE02_RDP_BOT_MODE:-legacy}"', text)
+        self.assertIn('--bot-mode "$RDP_BOT_MODE"', text)
+        self.assertIn('NXC_PATH="$nxc_path"', text)
+        self.assertIn('local nxc_path="$EVIDENCE/nxc"', text)
+
     def test_phase02_shell_syntax_is_valid(self):
         import subprocess
 
