@@ -716,6 +716,24 @@ class Phase03OverlaySourceTests(unittest.TestCase):
             result = subprocess.run(["bash", "-n", str(script)], capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_http_ldaps_detach_preserves_operator_owned_evidence(self):
+        start = (ROOT / "scripts" / "phase03" / "start-http-ldaps-readonly-relay.sh").read_text()
+        preflight = (ROOT / "scripts" / "phase03" / "check-http-ldaps-readonly-relay.sh").read_text()
+        proof = (ROOT / "scripts" / "phase03" / "prove-http-ldaps-readonly-relay.sh").read_text()
+        self.assertIn("setsid -f", start)
+        self.assertIn(': >"$LOG"', start)
+        self.assertIn("LOG_OWNER=", start)
+        self.assertIn("LOG_MODE=", start)
+        self.assertIn("relay log exists but is not readable", proof)
+        self.assertIn("setsid not found", preflight)
+        for script in (
+            ROOT / "scripts" / "phase03" / "start-http-ldaps-readonly-relay.sh",
+            ROOT / "scripts" / "phase03" / "check-http-ldaps-readonly-relay.sh",
+            ROOT / "scripts" / "phase03" / "prove-http-ldaps-readonly-relay.sh",
+        ):
+            result = subprocess.run(["bash", "-n", str(script)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_checkpoint_does_not_modify_lab_yet(self):
         text = PLAYBOOK.read_text().lower()
         self.assertNotIn("win_regedit", text)
