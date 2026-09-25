@@ -434,6 +434,12 @@ class Phase03OverlaySourceTests(unittest.TestCase):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(forbidden, playbook)
 
+    def test_adidns_owner_rollback_accepts_base_search_success_without_full_dn_match(self):
+        script = (ROOT / "scripts" / "phase03" / "rollback-adidns.sh").read_text()
+        self.assertIn('if [[ "$LDAP_RC" -eq 0 ]]; then', script)
+        self.assertNotIn('grep -Fq "dn: $NODE_DN"', script)
+        self.assertIn("ldapdelete -Y GSSAPI -Q", script)
+
     def test_checkpoint_does_not_modify_lab_yet(self):
         text = PLAYBOOK.read_text().lower()
         self.assertNotIn("win_regedit", text)
