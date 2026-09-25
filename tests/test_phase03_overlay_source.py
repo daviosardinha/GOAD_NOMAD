@@ -482,6 +482,21 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         self.assertIn("tcpdump", wrapper)
         self.assertIn("10.4.10.31", wrapper)
 
+    def test_webdav_shortcut_baseline_is_exact_and_read_only(self):
+        wrapper = (ROOT / "scripts" / "phase03" / "capture-webdav-shortcut-baseline.sh").read_text()
+        playbook = (ROOT / "ansible" / "phase03-webdav-shortcut-baseline.yml").read_text()
+        self.assertIn("phase03-webdav-baseline.json", playbook)
+        self.assertIn("mode: '0600'", playbook)
+        self.assertIn("CandidateLnkExists", playbook)
+        self.assertIn("CandidateUrlExists", playbook)
+        self.assertIn("WebClientState", playbook)
+        self.assertIn("WebClientStartMode", playbook)
+        self.assertIn("MRxDAVState", playbook)
+        self.assertIn("PHASE03_WEBDAV_BASELINE_VALID=True", wrapper)
+        for forbidden in ("Set-Service", "Start-Service", "Stop-Service", "New-Item", "Remove-Item", "Set-ItemProperty"):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, playbook)
+
     def test_checkpoint_does_not_modify_lab_yet(self):
         text = PLAYBOOK.read_text().lower()
         self.assertNotIn("win_regedit", text)
