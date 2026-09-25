@@ -1,0 +1,57 @@
+---
+- name: Verify temporary WebDAV DNS support is restored to the captured absent baseline
+  hosts: dc02
+  gather_facts: false
+  vars:
+    phase03_webdav_dns_baseline_path: "{{ lookup('env','HOME') }}/.config/kingdoms/phase03-webdav-dns-baseline.json"
+    phase03_webdav_dns_baseline: "{{ lookup('ansible.builtin.file', phase03_webdav_dns_baseline_path) | from_json }}"
+  tasks:
+    - name: Verify support record and dnsNode are absent
+      ansible.windows.win_powershell:
+        script: |
+          $ErrorActionPreference = 'Stop'
+          $Ansible.Changed = $false
+
+          Import-Module ActiveDirectory
+          Import-Module DnsServer
+
+          $zoneName = '{{ phase03_webdav_dns_baseline.Zone }}'
+          $recordName = '{{ phase03_webdav_dns_baseline.RecordName }}'
+          $baselineRecordExists = [System.Convert]::ToBoolean('{{ phase03_webdav_dns_baseline.RecordExists }}')
+          $baselineNodeExists = [System.Convert]::ToBoolean('{{ phase03_webdav_dns_baseline.NodeExists }}')
+
+          if ($baselineRecordExists -or $baselineNodeExists) {
+              throw 'WebDAV DNS reset verifier is scoped only to an absent captured baseline'
+          }
+
+          $records = @()
+          try {
+              $records = @(Get-DnsServerResourceRecord -ZoneName $zoneName -Name $recordName -ErrorAction Stop)
+          }
+          catch {
+              $records = @()
+          }
+
+          $root = Get-ADRootDSE
+          $zoneObject = Get-ADObject -SearchBase "CN=MicrosoftDNS,DC=DomainDnsZones,$($root.defaultNamingContext)" -LDAPFilter "(&(objectClass=dnsZone)(name=$zoneName))" -Properties DistinguishedName
+          $node = Get-ADObject -SearchBase $zoneObject.DistinguishedName -SearchScope OneLevel -LDAPFilter "(&(objectClass=dnsNode)(name=$recordName))" -Properties DistinguishedName,dNSTombstoned -ErrorAction SilentlyContinue
+
+          $recordMatch = ($records.Count -eq 0)
+          $nodeMatch = ($null -eq $node)
+
+          Write-Output "PHASE03_WEBDAV_DNS_RESET_RECORD_MATCH=$recordMatch"
+          Write-Output "PHASE03_WEBDAV_DNS_RESET_NODE_MATCH=$nodeMatch"
+          Write-Output "PHASE03_WEBDAV_DNS_RESET_RECORD_COUNT=$($records.Count)"
+          Write-Output "PHASE03_WEBDAV_DNS_RESET_NODE_EXISTS=$([bool]($null -ne $node))"
+
+          if (-not $recordMatch -or -not $nodeMatch) {
+              throw 'WebDAV DNS support does not match the captured absent baseline'
+          }
+
+          Write-Output 'PHASE03_WEBDAV_DNS_RESET_COMPLETE=True'
+      register: webdav_dns_reset
+
+    - name: Emit WebDAV DNS reset verification markers
+      ansible.builtin.debug:
+        msg: "{{ webdav_dns_reset.output | default([]) }}"
+      changed_when: false
