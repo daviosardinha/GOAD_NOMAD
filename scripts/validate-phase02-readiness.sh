@@ -11,8 +11,16 @@ CASTELBLACK="10.4.10.22"
 WS01="10.4.10.31"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 EVIDENCE="${EVIDENCE:-$HOME/Kingdoms-evidence/phase02-readiness-$STAMP}"
+RDP_BOT_MODE="${PHASE02_RDP_BOT_MODE:-legacy}"
 
 mkdir -p "$EVIDENCE"
+case "$RDP_BOT_MODE" in
+  legacy|headless) ;;
+  *)
+    echo "PHASE02_RDP_BOT_MODE must be legacy or headless (got: $RDP_BOT_MODE)" >&2
+    exit 2
+    ;;
+esac
 cd "$ROOT" || exit 1
 export PATH="$HOME/.goad/.venv/bin:$PATH"
 export KINGDOMS_RDP_LOG_DIR="$EVIDENCE/rdp-contract"
@@ -49,7 +57,9 @@ fi
 run_nxc(){
   local logfile="$1"; shift
   local raw="${logfile}.raw"
-  timeout 90 "${NXC[@]}" "$@" >"$raw" 2>&1
+  local nxc_path="$EVIDENCE/nxc"
+  mkdir -p "$nxc_path"
+  env NXC_PATH="$nxc_path" timeout 90 "${NXC[@]}" "$@" >"$raw" 2>&1
   local rc=$?
   strip_ansi <"$raw" >"$logfile"
   cat "$logfile"
@@ -61,7 +71,7 @@ share_line(){ grep -Ei "(^|[[:space:]])$2([[:space:]]|$)" "$1" | head -n 1; }
 share_has(){ local line; line="$(share_line "$1" "$2")"; grep -Fq "$3" <<<"$line"; }
 
 section 'KINGDOMS — 02 TEST THE GATES — STRICT PRE-LAB CONTRACT'
-printf 'Instance : %s\nEvidence : %s\n' "$INSTANCE" "$EVIDENCE"
+printf 'Instance : %s\nEvidence : %s\nRDP bot  : %s\nNetExec  : isolated under %s\n' "$INSTANCE" "$EVIDENCE" "$RDP_BOT_MODE" "$EVIDENCE/nxc"
 
 section '1. REQUIRED OPERATOR TOOLS'
 for c in git nc timeout curl getent python3; do
@@ -121,7 +131,7 @@ done
 
 section '4. PHASE 01 REGRESSION + EXACT RDP CONTRACT'
 set +e
-bash scripts/validate-rdp-runtime.sh --phase01 2>&1 | tee "$EVIDENCE/rdp-phase01.log"
+bash scripts/validate-rdp-runtime.sh --phase01 --bot-mode "$RDP_BOT_MODE" 2>&1 | tee "$EVIDENCE/rdp-phase01.log"
 RDP_RC=${PIPESTATUS[0]}
 set +e
 if [[ $RDP_RC -eq 0 ]]; then
