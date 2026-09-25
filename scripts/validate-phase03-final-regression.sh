@@ -106,6 +106,7 @@ phase01_rdp_runtime() {
 
 segmentation_runtime() {
   GOAD_PROVIDER_DIR="$PROVIDER" \
+    KINGDOMS_RDP_BOT_MODE=headless \
     bash scripts/validate-network-segmentation-runtime.sh
 }
 
