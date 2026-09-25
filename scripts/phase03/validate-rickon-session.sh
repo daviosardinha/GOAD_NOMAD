@@ -44,12 +44,13 @@ printf 'ActiveState=%s\nSubState=%s\nMainPID=%s\nNRestarts=%s\n' "$active" "$sub
 
 echo
 echo '===== WS01 SOCKET ====='
-socket_lines="$(ss -ntp 2>/dev/null | grep "${WS01}:3389" || true)"
-printf '%s\n' "$socket_lines"
+all_socket_lines="$(ss -H -ntp 2>/dev/null | grep "${WS01}:3389" || true)"
+printf '%s\n' "$all_socket_lines"
+socket_lines="$(ss -H -ntp state established 2>/dev/null | grep "${WS01}:3389" || true)"
 socket_count="$(grep -c . <<<"$socket_lines" || true)"
 [[ "$socket_count" -eq 1 ]] &&
-  pass 'Exactly one WS01 RDP socket exists from the operator host' ||
-  fail "Expected exactly one WS01 RDP socket; observed $socket_count"
+  pass 'Exactly one established WS01 RDP socket exists from the operator host' ||
+  fail "Expected exactly one established WS01 RDP socket; observed $socket_count"
 
 freerdp_pid="$(sed -n 's/.*pid=\([0-9]\+\).*/\1/p' <<<"$socket_lines" | head -n1)"
 if [[ -n "$freerdp_pid" && -r "/proc/$freerdp_pid/cmdline" ]]; then
