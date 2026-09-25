@@ -497,6 +497,31 @@ class Phase03OverlaySourceTests(unittest.TestCase):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(forbidden, playbook)
 
+    def test_webdav_shortcut_fixture_files_exist_and_parse(self):
+        phase03 = ROOT / "scripts" / "phase03"
+        required = [
+            phase03 / "start-webdav-shortcut-observer.sh",
+            phase03 / "apply-webdav-shortcut-proof.sh",
+            phase03 / "verify-webdav-shortcut-proof.sh",
+            phase03 / "rollback-webdav-shortcut.sh",
+            ROOT / "ansible" / "phase03-webdav-shortcut-apply.yml",
+            ROOT / "ansible" / "phase03-webdav-shortcut-verify.yml",
+            ROOT / "ansible" / "phase03-webdav-shortcut-rollback.yml",
+        ]
+        for item in required:
+            with self.subTest(item=item):
+                self.assertTrue(item.is_file(), item)
+        for script in required[:4]:
+            result = subprocess.run(["bash", "-n", str(script)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_webdav_shortcut_rollback_uses_captured_baseline(self):
+        script = (ROOT / "scripts" / "phase03" / "rollback-webdav-shortcut.sh").read_text()
+        playbook = (ROOT / "ansible" / "phase03-webdav-shortcut-rollback.yml").read_text()
+        self.assertIn("phase03-webdav-baseline.json", script)
+        self.assertIn("PHASE03_WEBDAV_RESET_COMPLETE=True", playbook)
+        self.assertIn("PHASE03_WEBDAV_ROLLBACK_COMPLETE=True", script)
+
     def test_checkpoint_does_not_modify_lab_yet(self):
         text = PLAYBOOK.read_text().lower()
         self.assertNotIn("win_regedit", text)
