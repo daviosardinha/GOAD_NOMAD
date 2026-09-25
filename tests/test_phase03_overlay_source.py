@@ -830,6 +830,20 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         )
         self.assertIn("KINGDOMS_RDP_BOT_MODE=headless", final)
 
+    def test_segmentation_bot_health_waits_for_running_tasks_and_keeps_evidence(self):
+        segmentation = (
+            ROOT / "scripts" / "validate-network-segmentation-runtime.sh"
+        ).read_text()
+
+        self.assertIn("SCHED_S_TASK_RUNNING", segmentation)
+        self.assertIn("BOT_SAMPLE|NAME=", segmentation)
+        self.assertIn("if ($state -eq 'Running')", segmentation)
+        self.assertIn("Start-Sleep -Seconds 2", segmentation)
+        self.assertIn("$name=PASS|STATE=Ready|LAST=0", segmentation)
+        self.assertIn("REASON=completed-result", segmentation)
+        self.assertIn('tee "${LOG_DIR}/bots.log"', segmentation)
+        self.assertIn("inspect ${LOG_DIR}/bots.log", segmentation)
+
     def test_phase03_final_regression_orchestrates_closed_contracts(self):
         script = (ROOT / "scripts" / "validate-phase03-final-regression.sh").read_text()
 
