@@ -703,7 +703,8 @@ class Phase03OverlaySourceTests(unittest.TestCase):
     def test_http_ldaps_start_is_detached_and_trigger_recovers_listener(self):
         start = (ROOT / "scripts" / "phase03" / "start-http-ldaps-readonly-relay.sh").read_text()
         trigger = (ROOT / "scripts" / "phase03" / "trigger-http-ldaps-readonly-relay.sh").read_text()
-        self.assertIn("setsid -f stdbuf", start)\n        self.assertNotIn("nohup stdbuf", start)
+        self.assertIn("setsid -f stdbuf", start)
+        self.assertNotIn("nohup stdbuf", start)
         self.assertIn("</dev/null", start)
         self.assertIn("listener did not survive detached startup", start)
         self.assertIn("listener_pid_80", trigger)
