@@ -116,7 +116,38 @@ ws01_foundation_runtime() {
 }
 
 rickon_runtime() {
-  bash scripts/phase03/validate-rickon-session.sh
+  local service='kingdoms-phase03-rickon.service'
+  local ws01='10.4.10.31'
+  local attempt active established
+
+  echo 'Waiting for the supervised Rickon session to recover after the lifecycle...'
+
+  # The committed unit deliberately backs off for 120 seconds after a WS01
+  # logoff. Allow that full recovery window plus connection establishment.
+  for attempt in {1..48}; do
+    active="$(systemctl --user is-active "$service" 2>/dev/null || true)"
+    established="$(
+      ss -H -nt state established 2>/dev/null |
+        grep -E "[[:space:]]$ws01:3389([[:space:]]|$)" || true
+    )"
+
+    if [[ "$active" == active && -n "$established" ]]; then
+      echo "PASS: Rickon recovered after lifecycle (attempt $attempt)"
+      bash scripts/phase03/validate-rickon-session.sh
+      return $?
+    fi
+
+    if (( attempt % 6 == 0 )); then
+      printf 'INFO: waiting for Rickon recovery: attempt=%s active=%s\n'         "$attempt" "${active:-unknown}"
+    fi
+
+    sleep 5
+  done
+
+  echo 'FAIL: Rickon did not recover within the 240-second lifecycle window' >&2
+  systemctl --user status "$service" --no-pager -l >&2 || true
+  ss -H -ntp 2>/dev/null | grep "$ws01:3389" >&2 || true
+  return 1
 }
 
 phase03_residual_state() {
