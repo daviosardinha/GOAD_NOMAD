@@ -31,40 +31,7 @@ Historical Drop The MIC/NTLMv1 material remains optional/conditional. NORTH has 
 | SMB relay | Eddard relay to CASTELBLACK with administrative impact and SAM extraction | PROVEN |
 | MSSQL callback | `xp_dirtree` produced outbound `NORTH\sql_svc` SMB auth | PROVEN |
 | mitm6/WPAD | Exact WS01 IPv6/DNS baseline captured; DHCPv6 takeover, attacker DNS, WPAD DNS and automatic PAC GET reproduced; validator 8/0; exact IPv6/DNS reset verified | PROVEN / PERMANENTIZED |
-| HTTP/WPAD -> LDAPS | Durable detached HTTP relay accepted deterministic LocalSystem auth as `NORTH\\WS01# Kingdoms — Phase 03 NORTH Scope and GOAD Part 4 Parity
-
-Status: runtime-validated working document
-Branch: `kingdoms/phase03-overlay`
-Reference lab: `cebee3-goad-vmware`
-
-## Scope
-
-- Attacker: Kali on `vmnet10`, IPv4 `10.4.10.254`.
-- WINTERFELL: NORTH DC, `10.4.10.11`, SMB signing required.
-- CASTELBLACK: NORTH member, `10.4.10.22`, SMB signing not required, MSSQL as `NORTH\sql_svc`.
-- WS01: NORTH workstation, `10.4.10.31`, SMB signing not required, IPv6 enabled.
-- Forest-root and ESSOS hosts remain outside the direct Phase 03 route.
-
-## GOAD Part 4 concepts carried into NORTH
-
-1. LLMNR/NBT-NS/mDNS poisoning and NetNTLMv2 capture.
-2. SMB relay, interactive/SOCKS reuse, and privilege-dependent post-relay consequences.
-3. mitm6/WPAD -> LDAP/LDAPS relay -> RBCD.
-4. Authentication coercion with PrinterBug/PetitPotam-family paths.
-5. Shadow Credentials as an advanced follow-on.
-
-Historical Drop The MIC/NTLMv1 material remains optional/conditional. NORTH has no current AD CS CA, so ESC8 is outside this Phase 03 scope.
-
-## Current NORTH status
-
-| Technique | Current evidence | Status |
-| --- | --- | --- |
-| LLMNR/NBT-NS/mDNS | Poisoning and NetNTLMv2 capture observed | PROVEN |
-| Robb/Eddard traffic generators | Scheduled SMB-auth traffic observed | PROVEN |
-| SMB relay | Eddard relay to CASTELBLACK with administrative impact and SAM extraction | PROVEN |
-| MSSQL callback | `xp_dirtree` produced outbound `NORTH\sql_svc` SMB auth | PROVEN |
-| mitm6/WPAD | Exact WS01 IPv6/DNS baseline captured; DHCPv6 takeover, attacker DNS, WPAD DNS and automatic PAC GET reproduced; validator 8/0; exact IPv6/DNS reset verified | PROVEN / PERMANENTIZED |
-, relayed successfully to WINTERFELL LDAPS, performed read-only privilege enumeration, then stopped cleanly with callback task absent | PROVEN / PERMANENTIZED |
+| HTTP/WPAD -> LDAPS | Durable detached HTTP relay accepted deterministic LocalSystem auth as `NORTH\\WS01$`, relayed successfully to WINTERFELL LDAPS, performed read-only privilege enumeration, then stopped cleanly with callback task absent | PROVEN / PERMANENTIZED |
 | SMB -> LDAP/LDAPS | `sql_svc` path rejected because SMB client requested signing | NOT BASE PATH |
 | MachineAccountQuota | NORTH value observed as 10 | PROVEN |
 | RBCD prerequisite | WS01 SELF can write the exact RBCD attribute | PROVEN |
