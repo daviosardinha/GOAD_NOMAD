@@ -440,6 +440,25 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         self.assertNotIn('grep -Fq "dn: $NODE_DN"', script)
         self.assertIn("ldapdelete -Y GSSAPI -Q", script)
 
+    def test_status_docs_record_adidns_as_proven_and_helpers_are_complete(self):
+        runtime = (ROOT / "docs" / "kingdoms-phase03-runtime-checkpoint.md").read_text()
+        scope = (ROOT / "docs" / "kingdoms-phase03-north-scope.md").read_text()
+        phase03 = ROOT / "scripts" / "phase03"
+        self.assertIn("ADIDNS end-to-end proof", runtime)
+        self.assertIn("ADIDNS is therefore closed end-to-end", runtime)
+        self.assertIn("owner-context Kerberos/GSSAPI LDAP cleanup", runtime)
+        self.assertIn("| ADIDNS |", scope)
+        self.assertNotIn("| ADIDNS | Generic capability exists, no Phase 03 fixture yet | GAP |", scope)
+        for name in (
+            "check-adidns-prereqs.sh",
+            "capture-adidns-baseline.sh",
+            "apply-adidns-proof.sh",
+            "verify-adidns-proof.sh",
+            "rollback-adidns.sh",
+        ):
+            with self.subTest(name=name):
+                self.assertTrue((phase03 / name).is_file(), name)
+
     def test_checkpoint_does_not_modify_lab_yet(self):
         text = PLAYBOOK.read_text().lower()
         self.assertNotIn("win_regedit", text)
