@@ -49,7 +49,7 @@ Historical Drop The MIC/NTLMv1 material remains optional/conditional. NORTH has 
 | DPAPI credential-material consequence | Native SYSTEM Credential Manager artifact acquired and decrypted offline through the retained administrative SMB session; local secret-bearing evidence removed | PROVEN |
 | Shadow Credentials | `WS01$` relayed over HTTP to WINTERFELL LDAPS; one KeyCredential injected and independently verified; Certipy obtained a TGT from the generated certificate; exact baseline restored to zero values and cryptographic ephemera removed | PROVEN |
 | ADIDNS | Authenticated User `hodor` created `phase03-adidns` by Kerberos-secured dynamic update; DNS resolved to `10.4.10.254`; backing `dnsNode` was owned by Hodor; exact absent baseline restored including tombstone cleanup | PROVEN |
-| WebDAV/.lnk/.url | No dedicated WS01 Phase 03 victim flow yet | GAP |
+| WebDAV/.lnk | Rickon launched a controlled hostname-backed WebDAV shortcut; WebClient/MRxDAV produced an HTTP OPTIONS request from WS01 to Kali; exact shortcut/service and temporary ADIDNS support state were restored | PROVEN |
 
 ## Engineering rules
 
@@ -63,8 +63,8 @@ Historical Drop The MIC/NTLMv1 material remains optional/conditional. NORTH has 
 
 ## Next acceptance gate
 
-1. Keep the neutral runtime established after ADIDNS rollback.
-2. Treat ADIDNS as closed end-to-end.
-3. Move to the WebDAV/.lnk/.url victim-interaction scenario as the next isolated acceptance gate.
+1. Keep the neutral runtime established after WebDAV/.lnk rollback.
+2. Treat WebDAV/.lnk as closed end-to-end; `.url` remains optional rather than a separate acceptance gate.
+3. Promote the already-proven mitm6/WPAD and HTTP->LDAPS flows into permanent apply/prove/reset infrastructure.
 4. Preserve exact baseline/rollback discipline for every state-changing fixture.
 5. Keep raw credentials, tickets, private keys and other secret-bearing evidence outside Git.
