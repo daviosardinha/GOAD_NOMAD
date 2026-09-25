@@ -384,6 +384,39 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         self.assertIn("| Shadow Credentials |", scope)
         self.assertNotIn("| Shadow Credentials | Not yet configured/proven | GAP |", scope)
 
+    def test_adidns_preflight_is_read_only_and_scoped_to_north(self):
+        wrapper = (ROOT / "scripts" / "phase03" / "check-adidns-prereqs.sh").read_text()
+        playbook = (ROOT / "ansible" / "phase03-adidns-preflight.yml").read_text()
+        self.assertIn("hosts: dc02", playbook)
+        self.assertIn("Get-DnsServerZone", playbook)
+        self.assertIn("north.sevenkingdoms.local", playbook)
+        self.assertIn("PHASE03_ADIDNS_ZONE_DYNAMIC_UPDATE", playbook)
+        self.assertIn("PHASE03_ADIDNS_BROAD_CREATE_DNSNODE", playbook)
+        self.assertIn("lDAPDisplayName=dnsNode", playbook)
+        self.assertIn("phase03-adidns", playbook)
+        self.assertIn("wpad", playbook)
+        for forbidden in (
+            "Add-DnsServerResourceRecord",
+            "Remove-DnsServerResourceRecord",
+            "Set-DnsServer",
+            "Set-ADObject",
+            "New-ADObject",
+            "Remove-ADObject",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, playbook)
+        self.assertIn("ADIDNS preflight requires neutral state", wrapper)
+
+    def test_adidns_preflight_checks_operator_tooling_without_mutation(self):
+        wrapper = (ROOT / "scripts" / "phase03" / "check-adidns-prereqs.sh").read_text()
+        self.assertIn("dig", wrapper)
+        self.assertIn("bloodyAD", wrapper)
+        self.assertIn("adidnsdump", wrapper)
+        self.assertIn("dnstool.py", wrapper)
+        self.assertIn("nsupdate", wrapper)
+        self.assertIn("ldapsearch", wrapper)
+        self.assertIn("phase03-adidns", wrapper)
+
     def test_checkpoint_does_not_modify_lab_yet(self):
         text = PLAYBOOK.read_text().lower()
         self.assertNotIn("win_regedit", text)
