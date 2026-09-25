@@ -159,9 +159,32 @@ Cleanup is **PROVEN**:
 
 SMB remote execution is therefore closed runtime-wise: **relay -> administrative authorization -> service-backed command execution as SYSTEM -> clean shutdown**.
 
+## LSASS credential-material consequence
+
+LSASS credential-material access on CASTELBLACK is **PROVEN**.
+
+- A relayed `NORTH\EDDARD.STARK` administrative session executed the controlled dump command on CASTELBLACK.
+- CASTELBLACK produced `C:\Windows\Temp\kingdoms-phase03-lsass.dmp` with size `89,796,074` bytes.
+- `NORTH\ROBB.STARK` relayed successfully but the privileged execution path failed with DCERPC `0x5 / rpc_s_access_denied`, preserving the limited-vs-administrative comparison.
+- A retained Eddard SMB SOCKS session with `AdminStatus TRUE` was used to retrieve the dump from `C$\Windows\Temp`.
+- The local copy matched the expected `89,796,074` byte size and was identified as a Windows MiniDump with the `MDMP` signature.
+- Local pypykatz parsing completed with return code `0` and the sanitized result reported `username_count=27`, confirming parseable LSASS credential material without committing secrets to Git.
+- The sanitized identity-only evidence included NORTH and CASTELBLACK principals as well as service identities; hashes, passwords and other secret-bearing parser output were not retained in Git.
+
+Cleanup is **PROVEN**:
+
+- The remote CASTELBLACK dump was deleted and a follow-up SMB listing returned `STATUS_NO_SUCH_FILE`.
+- The local raw LSASS dump was deleted.
+- The full secret-bearing pypykatz output was deleted.
+- Only the sanitized local summary was retained outside Git.
+- Responder and ntlmrelayx were stopped.
+- No relay process remained and the relay/SOCKS listener ports were free.
+
+LSASS is therefore closed end-to-end: **administrative relay -> SYSTEM-capable dump creation -> retained SOCKS retrieval -> MiniDump validation -> local credential parsing -> remote/local secret-bearing artifact cleanup**.
+
 ## Remaining Phase 03 engineering
 
-- LSASS/DPAPI credential-material consequences.
+- DPAPI credential-material consequence.
 - Shadow Credentials controlled fixture.
 - ADIDNS scenario.
 - WebDAV/.lnk/.url victim-interaction scenario.
@@ -170,7 +193,7 @@ SMB remote execution is therefore closed runtime-wise: **relay -> administrative
 
 ## Next acceptance gate
 
-The next acceptance gate is **credential-material access**, beginning with a controlled LSASS consequence on the already-proven CASTELBLACK administrative relay surface. Keep LSASS and DPAPI separated so each can be proven and cleaned independently.
+The next acceptance gate is the **DPAPI credential-material consequence**, kept separate from the now-closed LSASS path so its prerequisites, recovered material and cleanup can be demonstrated independently.
 
 ## Regression rule
 
