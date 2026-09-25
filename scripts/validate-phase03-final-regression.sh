@@ -47,7 +47,7 @@ stage() {
 source_identity() {
   git fetch origin || return 1
 
-  local current local_head remote_head dirty unexpected
+  local current local_head remote_head dirty
   current="$(git branch --show-current)"
   local_head="$(git rev-parse HEAD)"
   remote_head="$(git rev-parse "origin/$BRANCH")"
@@ -74,15 +74,13 @@ source_identity() {
   }
 
   dirty="$(git status --porcelain)"
-  unexpected="$(printf '%s\n' "$dirty" | sed '/^?? arp\.cache$/d;/^[[:space:]]*$/d')"
-
-  if [[ -n "$unexpected" ]]; then
-    echo 'unexpected working-tree changes:' >&2
-    printf '%s\n' "$unexpected" >&2
+  if [[ -n "$dirty" ]]; then
+    echo 'working tree is not clean:' >&2
+    printf '%s\n' "$dirty" >&2
     return 1
   fi
 
-  printf '%s\n' "$dirty"
+  echo 'working tree is clean'
   return 0
 }
 
