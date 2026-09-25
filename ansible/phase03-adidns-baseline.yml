@@ -1,0 +1,82 @@
+---
+- name: Capture exact NORTH ADIDNS candidate baseline without changing DNS or Active Directory
+  hosts: dc02
+  gather_facts: false
+  tasks:
+    - name: Capture phase03-adidns DNS and dnsNode baseline
+      ansible.windows.win_powershell:
+        script: |
+          $ErrorActionPreference = 'Stop'
+          $Ansible.Changed = $false
+          Import-Module ActiveDirectory
+          Import-Module DnsServer
+
+          $zoneName = 'north.sevenkingdoms.local'
+          $recordName = 'phase03-adidns'
+          $root = Get-ADRootDSE
+
+          $zoneObject = Get-ADObject -SearchBase "CN=MicrosoftDNS,DC=DomainDnsZones,$($root.defaultNamingContext)" -LDAPFilter "(&(objectClass=dnsZone)(name=$zoneName))" -Properties DistinguishedName
+          if ($null -eq $zoneObject) { throw 'NORTH dnsZone object not found in DomainDnsZones' }
+
+          $records = @()
+          try {
+              $records = @(Get-DnsServerResourceRecord -ZoneName $zoneName -Name $recordName -ErrorAction Stop)
+          }
+          catch {
+              $records = @()
+          }
+
+          $node = Get-ADObject -SearchBase $zoneObject.DistinguishedName -SearchScope OneLevel -LDAPFilter "(&(objectClass=dnsNode)(name=$recordName))" -Properties DistinguishedName,dNSTombstoned -ErrorAction SilentlyContinue
+
+          $recordSummary = @()
+          foreach ($record in $records) {
+              $data = $null
+              try { $data = [string]$record.RecordData.IPv4Address } catch { $data = [string]$record.RecordData }
+              $recordSummary += [ordered]@{
+                  Type = [string]$record.RecordType
+                  Data = $data
+                  TTLSeconds = [int]$record.TimeToLive.TotalSeconds
+                  Timestamp = [string]$record.Timestamp
+              }
+          }
+
+          $Ansible.Result = [ordered]@{
+              Version = 1
+              Zone = $zoneName
+              ZoneDN = $zoneObject.DistinguishedName
+              RecordName = $recordName
+              FQDN = "$recordName.$zoneName"
+              RecordExists = [bool]($records.Count -gt 0)
+              RecordCount = $records.Count
+              Records = $recordSummary
+              NodeExists = [bool]($null -ne $node)
+              NodeDN = if ($null -ne $node) { $node.DistinguishedName } else { $null }
+              NodeTombstoned = if ($null -ne $node) { [bool]$node.dNSTombstoned } else { $false }
+              CapturedUTC = [DateTime]::UtcNow.ToString('o')
+          }
+      register: adidns_baseline
+
+    - name: Ensure local Kingdoms config directory exists
+      ansible.builtin.file:
+        path: "{{ lookup('env','HOME') }}/.config/kingdoms"
+        state: directory
+        mode: '0700'
+      delegate_to: localhost
+
+    - name: Save exact ADIDNS candidate baseline locally
+      ansible.builtin.copy:
+        dest: "{{ lookup('env','HOME') }}/.config/kingdoms/phase03-adidns-baseline.json"
+        content: "{{ adidns_baseline.result | to_nice_json }}\n"
+        mode: '0600'
+      delegate_to: localhost
+
+    - name: Emit sanitized ADIDNS baseline markers
+      ansible.builtin.debug:
+        msg:
+          - "PHASE03_ADIDNS_BASELINE_ZONE={{ adidns_baseline.result.Zone }}"
+          - "PHASE03_ADIDNS_BASELINE_RECORD={{ adidns_baseline.result.RecordName }}"
+          - "PHASE03_ADIDNS_BASELINE_RECORD_EXISTS={{ adidns_baseline.result.RecordExists }}"
+          - "PHASE03_ADIDNS_BASELINE_RECORD_COUNT={{ adidns_baseline.result.RecordCount }}"
+          - "PHASE03_ADIDNS_BASELINE_NODE_EXISTS={{ adidns_baseline.result.NodeExists }}"
+          - "PHASE03_ADIDNS_BASELINE_FILE={{ lookup('env','HOME') }}/.config/kingdoms/phase03-adidns-baseline.json"
+      changed_when: false
