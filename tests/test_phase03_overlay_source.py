@@ -700,6 +700,22 @@ class Phase03OverlaySourceTests(unittest.TestCase):
             result = subprocess.run(["bash", "-n", str(script)], capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_http_ldaps_start_is_detached_and_trigger_recovers_listener(self):
+        start = (ROOT / "scripts" / "phase03" / "start-http-ldaps-readonly-relay.sh").read_text()
+        trigger = (ROOT / "scripts" / "phase03" / "trigger-http-ldaps-readonly-relay.sh").read_text()
+        self.assertIn("nohup stdbuf", start)
+        self.assertIn("</dev/null", start)
+        self.assertIn("listener did not survive detached startup", start)
+        self.assertIn("listener_pid_80", trigger)
+        self.assertIn("recovered live ntlmrelayx listener", trigger)
+        self.assertIn("PASS: HTTP relay runtime is active", trigger)
+        for script in (
+            ROOT / "scripts" / "phase03" / "start-http-ldaps-readonly-relay.sh",
+            ROOT / "scripts" / "phase03" / "trigger-http-ldaps-readonly-relay.sh",
+        ):
+            result = subprocess.run(["bash", "-n", str(script)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_checkpoint_does_not_modify_lab_yet(self):
         text = PLAYBOOK.read_text().lower()
         self.assertNotIn("win_regedit", text)
