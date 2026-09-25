@@ -46,6 +46,9 @@ for port in 80 445; do
   echo "PASS: local TCP/$port is free"
 done
 
+command -v setsid >/dev/null 2>&1 || { echo 'FAIL: setsid not found' >&2; exit 1; }
+echo "SETSID=$(command -v setsid)"
+
 NTLMRELAYX="$(find_ntlmrelayx || true)"
 [[ -n "$NTLMRELAYX" ]] || { echo 'FAIL: ntlmrelayx not found' >&2; exit 1; }
 
