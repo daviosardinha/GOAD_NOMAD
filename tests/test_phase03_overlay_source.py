@@ -551,6 +551,26 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         self.assertEqual(playbook.count("register: webdav_arm"), 1)
         self.assertEqual(playbook.count("PHASE03_WEBDAV_SHORTCUT_ARMED=True"), 1)
 
+    def test_webdav_hostname_dns_support_fixture_exists_and_parses(self):
+        required = [
+            ROOT / "ansible" / "phase03-webdav-dns-baseline.yml",
+            ROOT / "ansible" / "phase03-webdav-dns-verify.yml",
+            ROOT / "scripts" / "phase03" / "capture-webdav-dns-baseline.sh",
+            ROOT / "scripts" / "phase03" / "apply-webdav-dns-support.sh",
+            ROOT / "scripts" / "phase03" / "rollback-webdav-dns-support.sh",
+        ]
+        for item in required:
+            with self.subTest(item=item):
+                self.assertTrue(item.is_file(), item)
+        for script in required[2:]:
+            result = subprocess.run(["bash", "-n", str(script)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_webdav_explicit_interaction_uses_hostname_not_ip_literal(self):
+        playbook = (ROOT / "ansible" / "phase03-webdav-shortcut-arm.yml").read_text()
+        self.assertIn("phase03-webdav.north.sevenkingdoms.local@80", playbook)
+        self.assertNotIn("$webdavPath = '\\\\10.4.10.254@80", playbook)
+
     def test_checkpoint_does_not_modify_lab_yet(self):
         text = PLAYBOOK.read_text().lower()
         self.assertNotIn("win_regedit", text)
