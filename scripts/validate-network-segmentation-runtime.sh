@@ -7,6 +7,7 @@ readonly LOG_DIR="${GOAD_NOMAD_VALIDATION_LOG_DIR:-/tmp/goad-nomad-runtime-valid
 readonly INVENTORY_DATA="${ROOT}/ad/GOAD/data/inventory"
 readonly INVENTORY_PROVIDER="${ROOT}/ad/GOAD/providers/vmware/inventory"
 readonly ANSIBLE_CFG="${ROOT}/ansible/ansible.cfg"
+readonly RDP_BOT_MODE="${KINGDOMS_RDP_BOT_MODE:-legacy}"
 
 readonly WINDOWS_VMS=(GOAD-DC01 GOAD-DC02 GOAD-DC03 GOAD-SRV02 GOAD-SRV03 GOAD-WS01)
 
@@ -226,6 +227,11 @@ trap cleanup EXIT INT TERM
 mkdir -p "${LOG_DIR}"
 
 section "1. PREREQUISITES / CLEAN-CHECKOUT IDENTITY"
+
+case "${RDP_BOT_MODE}" in
+    legacy|headless) ;;
+    *) fatal "KINGDOMS_RDP_BOT_MODE must be legacy or headless (got: ${RDP_BOT_MODE})" ;;
+esac
 
 [[ -n "${PROVIDER}" ]] || fatal "GOAD_PROVIDER_DIR is not set"
 [[ -d "${PROVIDER}" ]] || fatal "GOAD_PROVIDER_DIR does not exist: ${PROVIDER}"
@@ -470,7 +476,11 @@ pass "SevenKingdoms/ESSOS forest trust"
 
 out="$(vagrant_ps GOAD-DC02 <<'PS'
 $ErrorActionPreference = 'Stop'
-foreach ($name in 'connect_bot','ntlm_bot','responder_bot') {
+
+# ntlm_bot and responder_bot remain traffic-generator health requirements in
+# every runtime mode. connect_bot is validated by the RDP contract below
+# because its expected state differs between legacy and headless.
+foreach ($name in 'ntlm_bot','responder_bot') {
     $task = Get-ScheduledTask -TaskName $name
     $info = Get-ScheduledTaskInfo -TaskName $name
     if ($task.State.ToString() -notin @('Ready','Running')) { throw "$name state=$($task.State)" }
@@ -480,14 +490,17 @@ foreach ($name in 'connect_bot','ntlm_bot','responder_bot') {
 PS
 )"
 printf '%s\n' "${out}" | tee "${LOG_DIR}/bots.log"
-for bot in connect_bot ntlm_bot responder_bot; do
+for bot in ntlm_bot responder_bot; do
     printf '%s\n' "${out}" | grep -Fq "${bot}=PASS" || fatal "${bot} validation failed"
 done
-pass "GOAD bot health"
+pass "GOAD traffic-generator bot health"
 
-# Preserve the existing lifecycle checks and add the complete NORTH RDP policy
-# contract. A task exit code alone does not prove Robb has an RDP session.
-bash "${ROOT}/scripts/validate-rdp-runtime.sh"
+# Preserve the complete NORTH RDP policy contract. connect_bot has two explicit
+# accepted runtime contracts: legacy requires Ready/Running; headless requires
+# Disabled while preserving the Robb run-as SID for rollback integrity.
+bash "${ROOT}/scripts/validate-rdp-runtime.sh" --bot-mode "${RDP_BOT_MODE}" ||
+    fatal "NORTH RDP/connect_bot contract failed in ${RDP_BOT_MODE} mode"
+pass "NORTH RDP/connect_bot ${RDP_BOT_MODE} contract"
 
 out="$(vagrant_ps GOAD-SRV02 <<'PS'
 $ErrorActionPreference = 'Stop'
