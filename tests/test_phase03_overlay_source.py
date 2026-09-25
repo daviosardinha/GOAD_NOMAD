@@ -605,6 +605,26 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         self.assertIn("| WebDAV/.lnk |", scope)
         self.assertNotIn("| WebDAV/.lnk/.url | No dedicated WS01 Phase 03 victim flow yet | GAP |", scope)
 
+    def test_wpad_permanent_preflight_is_neutral_and_captures_baseline(self):
+        wrapper = (ROOT / "scripts" / "phase03" / "check-wpad-permanent-prereqs.sh").read_text()
+        playbook = (ROOT / "ansible" / "phase03-wpad-baseline.yml").read_text()
+        self.assertIn("phase03-wpad-baseline.json", playbook)
+        self.assertIn("mode: '0600'", playbook)
+        self.assertIn("IPv6DnsServers", playbook)
+        self.assertIn("IPv6Addresses", playbook)
+        self.assertIn("neutral Phase 03 runtime", wrapper)
+        self.assertIn("WINTERFELL TCP/636 reachable", wrapper)
+        self.assertIn("PHASE03_WPAD_BASELINE_VALID=True", wrapper)
+        for forbidden in ("Start-Service", "Stop-Service", "Set-DnsClientServerAddress", "ipconfig.exe /renew6"):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, playbook)
+
+    def test_wpad_permanent_preflight_checks_expected_tooling(self):
+        wrapper = (ROOT / "scripts" / "phase03" / "check-wpad-permanent-prereqs.sh").read_text()
+        for tool in ("mitm6", "impacket-ntlmrelayx", "tcpdump", "tshark", "nc"):
+            with self.subTest(tool=tool):
+                self.assertIn(tool, wrapper)
+
     def test_checkpoint_does_not_modify_lab_yet(self):
         text = PLAYBOOK.read_text().lower()
         self.assertNotIn("win_regedit", text)
