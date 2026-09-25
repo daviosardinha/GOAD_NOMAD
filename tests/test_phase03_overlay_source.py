@@ -803,6 +803,10 @@ class Phase03OverlaySourceTests(unittest.TestCase):
             scope,
         )
 
+    def test_phase03_arp_cache_is_ignored_as_runtime_artifact(self):
+        gitignore = (ROOT / ".gitignore").read_text().splitlines()
+        self.assertIn("/arp.cache", gitignore)
+
     def test_phase03_final_regression_orchestrates_closed_contracts(self):
         script = (ROOT / "scripts" / "validate-phase03-final-regression.sh").read_text()
 
