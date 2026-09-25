@@ -2,8 +2,10 @@
 [Unit]
 Description=Kingdoms Phase 03 Rickon headless WS01 victim session
 Documentation=https://github.com/daviosardinha/GOAD_NOMAD/blob/kingdoms/phase03-overlay/docs/kingdoms-phase03-runtime-checkpoint.md
-StartLimitIntervalSec=3600
-StartLimitBurst=3
+# WS01 is intentionally rebooted/logged off by lifecycle validation. Keep the
+# two-minute retry backoff below, but do not permanently suppress supervised
+# recovery after repeated expected disconnects.
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
