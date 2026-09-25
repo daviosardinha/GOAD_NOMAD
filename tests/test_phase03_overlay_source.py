@@ -625,6 +625,15 @@ class Phase03OverlaySourceTests(unittest.TestCase):
             with self.subTest(tool=tool):
                 self.assertIn(tool, wrapper)
 
+    def test_wpad_runtime_capability_snapshot_is_read_only(self):
+        script = (ROOT / "scripts" / "phase03" / "check-wpad-runtime-capabilities.sh").read_text()
+        self.assertIn("PHASE03_WPAD_CAPABILITY_SNAPSHOT_COMPLETE=True", script)
+        self.assertIn("mitm6 supports", script)
+        self.assertIn("NTLMRELAYX WPAD / HTTP / LDAPS OPTIONS", script)
+        self.assertNotIn("start ", script.lower())
+        result = subprocess.run(["bash", "-n", str(ROOT / "scripts" / "phase03" / "check-wpad-runtime-capabilities.sh")], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_checkpoint_does_not_modify_lab_yet(self):
         text = PLAYBOOK.read_text().lower()
         self.assertNotIn("win_regedit", text)
