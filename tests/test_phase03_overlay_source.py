@@ -318,6 +318,17 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         self.assertIn("| SMB share authorization consequence |", scope)
         self.assertNotIn("LSASS/DPAPI/share/SMB-execution consequences.", runtime)
 
+    def test_status_docs_record_lsass_consequence_as_proven(self):
+        runtime = (ROOT / "docs" / "kingdoms-phase03-runtime-checkpoint.md").read_text()
+        scope = (ROOT / "docs" / "kingdoms-phase03-north-scope.md").read_text()
+        self.assertIn("LSASS credential-material access on CASTELBLACK is **PROVEN**", runtime)
+        self.assertIn("89,796,074", runtime)
+        self.assertIn("username_count=27", runtime)
+        self.assertIn("STATUS_NO_SUCH_FILE", runtime)
+        self.assertIn("MDMP", runtime)
+        self.assertIn("| LSASS credential-material consequence |", scope)
+        self.assertIn("| DPAPI credential-material consequence |", scope)
+
     def test_checkpoint_does_not_modify_lab_yet(self):
         text = PLAYBOOK.read_text().lower()
         self.assertNotIn("win_regedit", text)
