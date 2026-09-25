@@ -329,6 +329,14 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         self.assertIn("| LSASS credential-material consequence |", scope)
         self.assertIn("| DPAPI credential-material consequence |", scope)
 
+    def test_status_docs_record_dpapi_as_proven(self):
+        runtime = (ROOT / "docs" / "kingdoms-phase03-runtime-checkpoint.md").read_text()
+        scope = (ROOT / "docs" / "kingdoms-phase03-north-scope.md").read_text()
+        self.assertIn("DPAPI credential-material consequence", runtime)
+        self.assertIn("**PROVEN**", runtime)
+        self.assertIn("| DPAPI credential-material consequence |", scope)
+        self.assertNotIn("Not yet runtime-proven as a separated consequence set", scope)
+
     def test_checkpoint_does_not_modify_lab_yet(self):
         text = PLAYBOOK.read_text().lower()
         self.assertNotIn("win_regedit", text)
