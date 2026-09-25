@@ -546,8 +546,10 @@ class Phase03OverlaySourceTests(unittest.TestCase):
     def test_webdav_arm_normalizes_optional_icon_index(self):
         playbook = (ROOT / "ansible" / "phase03-webdav-shortcut-arm.yml").read_text()
         self.assertIn("PHASE03_WEBDAV_ARM_PREVIOUS_ICON_NORMALIZED", playbook)
-        self.assertIn("-replace ',\\\\s*\\\\d+\\\\s*$'", playbook)
+        self.assertIn(r"-replace ',\s*\d+\s*$',''", playbook)
         self.assertIn("PHASE03_WEBDAV_SHORTCUT_ARMED=True", playbook)
+        self.assertEqual(playbook.count("register: webdav_arm"), 1)
+        self.assertEqual(playbook.count("PHASE03_WEBDAV_SHORTCUT_ARMED=True"), 1)
 
     def test_checkpoint_does_not_modify_lab_yet(self):
         text = PLAYBOOK.read_text().lower()
