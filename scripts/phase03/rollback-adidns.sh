@@ -50,6 +50,15 @@ for cmd in dig nsupdate ldapsearch ldapdelete klist; do
   command -v "$cmd" >/dev/null 2>&1 || { echo "FAIL: $cmd not found" >&2; exit 1; }
 done
 
+if command -v dpkg >/dev/null 2>&1; then
+  if ! dpkg -s libsasl2-modules-gssapi-mit >/dev/null 2>&1; then
+    echo 'FAIL: OpenLDAP GSSAPI SASL support is missing.' >&2
+    echo 'Install it on Kali with:' >&2
+    echo '  sudo apt install -y libsasl2-modules-gssapi-mit' >&2
+    exit 1
+  fi
+fi
+
 [[ -f "$KRB5_CONFIG_FILE" ]] || { echo "FAIL: retained Kerberos config missing: $KRB5_CONFIG_FILE" >&2; exit 1; }
 [[ -f "$TGT_CACHE" ]] || { echo "FAIL: retained Hodor ticket cache missing: $TGT_CACHE" >&2; exit 1; }
 
