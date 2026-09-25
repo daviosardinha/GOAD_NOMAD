@@ -53,10 +53,12 @@ class Phase03RickonHeadlessTests(unittest.TestCase):
         self.assertNotIn("/cert:ignore", text)
         self.assertNotIn("/p:Winter", text)
 
-    def test_unit_is_rate_limited_and_opt_in(self):
+    def test_unit_retries_with_backoff_without_permanent_start_limit(self):
         text = UNIT.read_text()
+        self.assertIn("Restart=always", text)
         self.assertIn("RestartSec=120", text)
-        self.assertIn("StartLimitBurst=3", text)
+        self.assertIn("StartLimitIntervalSec=0", text)
+        self.assertNotIn("StartLimitBurst=3", text)
         self.assertIn("NoNewPrivileges=true", text)
         self.assertIn("WantedBy=default.target", text)
         self.assertNotIn("/p:", text)
