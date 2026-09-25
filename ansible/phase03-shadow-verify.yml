@@ -1,0 +1,39 @@
+---
+- name: Verify NORTH Shadow Credentials mutation without changing Active Directory
+  hosts: dc02
+  gather_facts: false
+  tasks:
+    - name: Read WS01 KeyCredentialLink and emit fingerprints
+      ansible.windows.win_powershell:
+        script: |
+          $ErrorActionPreference = 'Stop'
+          $Ansible.Changed = $false
+          Import-Module ActiveDirectory
+
+          $target = Get-ADComputer -Identity 'WS01' -Properties msDS-KeyCredentialLink
+          $values = @()
+          if ($null -ne $target.'msDS-KeyCredentialLink') { $values = @($target.'msDS-KeyCredentialLink') }
+
+          Write-Output "PHASE03_SHADOW_VERIFY_KCL_PRESENT=$($values.Count -gt 0)"
+          Write-Output "PHASE03_SHADOW_VERIFY_KCL_COUNT=$($values.Count)"
+
+          $index = 0
+          foreach ($value in $values) {
+              $index++
+              $bytes = [Text.Encoding]::UTF8.GetBytes([string]$value)
+              $sha = [Security.Cryptography.SHA256]::Create()
+              try {
+                  $hash = [BitConverter]::ToString($sha.ComputeHash($bytes)).Replace('-','').ToLowerInvariant()
+              } finally {
+                  $sha.Dispose()
+              }
+              Write-Output "PHASE03_SHADOW_VERIFY_KCL_$($index)_SHA256=$hash"
+          }
+
+          if ($values.Count -lt 1) { throw 'WS01 has no KeyCredential after the controlled relay' }
+      register: shadow_verify
+
+    - name: Emit Shadow Credentials verification markers
+      ansible.builtin.debug:
+        msg: "{{ shadow_verify.output | default([]) }}"
+      changed_when: false
