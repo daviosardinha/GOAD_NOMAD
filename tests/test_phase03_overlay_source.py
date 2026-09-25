@@ -721,7 +721,7 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         script = (DIAG / "diagnose-http-ldaps-listener.sh").read_text()
         self.assertIn("setsid -f stdbuf", script)
         self.assertIn("ss -H -lntp 'sport = :80'", script)
-        self.assertIn("ps -eo pid,ppid,sid,pgid,user,stat,lstart,args --forest", script)
+        self.assertIn("ps -eo pid,ppid,sid,pgid,user,stat,etime,args --forest", script)
         self.assertIn("pgrep -af 'ntlmrelayx|python'", script)
         self.assertIn("/proc/$pid/cmdline", script)
         self.assertIn("SURVIVAL WINDOW", script)
