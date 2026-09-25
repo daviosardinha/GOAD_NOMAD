@@ -1,0 +1,64 @@
+---
+- name: Diagnose WS01 WebDAV UNC behavior without changing the shortcut
+  hosts: ws01
+  gather_facts: false
+  tasks:
+    - name: Inspect reachability and WebDAV redirector behavior
+      ansible.windows.win_powershell:
+        script: |
+          $ErrorActionPreference = 'Continue'
+          $Ansible.Changed = $false
+
+          $targetIp = '10.4.10.254'
+          $webdavPath = '\\10.4.10.254@80\DavWWWRoot\'
+
+          Write-Output 'PHASE03_WEBDAV_DIAG_BEGIN=True'
+
+          $tcp = Test-NetConnection -ComputerName $targetIp -Port 80 -WarningAction SilentlyContinue
+          Write-Output "PHASE03_WEBDAV_DIAG_TCP80=$($tcp.TcpTestSucceeded)"
+
+          $webClient = Get-CimInstance Win32_Service -Filter "Name='WebClient'" -ErrorAction SilentlyContinue
+          if ($null -ne $webClient) {
+              Write-Output "PHASE03_WEBDAV_DIAG_WEBCLIENT_STATE=$($webClient.State)"
+              Write-Output "PHASE03_WEBDAV_DIAG_WEBCLIENT_STARTMODE=$($webClient.StartMode)"
+          }
+
+          $mrxState = 'UNKNOWN'
+          foreach ($line in @(& sc.exe query MRxDAV 2>&1)) {
+              if ([string]$line -match 'STATE\s*:\s*\d+\s+(\S+)') {
+                  $mrxState = $Matches[1]
+                  break
+              }
+          }
+          Write-Output "PHASE03_WEBDAV_DIAG_MRXDAV_STATE=$mrxState"
+
+          $testPathResult = $false
+          try {
+              $testPathResult = Test-Path -LiteralPath $webdavPath -ErrorAction Stop
+          }
+          catch {
+              Write-Output "PHASE03_WEBDAV_DIAG_TESTPATH_ERROR=$($_.Exception.Message)"
+          }
+
+          Write-Output "PHASE03_WEBDAV_DIAG_TESTPATH=$testPathResult"
+
+          $webClientAfter = Get-CimInstance Win32_Service -Filter "Name='WebClient'" -ErrorAction SilentlyContinue
+          if ($null -ne $webClientAfter) {
+              Write-Output "PHASE03_WEBDAV_DIAG_WEBCLIENT_AFTER_TESTPATH=$($webClientAfter.State)"
+          }
+
+          $mrxAfter = 'UNKNOWN'
+          foreach ($line in @(& sc.exe query MRxDAV 2>&1)) {
+              if ([string]$line -match 'STATE\s*:\s*\d+\s+(\S+)') {
+                  $mrxAfter = $Matches[1]
+                  break
+              }
+          }
+          Write-Output "PHASE03_WEBDAV_DIAG_MRXDAV_AFTER_TESTPATH=$mrxAfter"
+          Write-Output 'PHASE03_WEBDAV_DIAG_COMPLETE=True'
+      register: webdav_diag
+
+    - name: Emit WebDAV UNC diagnostic markers
+      ansible.builtin.debug:
+        msg: "{{ webdav_diag.output | default([]) }}"
+      changed_when: false
