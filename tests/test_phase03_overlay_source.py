@@ -581,6 +581,14 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         result = subprocess.run(["bash", "-n", str(ROOT / "scripts" / "phase03" / "prepare-webdav-client-runtime.sh")], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_webdav_verifier_normalizes_icon_and_checks_hostname_target(self):
+        playbook = (ROOT / "ansible" / "phase03-webdav-shortcut-verify.yml").read_text()
+        self.assertIn("PHASE03_WEBDAV_VERIFY_ICON_NORMALIZED", playbook)
+        self.assertIn("PHASE03_WEBDAV_VERIFY_TARGET_MATCH", playbook)
+        self.assertIn("PHASE03_WEBDAV_VERIFY_ARGUMENTS_MATCH", playbook)
+        self.assertIn("phase03-webdav.north.sevenkingdoms.local@80", playbook)
+        self.assertIn(r"-replace ',\s*\d+\s*$',''", playbook)
+
     def test_checkpoint_does_not_modify_lab_yet(self):
         text = PLAYBOOK.read_text().lower()
         self.assertNotIn("win_regedit", text)
