@@ -1,0 +1,66 @@
+---
+- name: Verify WS01 WebDAV shortcut proof without changing the host
+  hosts: ws01
+  gather_facts: false
+  tasks:
+    - name: Verify shortcut properties and WebDAV service state
+      ansible.windows.win_powershell:
+        script: |
+          $ErrorActionPreference = 'Stop'
+          $Ansible.Changed = $false
+
+          $shortcutPath = 'C:\Users\rickon.stark\Desktop\phase03-webdav.lnk'
+          $expectedIcon = '\\10.4.10.254@80\DavWWWRoot\kingdoms.ico'
+
+          if (-not (Test-Path -LiteralPath $shortcutPath)) {
+              throw 'Controlled WebDAV shortcut is missing'
+          }
+
+          $shell = New-Object -ComObject WScript.Shell
+          $shortcut = $null
+
+          try {
+              $shortcut = $shell.CreateShortcut($shortcutPath)
+              $icon = [string]$shortcut.IconLocation
+              $target = [string]$shortcut.TargetPath
+          }
+          finally {
+              if ($null -ne $shortcut) {
+                  [void][Runtime.InteropServices.Marshal]::ReleaseComObject($shortcut)
+              }
+
+              if ($null -ne $shell) {
+                  [void][Runtime.InteropServices.Marshal]::ReleaseComObject($shell)
+              }
+          }
+
+          $hash = Get-FileHash -LiteralPath $shortcutPath -Algorithm SHA256
+          $webClient = Get-CimInstance Win32_Service -Filter "Name='WebClient'" -ErrorAction SilentlyContinue
+
+          $mrxState = 'UNKNOWN'
+          foreach ($line in @(& sc.exe query MRxDAV 2>&1)) {
+              if ([string]$line -match 'STATE\s*:\s*\d+\s+(\S+)') {
+                  $mrxState = $Matches[1]
+                  break
+              }
+          }
+
+          $iconMatch = ($icon -ieq $expectedIcon)
+
+          Write-Output 'PHASE03_WEBDAV_VERIFY_LNK_EXISTS=True'
+          Write-Output "PHASE03_WEBDAV_VERIFY_LNK_SHA256=$($hash.Hash.ToLowerInvariant())"
+          Write-Output "PHASE03_WEBDAV_VERIFY_TARGET=$target"
+          Write-Output "PHASE03_WEBDAV_VERIFY_ICON=$icon"
+          Write-Output "PHASE03_WEBDAV_VERIFY_ICON_MATCH=$iconMatch"
+          Write-Output "PHASE03_WEBDAV_VERIFY_WEBCLIENT_STATE=$($webClient.State)"
+          Write-Output "PHASE03_WEBDAV_VERIFY_MRXDAV_STATE=$mrxState"
+
+          if (-not $iconMatch) {
+              throw 'Shortcut remote icon does not match the controlled WebDAV path'
+          }
+      register: webdav_verify
+
+    - name: Emit WebDAV shortcut verification markers
+      ansible.builtin.debug:
+        msg: "{{ webdav_verify.output | default([]) }}"
+      changed_when: false
