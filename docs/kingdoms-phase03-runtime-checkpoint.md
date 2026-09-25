@@ -247,16 +247,49 @@ Rollback is **PROVEN**:
 
 Shadow Credentials is therefore closed end-to-end: **preflight -> exact baseline -> WS01$ relay -> KeyCredential injection -> independent attribute verification -> certificate-backed PKINIT -> exact rollback -> ephemeral cryptographic-material cleanup**.
 
+## ADIDNS end-to-end proof
+
+Authenticated AD-integrated DNS node creation in NORTH is **PROVEN** and exactly rolled back.
+
+Preflight established:
+
+- `north.sevenkingdoms.local` is an AD-integrated primary zone stored in `DomainDnsZones`;
+- dynamic updates are configured as `Secure`;
+- `Authenticated Users` has `CreateChild` on the zone for DNS node creation;
+- `wpad` was intentionally left untouched;
+- the reserved teaching name `phase03-adidns.north.sevenkingdoms.local` initially had no DNS record, no backing `dnsNode`, and no tombstone.
+
+The exact pre-attack state was captured locally in mode-0600 `~/.config/kingdoms/phase03-adidns-baseline.json`.
+
+Controlled mutation is **PROVEN**:
+
+- a normal NORTH principal, `NORTH\hodor`, obtained a Kerberos TGT;
+- `nsupdate -g` submitted an authenticated secure dynamic update to WINTERFELL;
+- `phase03-adidns.north.sevenkingdoms.local` was created as an A record for `10.4.10.254`;
+- the update returned `NOERROR` and the authoritative DNS server resolved the new name to `10.4.10.254`;
+- independent verification confirmed one A record and a backing AD `dnsNode`;
+- the `dnsNode` owner was `NORTH\hodor`, demonstrating creator ownership of the secure dynamic DNS object.
+
+Rollback behavior is **PROVEN**:
+
+- deleting the visible DNS record removed the A record but left a tombstoned backing `dnsNode`;
+- the tombstone remained owned by `NORTH\hodor` and Hodor retained explicit `GenericAll` on that node;
+- owner-context Kerberos/GSSAPI LDAP cleanup removed the exact reserved tombstoned `dnsNode`;
+- the final verifier returned `RECORD_MATCH=True`, `NODE_MATCH=True`, `RECORD_COUNT=0`, `NODE_EXISTS=False`, and `RESET_COMPLETE=True`;
+- the retained Kerberos/update work directory was removed after successful restoration;
+- the mode-0600 baseline file was retained for audit.
+
+ADIDNS is therefore closed end-to-end: **read-only ACL/zone preflight -> exact absent baseline -> authenticated secure DNS update -> DNS resolution proof -> backing dnsNode verification -> tombstone behavior -> owner-context cleanup -> exact absent-state verification**.
+
 ## Remaining Phase 03 engineering
 
-- ADIDNS scenario.
 - WebDAV/.lnk/.url victim-interaction scenario.
 - Promote proven mitm6/WPAD and HTTP->LDAPS flows into permanent apply/prove/reset infrastructure.
 - Final regression and Notion teaching sections/screenshots.
 
 ## Next acceptance gate
 
-The next acceptance gate is **ADIDNS**, now that Shadow Credentials is closed end-to-end and exactly rolled back.
+The next acceptance gate is **WebDAV/.lnk/.url victim interaction**, now that ADIDNS is closed end-to-end and exactly rolled back.
 
 ## Regression rule
 
