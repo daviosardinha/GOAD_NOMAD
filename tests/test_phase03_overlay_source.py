@@ -819,6 +819,7 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         self.assertIn("verify-wpad-reset.sh", script)
         self.assertIn("verify-http-ldaps-callback-clean.sh", script)
         self.assertIn("validate-phase02-readiness.sh", script)
+        self.assertIn("PHASE02_RDP_BOT_MODE=headless", script)
         self.assertIn("validate-rdp-runtime.sh --phase01 --bot-mode headless", script)
         self.assertIn("validate-network-segmentation-runtime.sh", script)
         self.assertIn("validate-ws01-runtime.sh", script)
