@@ -1,0 +1,67 @@
+---
+- name: Arm the existing controlled WebDAV shortcut for explicit Rickon interaction
+  hosts: ws01
+  gather_facts: false
+  tasks:
+    - name: Update only the reserved phase03-webdav shortcut target
+      ansible.windows.win_powershell:
+        script: |
+          $ErrorActionPreference = 'Stop'
+
+          $shortcutPath = 'C:\Users\rickon.stark\Desktop\phase03-webdav.lnk'
+          $expectedIcon = '\\10.4.10.254@80\DavWWWRoot\kingdoms.ico'
+          $webdavPath = '\\10.4.10.254@80\DavWWWRoot\'
+
+          if (-not (Test-Path -LiteralPath $shortcutPath)) {
+              throw 'Controlled WebDAV shortcut is missing'
+          }
+
+          $shell = New-Object -ComObject WScript.Shell
+          $shortcut = $null
+
+          try {
+              $shortcut = $shell.CreateShortcut($shortcutPath)
+
+              if ([string]$shortcut.IconLocation -ine $expectedIcon) {
+                  throw 'Reserved shortcut icon does not match the controlled fixture'
+              }
+
+              $shortcut.TargetPath = "$env:SystemRoot\explorer.exe"
+              $shortcut.Arguments = '"' + $webdavPath + '"'
+              $shortcut.Description = 'Kingdoms Phase 03 WebDAV user-interaction proof'
+              $shortcut.Save()
+          }
+          finally {
+              if ($null -ne $shortcut) {
+                  [void][Runtime.InteropServices.Marshal]::ReleaseComObject($shortcut)
+              }
+              if ($null -ne $shell) {
+                  [void][Runtime.InteropServices.Marshal]::ReleaseComObject($shell)
+              }
+          }
+
+          $shell = New-Object -ComObject WScript.Shell
+          $check = $null
+          try {
+              $check = $shell.CreateShortcut($shortcutPath)
+              Write-Output 'PHASE03_WEBDAV_SHORTCUT_ARMED=True'
+              Write-Output "PHASE03_WEBDAV_ARMED_TARGET=$($check.TargetPath)"
+              Write-Output "PHASE03_WEBDAV_ARMED_ARGUMENTS=$($check.Arguments)"
+              Write-Output "PHASE03_WEBDAV_ARMED_ICON=$($check.IconLocation)"
+          }
+          finally {
+              if ($null -ne $check) {
+                  [void][Runtime.InteropServices.Marshal]::ReleaseComObject($check)
+              }
+              if ($null -ne $shell) {
+                  [void][Runtime.InteropServices.Marshal]::ReleaseComObject($shell)
+              }
+          }
+
+          $Ansible.Changed = $true
+      register: webdav_arm
+
+    - name: Emit WebDAV interaction-arm markers
+      ansible.builtin.debug:
+        msg: "{{ webdav_arm.output | default([]) }}"
+      changed_when: false
