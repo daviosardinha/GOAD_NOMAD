@@ -48,7 +48,7 @@ Historical Drop The MIC/NTLMv1 material remains optional/conditional. NORTH has 
 | LSASS credential-material consequence | Eddard administrative relay created an 89,796,074-byte CASTELBLACK LSASS MiniDump; Eddard SOCKS reuse retrieved it; pypykatz parsed it successfully with 27 sanitized usernames; remote and local secret-bearing artifacts were removed | PROVEN |
 | DPAPI credential-material consequence | Native SYSTEM Credential Manager artifact acquired and decrypted offline through the retained administrative SMB session; local secret-bearing evidence removed | PROVEN |
 | Shadow Credentials | `WS01$` relayed over HTTP to WINTERFELL LDAPS; one KeyCredential injected and independently verified; Certipy obtained a TGT from the generated certificate; exact baseline restored to zero values and cryptographic ephemera removed | PROVEN |
-| ADIDNS | Generic capability exists, no Phase 03 fixture yet | GAP |
+| ADIDNS | Authenticated User `hodor` created `phase03-adidns` by Kerberos-secured dynamic update; DNS resolved to `10.4.10.254`; backing `dnsNode` was owned by Hodor; exact absent baseline restored including tombstone cleanup | PROVEN |
 | WebDAV/.lnk/.url | No dedicated WS01 Phase 03 victim flow yet | GAP |
 
 ## Engineering rules
@@ -63,8 +63,8 @@ Historical Drop The MIC/NTLMv1 material remains optional/conditional. NORTH has 
 
 ## Next acceptance gate
 
-1. Keep the neutral runtime established after Shadow Credentials rollback.
-2. Treat Shadow Credentials as closed end-to-end.
-3. Move to ADIDNS as the next isolated acceptance gate.
-4. Preserve exact baseline/rollback discipline for every directory mutation.
-5. Keep raw credentials, private keys, certificates and other secret-bearing evidence outside Git.
+1. Keep the neutral runtime established after ADIDNS rollback.
+2. Treat ADIDNS as closed end-to-end.
+3. Move to the WebDAV/.lnk/.url victim-interaction scenario as the next isolated acceptance gate.
+4. Preserve exact baseline/rollback discipline for every state-changing fixture.
+5. Keep raw credentials, tickets, private keys and other secret-bearing evidence outside Git.
