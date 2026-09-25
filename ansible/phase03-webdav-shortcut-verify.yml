@@ -11,6 +11,8 @@
 
           $shortcutPath = 'C:\Users\rickon.stark\Desktop\phase03-webdav.lnk'
           $expectedIcon = '\\10.4.10.254@80\DavWWWRoot\kingdoms.ico'
+          $expectedTarget = "$env:SystemRoot\explorer.exe"
+          $expectedArgument = '\\phase03-webdav.north.sevenkingdoms.local@80\DavWWWRoot\'
 
           if (-not (Test-Path -LiteralPath $shortcutPath)) {
               throw 'Controlled WebDAV shortcut is missing'
@@ -23,6 +25,7 @@
               $shortcut = $shell.CreateShortcut($shortcutPath)
               $icon = [string]$shortcut.IconLocation
               $target = [string]$shortcut.TargetPath
+              $arguments = [string]$shortcut.Arguments
           }
           finally {
               if ($null -ne $shortcut) {
@@ -33,6 +36,9 @@
                   [void][Runtime.InteropServices.Marshal]::ReleaseComObject($shell)
               }
           }
+
+          $normalizedIcon = ($icon -replace ',\s*\d+\s*$','').Trim('"')
+          $normalizedArguments = $arguments.Trim('"')
 
           $hash = Get-FileHash -LiteralPath $shortcutPath -Algorithm SHA256
           $webClient = Get-CimInstance Win32_Service -Filter "Name='WebClient'" -ErrorAction SilentlyContinue
@@ -45,18 +51,24 @@
               }
           }
 
-          $iconMatch = ($icon -ieq $expectedIcon)
+          $iconMatch = ($normalizedIcon -ieq $expectedIcon)
+          $targetMatch = ($target -ieq $expectedTarget)
+          $argumentsMatch = ($normalizedArguments -ieq $expectedArgument)
 
           Write-Output 'PHASE03_WEBDAV_VERIFY_LNK_EXISTS=True'
           Write-Output "PHASE03_WEBDAV_VERIFY_LNK_SHA256=$($hash.Hash.ToLowerInvariant())"
           Write-Output "PHASE03_WEBDAV_VERIFY_TARGET=$target"
+          Write-Output "PHASE03_WEBDAV_VERIFY_TARGET_MATCH=$targetMatch"
+          Write-Output "PHASE03_WEBDAV_VERIFY_ARGUMENTS=$arguments"
+          Write-Output "PHASE03_WEBDAV_VERIFY_ARGUMENTS_MATCH=$argumentsMatch"
           Write-Output "PHASE03_WEBDAV_VERIFY_ICON=$icon"
+          Write-Output "PHASE03_WEBDAV_VERIFY_ICON_NORMALIZED=$normalizedIcon"
           Write-Output "PHASE03_WEBDAV_VERIFY_ICON_MATCH=$iconMatch"
           Write-Output "PHASE03_WEBDAV_VERIFY_WEBCLIENT_STATE=$($webClient.State)"
           Write-Output "PHASE03_WEBDAV_VERIFY_MRXDAV_STATE=$mrxState"
 
-          if (-not $iconMatch) {
-              throw 'Shortcut remote icon does not match the controlled WebDAV path'
+          if (-not $iconMatch -or -not $targetMatch -or -not $argumentsMatch) {
+              throw 'Controlled WebDAV shortcut properties do not match the expected proof state'
           }
       register: webdav_verify
 
