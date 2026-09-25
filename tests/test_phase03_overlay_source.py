@@ -644,6 +644,46 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         result = subprocess.run(["bash", "-n", str(ROOT / "scripts" / "phase03" / "verify-wpad-reset.sh")], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_http_ldaps_readonly_fixture_exists_and_parses(self):
+        phase03 = ROOT / "scripts" / "phase03"
+        required = [
+            phase03 / "check-http-ldaps-readonly-relay.sh",
+            phase03 / "start-http-ldaps-readonly-relay.sh",
+            phase03 / "trigger-http-ldaps-readonly-relay.sh",
+            phase03 / "prove-http-ldaps-readonly-relay.sh",
+            phase03 / "stop-http-ldaps-readonly-relay.sh",
+            phase03 / "verify-http-ldaps-callback-clean.sh",
+        ]
+        for item in required:
+            with self.subTest(item=item):
+                self.assertTrue(item.is_file(), item)
+                result = subprocess.run(["bash", "-n", str(item)], capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_http_ldaps_runtime_is_mutation_disabled_and_http_only(self):
+        script = (ROOT / "scripts" / "phase03" / "start-http-ldaps-readonly-relay.sh").read_text()
+        self.assertIn("ldaps://$TARGET", script)
+        for option in ("--no-dump", "--no-da", "--no-acl", "--no-smb-server", "--no-wcf-server", "--no-raw-server"):
+            with self.subTest(option=option):
+                self.assertIn(option, script)
+        self.assertNotIn("--no-http-server", script)
+        self.assertIn("PHASE03_HTTP_LDAPS_RUNTIME_READY=True", script)
+
+    def test_http_ldaps_proof_requires_ws01_and_readonly_enumeration(self):
+        script = (ROOT / "scripts" / "phase03" / "prove-http-ldaps-readonly-relay.sh").read_text()
+        self.assertIn("NORTH\\WS01$", script)
+        self.assertIn("READONLY_ENUMERATION=True", script)
+        self.assertIn("PHASE03_HTTP_LDAPS_PROVEN=True", script)
+        self.assertIn("mutation-like ntlmrelayx output detected", script)
+
+    def test_http_ldaps_callback_cleanup_is_read_only(self):
+        playbook = (ROOT / "ansible" / "phase03-http-ldaps-callback-clean.yml").read_text()
+        self.assertIn("PHASE03_HTTP_LDAPS_CALLBACK_TASK_EXISTS", playbook)
+        self.assertIn("PHASE03_HTTP_LDAPS_CALLBACK_CLEAN=True", playbook)
+        for forbidden in ("Register-ScheduledTask", "Unregister-ScheduledTask", "Start-ScheduledTask"):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, playbook)
+
     def test_checkpoint_does_not_modify_lab_yet(self):
         text = PLAYBOOK.read_text().lower()
         self.assertNotIn("win_regedit", text)
