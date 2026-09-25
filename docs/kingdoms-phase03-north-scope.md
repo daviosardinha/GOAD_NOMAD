@@ -62,8 +62,8 @@ Historical Drop The MIC/NTLMv1 material remains optional/conditional. NORTH has 
 
 ## Next acceptance gate
 
-1. Keep the neutral runtime established after LSASS cleanup.
-2. Prove the DPAPI credential-material consequence as a separate acceptance gate.
-3. Preserve the LSASS result as closed evidence; do not recreate it unless regression testing requires it.
-4. Preserve Robb/Eddard as the explicit limited-vs-administrative comparison where the technique supports it.
-5. Stop and validate DPAPI independently before moving to Shadow Credentials.
+1. Keep the neutral runtime established after DPAPI cleanup.
+2. Treat the SMB consequence family as closed.
+3. Move to Shadow Credentials as the next isolated acceptance gate.
+4. Preserve the limited-vs-administrative comparison where the technique supports it.
+5. Keep raw credentials and other secret-bearing evidence outside Git.
