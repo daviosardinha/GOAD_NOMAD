@@ -703,7 +703,7 @@ class Phase03OverlaySourceTests(unittest.TestCase):
     def test_http_ldaps_start_is_detached_and_trigger_recovers_listener(self):
         start = (ROOT / "scripts" / "phase03" / "start-http-ldaps-readonly-relay.sh").read_text()
         trigger = (ROOT / "scripts" / "phase03" / "trigger-http-ldaps-readonly-relay.sh").read_text()
-        self.assertIn("nohup stdbuf", start)
+        self.assertIn("setsid -f stdbuf", start)\n        self.assertNotIn("nohup stdbuf", start)
         self.assertIn("</dev/null", start)
         self.assertIn("listener did not survive detached startup", start)
         self.assertIn("listener_pid_80", trigger)
@@ -715,6 +715,23 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         ):
             result = subprocess.run(["bash", "-n", str(script)], capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_http_ldaps_listener_diagnostic_is_scoped_and_non_triggering(self):
+        script = (DIAG / "diagnose-http-ldaps-listener.sh").read_text()
+        self.assertIn("setsid -f stdbuf", script)
+        self.assertIn("ss -H -lntp 'sport = :80'", script)
+        self.assertIn("ps -eo pid,ppid,sid,pgid,user,stat,lstart,args --forest", script)
+        self.assertIn("pgrep -af 'ntlmrelayx|python'", script)
+        self.assertIn("/proc/$pid/cmdline", script)
+        self.assertIn("SURVIVAL WINDOW", script)
+        self.assertIn("kill -TERM", script)
+        self.assertIn("CLEANUP REFUSED", script)
+        self.assertIn("PHASE03_HTTP_LDAPS_LISTENER_DIAGNOSTIC_COMPLETE=True", script)
+        self.assertNotIn("phase03-trigger-ws01-system-http", script)
+        self.assertNotIn("ansible-playbook", script)
+        self.assertNotIn("--delegate-access", script)
+        self.assertNotIn("--shadow-credentials", script)
+        self.assertNotIn("--add-computer", script)
 
     def test_http_ldaps_detach_preserves_operator_owned_evidence(self):
         start = (ROOT / "scripts" / "phase03" / "start-http-ldaps-readonly-relay.sh").read_text()
