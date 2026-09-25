@@ -182,9 +182,32 @@ Cleanup is **PROVEN**:
 
 LSASS is therefore closed end-to-end: **administrative relay -> SYSTEM-capable dump creation -> retained SOCKS retrieval -> MiniDump validation -> local credential parsing -> remote/local secret-bearing artifact cleanup**.
 
+## DPAPI credential-material consequence
+
+Native Windows DPAPI credential recovery on CASTELBLACK is **PROVEN**.
+
+- The retained `NORTH\EDDARD.STARK` SMB SOCKS session had `AdminStatus TRUE` and was used to acquire native SYSTEM DPAPI material without modifying CASTELBLACK.
+- Four root SYSTEM masterkeys and three SYSTEM User masterkeys were acquired from the existing Windows DPAPI protection store.
+- The native Credential Manager artifact `DFBE70A7E5CC19A398EBF1B96859CE5D` was acquired with size `11,120` bytes.
+- Credential metadata identified masterkey GUID `AB2516B4-FCD6-4E4E-8FFE-42BA0FB20641`, and the corresponding masterkey file was present in the acquired SYSTEM User store.
+- `impacket-secretsdump` completed successfully through the retained Eddard session and recovered both DPAPI_SYSTEM `UserKey` and `MachineKey` material locally.
+- The matching masterkey decrypted successfully with the DPAPI_SYSTEM `UserKey`.
+- The native Windows Credential Manager artifact then decrypted successfully with Impacket; sanitized metadata showed a generic, local-machine-persisted Windows Credential Manager entry without retaining the underlying secret value.
+- Raw DPAPI masterkeys, Credential Manager data and other secret-bearing local output were removed after validation; only the sanitized summary was retained outside Git.
+- No native DPAPI or Credential Manager artifact was deleted from CASTELBLACK.
+
+Cleanup is **PROVEN**:
+
+- The local raw/secret-bearing DPAPI evidence directory was removed.
+- The sanitized summary was retained.
+- Responder and ntlmrelayx were stopped.
+- No relay process remained and relay/SOCKS listener ports were free.
+- The repository remained unchanged except for the pre-existing untracked `arp.cache`.
+
+DPAPI is therefore closed end-to-end: **administrative relay -> retained SOCKS session -> native DPAPI artifact acquisition -> masterkey GUID correlation -> DPAPI_SYSTEM key recovery -> masterkey decryption -> Credential Manager decryption -> local secret-bearing artifact cleanup**.
+
 ## Remaining Phase 03 engineering
 
-- DPAPI credential-material consequence.
 - Shadow Credentials controlled fixture.
 - ADIDNS scenario.
 - WebDAV/.lnk/.url victim-interaction scenario.
@@ -193,7 +216,7 @@ LSASS is therefore closed end-to-end: **administrative relay -> SYSTEM-capable d
 
 ## Next acceptance gate
 
-The next acceptance gate is the **DPAPI credential-material consequence**, kept separate from the now-closed LSASS path so its prerequisites, recovered material and cleanup can be demonstrated independently.
+The next acceptance gate is **Shadow Credentials**, now that the SMB post-relay consequence family is closed through share access, SYSTEM execution, LSASS and native DPAPI recovery.
 
 ## Regression rule
 
