@@ -474,24 +474,73 @@ printf '%s\n' "${out}" | tee "${LOG_DIR}/forest-trust.log"
 printf '%s\n' "${out}" | grep -Fq 'FOREST_TRUST=PASS' || fatal "forest trust validation failed"
 pass "SevenKingdoms/ESSOS forest trust"
 
-out="$(vagrant_ps GOAD-DC02 <<'PS'
-$ErrorActionPreference = 'Stop'
-
 # ntlm_bot and responder_bot remain traffic-generator health requirements in
 # every runtime mode. connect_bot is validated by the RDP contract below
 # because its expected state differs between legacy and headless.
+#
+# A Scheduled Task sampled while it is executing can report State=Running and
+# LastTaskResult=0x00041301 (SCHED_S_TASK_RUNNING). That value is scheduler
+# state, not a completed task failure. Wait for each short-lived bot to settle,
+# then require the completed Ready/0 contract. Always persist probe output so a
+# real task or WinRM failure remains diagnosable.
+if ! out="$(vagrant_ps GOAD-DC02 <<'PS'
+$ErrorActionPreference = 'Stop'
+
 foreach ($name in 'ntlm_bot','responder_bot') {
-    $task = Get-ScheduledTask -TaskName $name
-    $info = Get-ScheduledTaskInfo -TaskName $name
-    if ($task.State.ToString() -notin @('Ready','Running')) { throw "$name state=$($task.State)" }
-    if ($info.LastTaskResult -ne 0) { throw "$name LastTaskResult=$($info.LastTaskResult)" }
-    Write-Output "$name=PASS"
+    try {
+        $deadline = (Get-Date).AddSeconds(30)
+
+        while ($true) {
+            $task = Get-ScheduledTask -TaskName $name -ErrorAction Stop
+            $info = Get-ScheduledTaskInfo -TaskName $name -ErrorAction Stop
+            $state = $task.State.ToString()
+            $last = [int64]$info.LastTaskResult
+            $lastHex = '0x{0:X8}' -f ([uint32]$info.LastTaskResult)
+
+            Write-Output (
+                "BOT_SAMPLE|NAME=$name|STATE=$state|LAST=$last|LAST_HEX=$lastHex" +
+                "|LAST_RUN=$($info.LastRunTime.ToString('o'))" +
+                "|NEXT_RUN=$($info.NextRunTime.ToString('o'))"
+            )
+
+            if ($state -eq 'Running') {
+                if ((Get-Date) -ge $deadline) {
+                    Write-Output "$name=FAIL|STATE=$state|LAST=$last|REASON=did-not-settle"
+                    break
+                }
+
+                Start-Sleep -Seconds 2
+                continue
+            }
+
+            if ($state -ne 'Ready') {
+                Write-Output "$name=FAIL|STATE=$state|LAST=$last|REASON=unexpected-state"
+                break
+            }
+
+            if ($last -ne 0) {
+                Write-Output "$name=FAIL|STATE=$state|LAST=$last|REASON=completed-result"
+                break
+            }
+
+            Write-Output "$name=PASS|STATE=Ready|LAST=0"
+            break
+        }
+    }
+    catch {
+        Write-Output "$name=FAIL|REASON=query-error|ERROR=$($_.Exception.Message)"
+    }
 }
 PS
-)"
+)"; then
+    printf '%s\n' "${out}" | tee "${LOG_DIR}/bots.log"
+    fatal "WINTERFELL traffic-generator bot query failed"
+fi
+
 printf '%s\n' "${out}" | tee "${LOG_DIR}/bots.log"
 for bot in ntlm_bot responder_bot; do
-    printf '%s\n' "${out}" | grep -Fq "${bot}=PASS" || fatal "${bot} validation failed"
+    printf '%s\n' "${out}" | grep -Fq "${bot}=PASS|STATE=Ready|LAST=0" ||
+        fatal "${bot} validation failed; inspect ${LOG_DIR}/bots.log"
 done
 pass "GOAD traffic-generator bot health"
 
