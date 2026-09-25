@@ -634,6 +634,16 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         result = subprocess.run(["bash", "-n", str(ROOT / "scripts" / "phase03" / "check-wpad-runtime-capabilities.sh")], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_wpad_reset_verifier_compares_exact_captured_state(self):
+        wrapper = (ROOT / "scripts" / "phase03" / "verify-wpad-reset.sh").read_text()
+        playbook = (ROOT / "ansible" / "phase03-wpad-reset-verify.yml").read_text()
+        self.assertIn("PHASE03_WPAD_RESET_IPV6_MATCH", playbook)
+        self.assertIn("PHASE03_WPAD_RESET_DNSV6_MATCH", playbook)
+        self.assertIn("PHASE03_WPAD_RESET_COMPLETE=True", playbook)
+        self.assertIn("mitm6 is still active", wrapper)
+        result = subprocess.run(["bash", "-n", str(ROOT / "scripts" / "phase03" / "verify-wpad-reset.sh")], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_checkpoint_does_not_modify_lab_yet(self):
         text = PLAYBOOK.read_text().lower()
         self.assertNotIn("win_regedit", text)
