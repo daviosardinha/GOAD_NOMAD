@@ -80,6 +80,7 @@ Optional environment variables:
   aliases. Exercise-plane reachability still checks canonical NORTH addresses.
 - `KINGDOMS_RDP_LOG_DIR`: output directory; prefer a new directory for every run.
 - `GOAD_KINGDOMS_EXPECTED_COMMIT`: pin the existing source-of-truth gate.
+- `KINGDOMS_RDP_BOT_MODE`: network-segmentation lifecycle RDP bot contract; defaults to `legacy`, while Phase 03 final regression explicitly uses `headless`.
 
 The validator reads directory evidence on WINTERFELL and effective LSA policy
 on each selected host. It resolves domain security groups and host-local alias
