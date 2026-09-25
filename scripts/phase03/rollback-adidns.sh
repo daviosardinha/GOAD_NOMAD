@@ -93,10 +93,11 @@ LDAP_RESULT="$(ldapsearch -LLL -Y GSSAPI -Q -H "$LDAP_URI" -b "$NODE_DN" -s base
 LDAP_RC=$?
 set -e
 
-if [[ "$LDAP_RC" -eq 0 ]] && grep -Fq "dn: $NODE_DN" <<<"$LDAP_RESULT"; then
+if [[ "$LDAP_RC" -eq 0 ]]; then
   printf '%s\n' "$LDAP_RESULT"
   echo
-  echo 'INFO: backing dnsNode still exists; deleting it as its owner using Hodor Kerberos credentials'
+  echo 'INFO: base-scope LDAP search returned the reserved dnsNode'
+  echo 'INFO: deleting that exact node as its owner using Hodor Kerberos credentials'
   ldapdelete -Y GSSAPI -Q -H "$LDAP_URI" "$NODE_DN"
 elif [[ "$LDAP_RC" -eq 32 ]] || grep -qi 'No such object' <<<"$LDAP_RESULT"; then
   echo 'PASS: backing dnsNode is already absent'
