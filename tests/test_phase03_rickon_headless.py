@@ -48,6 +48,7 @@ class Phase03RickonHeadlessTests(unittest.TestCase):
     def test_runner_fails_closed_on_duplicate_and_certificate(self):
         text = RUNNER.read_text()
         self.assertIn("refusing a duplicate victim session", text)
+        self.assertIn("state established", text)
         self.assertIn("^[0-9a-f]{64}$", text)
         self.assertNotIn("/cert:ignore", text)
         self.assertNotIn("/p:Winter", text)
@@ -89,7 +90,8 @@ class Phase03RickonHeadlessTests(unittest.TestCase):
     def test_session_validator_checks_live_windows_state(self):
         shell = SESSION_VALIDATE.read_text()
         playbook = SESSION_PLAYBOOK.read_text()
-        self.assertIn("Exactly one WS01 RDP socket", shell)
+        self.assertIn("Exactly one established WS01 RDP socket", shell)
+        self.assertIn("state established", shell)
         self.assertIn("password is absent from process argv", shell)
         self.assertIn("PHASE03_RICKON_ACTIVE=TRUE", shell)
         self.assertIn("hosts: ws01", playbook)
@@ -110,6 +112,8 @@ class Phase03RickonHeadlessTests(unittest.TestCase):
         self.assertIn('pgrep -P "$old_main"', text)
         self.assertIn('awk -v p="$old_runner"', text)
         self.assertIn("validate-rickon-session.sh", text)
+        self.assertIn("state established", text)
+        self.assertIn("state established", CHECK.read_text())
         self.assertNotIn("sudo ss", text)
 
         session_text = SESSION_VALIDATE.read_text()
