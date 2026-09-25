@@ -522,6 +522,14 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         self.assertIn("PHASE03_WEBDAV_RESET_COMPLETE=True", playbook)
         self.assertIn("PHASE03_WEBDAV_ROLLBACK_COMPLETE=True", script)
 
+    def test_webdav_rickon_refresh_helper_targets_existing_headless_session(self):
+        script = (ROOT / "scripts" / "phase03" / "diagnostics" / "refresh-rickon-desktop.sh").read_text()
+        self.assertIn("10.4.10.31", script)
+        self.assertIn("xdotool", script)
+        self.assertIn("Super_L+d", script)
+        self.assertIn("F5", script)
+        self.assertIn("PHASE03_WEBDAV_RICKON_DESKTOP_REFRESH=True", script)
+
     def test_checkpoint_does_not_modify_lab_yet(self):
         text = PLAYBOOK.read_text().lower()
         self.assertNotIn("win_regedit", text)
