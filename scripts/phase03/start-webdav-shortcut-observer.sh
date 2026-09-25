@@ -49,4 +49,4 @@ echo 'Stop with Ctrl+C after the request has been proven.'
 echo
 
 cd "$ROOTDIR"
-exec sudo -n python3 -u -m http.server "$PORT" --bind "$BIND" 2>&1 | tee "$HTTP_LOG"
+sudo -n python3 -u -m http.server "$PORT" --bind "$BIND" 2>&1 | tee "$HTTP_LOG"
