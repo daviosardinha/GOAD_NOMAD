@@ -703,7 +703,7 @@ class Phase03OverlaySourceTests(unittest.TestCase):
     def test_http_ldaps_start_is_detached_and_trigger_recovers_listener(self):
         start = (ROOT / "scripts" / "phase03" / "start-http-ldaps-readonly-relay.sh").read_text()
         trigger = (ROOT / "scripts" / "phase03" / "trigger-http-ldaps-readonly-relay.sh").read_text()
-        self.assertIn("setsid -f stdbuf", start)
+        self.assertIn('setsid -f "$RUNTIME" "$FIFO"', start)
         self.assertNotIn("nohup stdbuf", start)
         self.assertIn("</dev/null", start)
         self.assertIn("listener did not survive detached startup", start)
@@ -733,6 +733,36 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         self.assertNotIn("--delegate-access", script)
         self.assertNotIn("--shadow-credentials", script)
         self.assertNotIn("--add-computer", script)
+
+    def test_http_ldaps_detached_stdin_is_kept_open(self):
+        helper = (
+            ROOT / "scripts" / "phase03" / "run-with-open-stdin.sh"
+        ).read_text()
+        start = (
+            ROOT / "scripts" / "phase03"
+            / "start-http-ldaps-readonly-relay.sh"
+        ).read_text()
+
+        self.assertIn("mkfifo -m 600", helper)
+        self.assertIn('exec 3<>"$FIFO"', helper)
+        self.assertIn('exec "$@" <&3', helper)
+        self.assertIn("run-with-open-stdin.sh", start)
+        self.assertIn('"$FIFO"', start)
+        self.assertIn('setsid -f "$RUNTIME" "$FIFO"', start)
+
+        result = subprocess.run(
+            [
+                "bash",
+                "-n",
+                str(
+                    ROOT / "scripts" / "phase03"
+                    / "run-with-open-stdin.sh"
+                ),
+            ],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_http_ldaps_detach_preserves_operator_owned_evidence(self):
         start = (ROOT / "scripts" / "phase03" / "start-http-ldaps-readonly-relay.sh").read_text()

