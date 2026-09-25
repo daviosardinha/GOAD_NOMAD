@@ -782,6 +782,27 @@ class Phase03OverlaySourceTests(unittest.TestCase):
             result = subprocess.run(["bash", "-n", str(script)], capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_status_docs_close_wpad_and_http_ldaps_permanentization(self):
+        runtime = (ROOT / "docs" / "kingdoms-phase03-runtime-checkpoint.md").read_text()
+        scope = (ROOT / "docs" / "kingdoms-phase03-north-scope.md").read_text()
+
+        self.assertIn("mitm6/WPAD permanentization is therefore closed", runtime)
+        self.assertIn("PHASE03_WPAD_RESET_COMPLETE=True", runtime)
+        self.assertIn("HTTP -> LDAPS permanentization is therefore closed", runtime)
+        self.assertIn("PHASE03_HTTP_LDAPS_PROVEN=True", runtime)
+        self.assertIn("PHASE03_HTTP_LDAPS_CALLBACK_CLEAN=True", runtime)
+        self.assertIn("final regression suite and no-residual-state validation", runtime)
+        self.assertIn("PROVEN / PERMANENTIZED", scope)
+        self.assertIn("Treat mitm6/WPAD and HTTP -> LDAPS permanentization as closed", scope)
+        self.assertNotIn(
+            "Promote proven mitm6/WPAD and HTTP->LDAPS flows",
+            runtime,
+        )
+        self.assertNotIn(
+            "Promote the already-proven mitm6/WPAD and HTTP->LDAPS flows",
+            scope,
+        )
+
     def test_checkpoint_does_not_modify_lab_yet(self):
         text = PLAYBOOK.read_text().lower()
         self.assertNotIn("win_regedit", text)
