@@ -5,7 +5,12 @@ set -euo pipefail
 WORK="${WORK:-$HOME/.config/kingdoms/phase03-http-ldaps}"
 LOG="$WORK/ntlmrelayx.log"
 
-[[ -r "$LOG" ]] || { echo "FAIL: relay log missing: $LOG" >&2; exit 1; }
+[[ -e "$LOG" ]] || { echo "FAIL: relay log does not exist: $LOG" >&2; exit 1; }
+[[ -r "$LOG" ]] || {
+  echo "FAIL: relay log exists but is not readable by $(id -un): $LOG" >&2
+  stat -Lc 'owner=%U group=%G mode=%a size=%s' "$LOG" >&2 || true
+  exit 1
+}
 
 echo '===== HTTP -> LDAPS RELAY PROOF ====='
 
