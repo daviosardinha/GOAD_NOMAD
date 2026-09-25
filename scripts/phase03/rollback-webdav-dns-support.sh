@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Remove the temporary WebDAV DNS support record and any owner-created tombstone.
+# Safe to rerun: if the retained Kerberos context is already gone, verify exact absence and return success.
 set -euo pipefail
 
 ROOT="${ROOT:-$HOME/Documents/GOAD_NOMAD}"
-BASELINE="${BASELINE:-$HOME/.config/kingdoms/phase03-webdav-dns-baseline.json}"
 WORK="${WORK:-$HOME/.config/kingdoms/phase03-webdav-dns}"
 ZONE="${ZONE:-north.sevenkingdoms.local}"
 RECORD="${RECORD:-phase03-webdav}"
@@ -14,7 +14,7 @@ NODE_DN="DC=$RECORD,DC=$ZONE,CN=MicrosoftDNS,DC=DomainDnsZones,DC=north,DC=seven
 KRB5_CONFIG_FILE="$WORK/krb5.conf"
 TGT_CACHE="$WORK/webdav-dns.ccache"
 UPDATE_FILE="$WORK/nsupdate-delete.txt"
-VERIFY_PLAYBOOK="$ROOT/ansible/phase03-webdav-dns-verify.yml"
+RESET_VERIFY_PLAYBOOK="$ROOT/ansible/phase03-webdav-dns-reset-verify.yml"
 DATA_INVENTORY="$ROOT/ad/GOAD/data/inventory"
 PROVIDER_INVENTORY="$ROOT/ad/GOAD/providers/vmware/inventory"
 
@@ -33,9 +33,28 @@ find_ansible_playbook() {
   return 1
 }
 
+verify_reset() {
+  local ansible_playbook="$1"
+
+  ANSIBLE_CONFIG="$ROOT/ansible/ansible.cfg" "$ansible_playbook" \
+    -i "$DATA_INVENTORY" \
+    -i "$PROVIDER_INVENTORY" \
+    "$RESET_VERIFY_PLAYBOOK"
+}
+
 cd "$ROOT"
 
-[[ -f "$KRB5_CONFIG_FILE" && -f "$TGT_CACHE" ]] || { echo "FAIL: retained WebDAV DNS Kerberos context missing" >&2; exit 1; }
+ANSIBLE_PLAYBOOK="$(find_ansible_playbook || true)"
+[[ -n "$ANSIBLE_PLAYBOOK" ]] || { echo "FAIL: ansible-playbook not found" >&2; exit 1; }
+
+if [[ ! -f "$KRB5_CONFIG_FILE" || ! -f "$TGT_CACHE" ]]; then
+  echo 'INFO: retained WebDAV DNS Kerberos context is absent; checking whether rollback already completed'
+  verify_reset "$ANSIBLE_PLAYBOOK"
+  echo 'PHASE03_WEBDAV_DNS_SUPPORT_ALREADY_CLEAN=True'
+  echo 'PHASE03_WEBDAV_DNS_SUPPORT_ROLLBACK_COMPLETE=True'
+  exit 0
+fi
+
 export KRB5_CONFIG="$KRB5_CONFIG_FILE"
 export KRB5CCNAME="FILE:$TGT_CACHE"
 
@@ -67,4 +86,7 @@ ANSWER="$(dig @10.4.10.11 "$FQDN" A +time=2 +tries=1 +short || true)"
 [[ -z "$ANSWER" ]] || { echo "FAIL: DNS still resolves to $ANSWER" >&2; exit 1; }
 
 rm -rf -- "$WORK"
+
+verify_reset "$ANSIBLE_PLAYBOOK"
+
 echo 'PHASE03_WEBDAV_DNS_SUPPORT_ROLLBACK_COMPLETE=True'
