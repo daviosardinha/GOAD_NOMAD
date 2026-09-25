@@ -45,7 +45,7 @@ Historical Drop The MIC/NTLMv1 material remains optional/conditional. NORTH has 
 | SOCKS relay | Robb and Eddard sessions retained behind SOCKS5 on 127.0.0.1:1080 and reused with credential-less SMB clients; Robb C$ denied, Eddard C$ listed | PROVEN |
 | SMB share authorization consequence | Robb could enumerate shares but C$ was denied; Eddard opened and listed C$ | PROVEN |
 | SMB remote execution consequence | Eddard relay executed `whoami & hostname` as `NT AUTHORITY\SYSTEM` on CASTELBLACK; Robb relay authenticated but execution failed with DCERPC access denied | PROVEN |
-| LSASS/DPAPI credential-material consequences | Not yet runtime-proven as separated consequence sets | GAP |
+| LSASS credential-material consequence | Eddard administrative relay created an 89,796,074-byte CASTELBLACK LSASS MiniDump; Eddard SOCKS reuse retrieved it; pypykatz parsed it successfully with 27 sanitized usernames; remote and local secret-bearing artifacts were removed | PROVEN |\n| DPAPI credential-material consequence | Not yet runtime-proven as a separated consequence set | GAP |
 | Shadow Credentials | Not yet configured/proven | GAP |
 | ADIDNS | Generic capability exists, no Phase 03 fixture yet | GAP |
 | WebDAV/.lnk/.url | No dedicated WS01 Phase 03 victim flow yet | GAP |
@@ -62,8 +62,8 @@ Historical Drop The MIC/NTLMv1 material remains optional/conditional. NORTH has 
 
 ## Next acceptance gate
 
-1. Keep the neutral runtime established after SMB-execution cleanup.
-2. Prove the LSASS credential-material consequence against the already-proven CASTELBLACK administrative relay surface.
-3. Keep LSASS and DPAPI as separate acceptance gates.
+1. Keep the neutral runtime established after LSASS cleanup.
+2. Prove the DPAPI credential-material consequence as a separate acceptance gate.
+3. Preserve the LSASS result as closed evidence; do not recreate it unless regression testing requires it.
 4. Preserve Robb/Eddard as the explicit limited-vs-administrative comparison where the technique supports it.
-5. Stop and validate each consequence independently before moving to Shadow Credentials.
+5. Stop and validate DPAPI independently before moving to Shadow Credentials.
