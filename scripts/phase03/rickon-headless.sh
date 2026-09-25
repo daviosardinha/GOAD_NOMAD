@@ -26,7 +26,7 @@ route="$(ip -4 route get "$TARGET_IP" 2>/dev/null)" ||
    " $route " == *" src $EXPECTED_SOURCE "* ]] ||
   fail 'NORTH route changed: expected WS01 via vmnet10 from 10.4.10.254.'
 
-if ss -nt | grep -Eq "[[:space:]]$TARGET_IP:3389([[:space:]]|$)"; then
+if ss -H -nt state established | grep -Eq "[[:space:]]$TARGET_IP:3389([[:space:]]|$)"; then
   fail 'A WS01 RDP connection already exists from this operator host; refusing a duplicate victim session.'
 fi
 
