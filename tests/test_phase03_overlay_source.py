@@ -467,7 +467,7 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         self.assertIn("MRxDAV", playbook)
         self.assertIn("phase03-webdav.lnk", playbook)
         self.assertIn("phase03-webdav.url", playbook)
-        self.assertIn("NORTH\\\\rickon.stark", playbook)
+        self.assertIn("NORTH\\rickon.stark", playbook)
         self.assertIn("PHASE03_WEBDAV_RICKON_EXPLORER", playbook)
         self.assertIn("WebDAV preflight requires neutral state", wrapper)
         for forbidden in ("Set-Service", "Start-Service", "Stop-Service", "New-Item", "Set-ItemProperty", "Remove-Item"):
