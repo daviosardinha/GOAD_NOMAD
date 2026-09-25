@@ -589,6 +589,22 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         self.assertIn("phase03-webdav.north.sevenkingdoms.local@80", playbook)
         self.assertIn(r"-replace ',\s*\d+\s*$',''", playbook)
 
+    def test_webdav_dns_support_rollback_is_idempotent(self):
+        script = (ROOT / "scripts" / "phase03" / "rollback-webdav-dns-support.sh").read_text()
+        verifier = (ROOT / "ansible" / "phase03-webdav-dns-reset-verify.yml").read_text()
+        self.assertIn("PHASE03_WEBDAV_DNS_SUPPORT_ALREADY_CLEAN=True", script)
+        self.assertIn("PHASE03_WEBDAV_DNS_RESET_COMPLETE=True", verifier)
+        self.assertIn("phase03-webdav-dns-baseline.json", verifier)
+
+    def test_status_docs_record_webdav_shortcut_as_proven(self):
+        runtime = (ROOT / "docs" / "kingdoms-phase03-runtime-checkpoint.md").read_text()
+        scope = (ROOT / "docs" / "kingdoms-phase03-north-scope.md").read_text()
+        self.assertIn("WebDAV / .lnk victim-interaction proof", runtime)
+        self.assertIn("WebDAV/.lnk is therefore closed end-to-end", runtime)
+        self.assertIn("OPTIONS /kingdoms.ico", runtime)
+        self.assertIn("| WebDAV/.lnk |", scope)
+        self.assertNotIn("| WebDAV/.lnk/.url | No dedicated WS01 Phase 03 victim flow yet | GAP |", scope)
+
     def test_checkpoint_does_not_modify_lab_yet(self):
         text = PLAYBOOK.read_text().lower()
         self.assertNotIn("win_regedit", text)
