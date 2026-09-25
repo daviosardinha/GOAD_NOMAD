@@ -24,7 +24,17 @@ This file records runtime evidence only. Raw credentials, hashes, tickets and ot
 
 ## mitm6 / WPAD
 
-The deterministic WS01 mitm6/WPAD chain is **PROVEN**.
+The deterministic WS01 mitm6/WPAD chain is **PROVEN** and permanentized as a baseline/prove/reset workflow.
+
+Exact baseline capture established:
+
+- WS01 interface `Ethernet1`, interface index `5`;
+- one baseline IPv6 address: `fe80::50d2:c933:5bd8:e0a3%5`;
+- zero baseline IPv6 DNS servers;
+- attacker IPv6 DNS: `fe80::250:56ff:fec0:a`;
+- retained baseline: `~/.config/kingdoms/phase03-wpad-baseline.json`.
+
+Permanent preflight proved a neutral Phase 03 runtime, the expected mitm6/ntlmrelayx/tcpdump/tshark tooling, correct `vmnet10` routing, WINTERFELL TCP/636 reachability, and free TCP/80 and TCP/445 listeners.
 
 Same-capture acceptance sequence:
 
@@ -32,21 +42,51 @@ Same-capture acceptance sequence:
 2. Attacker Advertise.
 3. WS01 Request.
 4. Attacker Reply.
-5. WS01 uses attacker IPv6 DNS \`fe80::250:56ff:fec0:a\`.
-6. WS01 queries WPAD through that IPv6 path.
-7. WS01 automatically requests \`GET /wpad.dat\`.
+5. WS01 adopts attacker IPv6 DNS `fe80::250:56ff:fec0:a`.
+6. WS01 resolves WPAD through the attacker-controlled IPv6 DNS path.
+7. WS01 automatically requests `GET /wpad.dat`.
 
-\`scripts/phase03/validate-wpad-chain.sh\` completed with **PASS: 8 / FAIL: 0**.
+`scripts/phase03/validate-wpad-chain.sh` completed with **PASS: 8 / FAIL: 0**.
+
+Exact reset is **PROVEN**:
+
+- mitm6 was stopped before restoration;
+- WS01 was renewed after the attacker service stopped;
+- IPv6 returned to the captured baseline address;
+- IPv6 DNS returned to zero configured servers;
+- the interface-zone suffix was normalized during exact comparison;
+- reset markers returned `PHASE03_WPAD_RESET_IPV6_MATCH=True`, `PHASE03_WPAD_RESET_DNSV6_MATCH=True`, and `PHASE03_WPAD_RESET_COMPLETE=True`.
+
+mitm6/WPAD permanentization is therefore closed: **exact baseline -> deterministic DHCPv6/DNS/WPAD proof -> independent same-capture validation -> exact network reset**.
 
 ## LDAP / LDAPS relay
 
-The NORTH HTTP/WPAD -> LDAPS relay path is **PROVEN**.
+The permanent NORTH HTTP -> LDAPS read-only relay fixture is **PROVEN** and closed.
 
-- WINTERFELL is reachable on TCP/389 and TCP/636.
-- Mutation-disabled HTTP/WPAD relay authenticated successfully to \`ldaps://10.4.10.11\`.
-- A WS01 machine-account authentication was relayed as \`NORTH\WS01$\`.
-- Read-only privilege enumeration started successfully.
-- The MSSQL \`sql_svc\` SMB-origin path is not the NORTH LDAP base path because the observed SMB client requested signing.
+Safety/runtime contract:
+
+- target is `ldaps://10.4.10.11`;
+- mutation is disabled with `--no-dump --no-da --no-acl`;
+- non-required listener families are disabled with `--no-smb-server --no-wcf-server --no-raw-server`;
+- the retained relay log is operator-owned with mode `0600`;
+- detached runtime uses `setsid -f` plus `scripts/phase03/run-with-open-stdin.sh` so ntlmrelayx stdin remains open without a TTY;
+- a 60-second longevity diagnostic proved one stable ntlmrelayx PID continuously owned `0.0.0.0:80`, with stdin backed by the deleted private FIFO rather than `/dev/null`.
+
+Acceptance sequence is **PROVEN**:
+
+- a fresh relay passed its persistence gate across separate shell invocations;
+- the deterministic WS01 scheduled-task callback ran as LocalSystem;
+- the HTTP authentication arrived as `NORTH\WS01$` from `10.4.10.31`;
+- ntlmrelayx authenticated successfully to `ldaps://10.4.10.11`;
+- read-only privilege enumeration started successfully;
+- proof markers returned `PHASE03_HTTP_LDAPS_AUTH_SUCCESS=True`, `PHASE03_HTTP_LDAPS_READONLY_ENUMERATION=True`, and `PHASE03_HTTP_LDAPS_PROVEN=True`;
+- the relay stopped through its tracked PID;
+- the temporary WS01 callback task was absent afterward with `PHASE03_HTTP_LDAPS_CALLBACK_CLEAN=True`;
+- final runtime verification showed no Phase 03 relay process and free TCP/80 and TCP/445 listeners.
+
+The MSSQL `sql_svc` SMB-origin path remains outside this LDAP base path because the observed SMB client requested signing.
+
+HTTP -> LDAPS permanentization is therefore closed: **neutral preflight -> durable detached listener -> deterministic WS01$ callback -> successful read-only LDAPS relay -> proof -> scoped stop -> callback cleanup -> neutral runtime**.
 
 ## RBCD end-to-end proof
 
@@ -326,12 +366,20 @@ WebDAV/.lnk is therefore closed end-to-end: **read-only preflight -> exact WS01 
 
 ## Remaining Phase 03 engineering
 
-- Promote proven mitm6/WPAD and HTTP->LDAPS flows into permanent apply/prove/reset infrastructure.
-- Final regression and Notion teaching sections/screenshots.
+- Final Phase 03 regression.
+- Phase 00–02 regression.
+- NORTH segmentation regression.
+- RDP contract regression.
+- MSSQL regression.
+- traffic-generator regression.
+- no-residual-mutation/listener/process validation.
+- final screenshots.
+- final GOAD Part 4 parity review.
+- final Notion teaching sections and handoff.
 
 ## Next acceptance gate
 
-The next acceptance gate is **promotion of the already-proven mitm6/WPAD and HTTP->LDAPS flows into permanent apply/prove/reset infrastructure**, now that WebDAV/.lnk is closed end-to-end and exactly rolled back.
+The next acceptance gate is the **final regression suite and no-residual-state validation**. mitm6/WPAD and HTTP -> LDAPS permanentization are both closed and must not be re-engineered unless regression exposes a concrete failure.
 
 ## Regression rule
 
