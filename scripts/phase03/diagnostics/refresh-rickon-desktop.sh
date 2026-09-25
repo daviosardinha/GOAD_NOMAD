@@ -18,8 +18,8 @@ RDP_PID="$(sudo ss -ntp 2>/dev/null | sed -n "s/.*${WS01_IP//./\\.}:3389.*pid=\\
   exit 1
 }
 
-DISPLAY_VALUE="$(sudo tr '\\0' '\\n' < "/proc/$RDP_PID/environ" 2>/dev/null | sed -n 's/^DISPLAY=//p')"
-XAUTH_VALUE="$(sudo tr '\\0' '\\n' < "/proc/$RDP_PID/environ" 2>/dev/null | sed -n 's/^XAUTHORITY=//p')"
+DISPLAY_VALUE="$(tr '\\0' '\\n' < "/proc/$RDP_PID/environ" 2>/dev/null | sed -n 's/^DISPLAY=//p')"
+XAUTH_VALUE="$(tr '\\0' '\\n' < "/proc/$RDP_PID/environ" 2>/dev/null | sed -n 's/^XAUTHORITY=//p')"
 
 [[ -n "$DISPLAY_VALUE" && -n "$XAUTH_VALUE" ]] || {
   echo 'FAIL: could not recover DISPLAY/XAUTHORITY from the WS01 FreeRDP process'
