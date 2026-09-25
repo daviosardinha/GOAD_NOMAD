@@ -281,15 +281,57 @@ Rollback behavior is **PROVEN**:
 
 ADIDNS is therefore closed end-to-end: **read-only ACL/zone preflight -> exact absent baseline -> authenticated secure DNS update -> DNS resolution proof -> backing dnsNode verification -> tombstone behavior -> owner-context cleanup -> exact absent-state verification**.
 
+## WebDAV / .lnk victim-interaction proof
+
+WS01 WebDAV interaction through a controlled Rickon shortcut is **PROVEN** and exactly rolled back.
+
+Preflight and baseline established:
+
+- Rickon's profile and Desktop existed and an interactive `explorer.exe` session was active;
+- `WebClient` existed with `Stopped` state and `Manual` startup mode;
+- `MRxDAV` existed and was `STOPPED`;
+- reserved `phase03-webdav.lnk` and `.url` artifacts were absent;
+- the exact pre-mutation WS01 state was captured locally in mode-0600 `~/.config/kingdoms/phase03-webdav-baseline.json`.
+
+Behavioral findings:
+
+- passive Desktop refresh of a `.lnk` carrying a remote WebDAV icon did not trigger a request on this WS01 build;
+- direct IP-literal WebDAV UNC access also remained inactive while WebClient was stopped;
+- an authenticated temporary ADIDNS support record, `phase03-webdav.north.sevenkingdoms.local -> 10.4.10.254`, was therefore created with the same controlled Hodor secure-update path used by the ADIDNS fixture;
+- a transient service probe proved that the hostname-backed WebDAV UNC path reaches Kali when WebClient is explicitly running;
+- the probe restored WebClient and MRxDAV to the captured stopped state immediately afterward.
+
+Controlled user interaction is **PROVEN**:
+
+- the reserved Rickon `.lnk` was armed to launch `explorer.exe` against `\\phase03-webdav.north.sevenkingdoms.local@80\DavWWWRoot\`;
+- WebClient was started for the proof without changing its `Manual` startup mode;
+- Rickon's existing headless RDP session launched the shortcut as an interactive user action;
+- the Kali observer recorded an HTTP `OPTIONS /kingdoms.ico` request from WS01 `10.4.10.31`;
+- independent verification returned `REMOTE_REQUEST=True`, `TCP_EVIDENCE=True`, `TARGET_MATCH=True`, `ARGUMENTS_MATCH=True`, `ICON_MATCH=True`, and `VERIFY_COMPLETE=True`;
+- `WebClient` and `MRxDAV` were observed running during the successful interaction.
+
+Rollback is **PROVEN**:
+
+- the reserved `.lnk` and `.url` artifacts were absent after reset;
+- WebClient returned to `Stopped` with startup mode still `Manual`;
+- MRxDAV returned to `STOPPED`;
+- the shortcut reset returned `RESET_COMPLETE=True` and the local observer/runtime evidence directory was removed;
+- the temporary `phase03-webdav` DNS support record was deleted and its Hodor-owned tombstoned `dnsNode` was removed with the retained owner Kerberos/GSSAPI context;
+- the DNS-support rollback returned `PHASE03_WEBDAV_DNS_SUPPORT_ROLLBACK_COMPLETE=True`;
+- rerunning DNS rollback after success originally reported missing retained context because the first successful rollback had already deleted it; the helper is now idempotent and verifies the absent baseline before returning `ALREADY_CLEAN=True`.
+
+WebDAV/.lnk is therefore closed end-to-end: **read-only preflight -> exact WS01 baseline -> hostname support -> explicit WebClient runtime prerequisite -> Rickon interactive shortcut launch -> WS01 HTTP/WebDAV request proof -> independent shortcut verification -> exact WS01 rollback -> exact DNS support rollback**.
+
+`.url` was not independently exercised because the `.lnk` path already proves the intended victim-interaction/WebDAV behavior; it remains optional course material rather than a separate acceptance gate.
+
 ## Remaining Phase 03 engineering
 
-- WebDAV/.lnk/.url victim-interaction scenario.
 - Promote proven mitm6/WPAD and HTTP->LDAPS flows into permanent apply/prove/reset infrastructure.
 - Final regression and Notion teaching sections/screenshots.
 
 ## Next acceptance gate
 
-The next acceptance gate is **WebDAV/.lnk/.url victim interaction**, now that ADIDNS is closed end-to-end and exactly rolled back.
+The next acceptance gate is **promotion of the already-proven mitm6/WPAD and HTTP->LDAPS flows into permanent apply/prove/reset infrastructure**, now that WebDAV/.lnk is closed end-to-end and exactly rolled back.
 
 ## Regression rule
 
