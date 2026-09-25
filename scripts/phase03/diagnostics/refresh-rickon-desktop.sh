@@ -43,9 +43,9 @@ fi
 echo "RDP_PID=$RDP_PID"
 echo "DISPLAY=$DISPLAY"
 echo "WINDOW_ID=$WINDOW_ID"
-echo 'INFO: activating Rickon RDP window, showing Desktop, then issuing F5'
+echo 'INFO: focusing Rickon RDP window, showing Desktop, then issuing F5'
 
-xdotool windowactivate --sync "$WINDOW_ID"
+xdotool windowfocus --sync "$WINDOW_ID"
 sleep 1
 xdotool key --window "$WINDOW_ID" --clearmodifiers Super_L+d
 sleep 2
