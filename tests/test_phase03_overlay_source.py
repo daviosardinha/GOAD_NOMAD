@@ -807,6 +807,29 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         gitignore = (ROOT / ".gitignore").read_text().splitlines()
         self.assertIn("/arp.cache", gitignore)
 
+    def test_segmentation_runtime_supports_explicit_rdp_bot_mode(self):
+        segmentation = (
+            ROOT / "scripts" / "validate-network-segmentation-runtime.sh"
+        ).read_text()
+        final = (
+            ROOT / "scripts" / "validate-phase03-final-regression.sh"
+        ).read_text()
+
+        self.assertIn(
+            'RDP_BOT_MODE="${KINGDOMS_RDP_BOT_MODE:-legacy}"',
+            segmentation,
+        )
+        self.assertIn(
+            '--bot-mode "${RDP_BOT_MODE}"',
+            segmentation,
+        )
+        self.assertIn("foreach ($name in 'ntlm_bot','responder_bot')", segmentation)
+        self.assertNotIn(
+            "foreach ($name in 'connect_bot','ntlm_bot','responder_bot')",
+            segmentation,
+        )
+        self.assertIn("KINGDOMS_RDP_BOT_MODE=headless", final)
+
     def test_phase03_final_regression_orchestrates_closed_contracts(self):
         script = (ROOT / "scripts" / "validate-phase03-final-regression.sh").read_text()
 
