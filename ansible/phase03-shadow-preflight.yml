@@ -1,0 +1,72 @@
+---
+- name: Read NORTH Shadow Credentials prerequisites without changing Active Directory
+  hosts: dc02
+  gather_facts: false
+  tasks:
+    - name: Inspect WS01 KeyCredentialLink rights and KDC certificate state
+      ansible.windows.win_powershell:
+        script: |
+          $ErrorActionPreference = 'Stop'
+          $Ansible.Changed = $false
+          Import-Module ActiveDirectory
+
+          $root = Get-ADRootDSE
+          $schema = Get-ADObject -SearchBase $root.schemaNamingContext -LDAPFilter '(lDAPDisplayName=msDS-KeyCredentialLink)' -Properties schemaIDGUID,attributeSecurityGUID
+          if ($null -eq $schema) { throw 'msDS-KeyCredentialLink schema attribute not found' }
+
+          $kclGuid = New-Object Guid (,$schema.schemaIDGUID)
+          $validatedWriteGuid = [Guid]$schema.attributeSecurityGUID
+          $target = Get-ADComputer -Identity 'WS01' -Properties DistinguishedName,ObjectSid,msDS-KeyCredentialLink
+          $targetSid = $target.ObjectSid.Value
+          $values = @()
+          if ($null -ne $target.'msDS-KeyCredentialLink') { $values = @($target.'msDS-KeyCredentialLink') }
+
+          $acl = Get-Acl -Path ("AD:" + $target.DistinguishedName)
+          $validatedWrite = $false
+          foreach ($ace in $acl.Access) {
+              $sid = $null
+              try {
+                  $sid = $ace.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value
+              } catch {
+                  $sid = [string]$ace.IdentityReference
+              }
+              if ($sid -notin @('S-1-5-10',$targetSid)) { continue }
+              if (
+                  $ace.AccessControlType -eq 'Allow' -and
+                  ([string]$ace.ActiveDirectoryRights) -match 'Self' -and
+                  ([Guid]$ace.ObjectType) -eq $validatedWriteGuid
+              ) {
+                  $validatedWrite = $true
+                  Write-Output ("PHASE03_SHADOW_VALIDATED_WRITE_ACE=SID=$sid;RIGHTS=$($ace.ActiveDirectoryRights);OBJECTTYPE=$($ace.ObjectType);INHERITED=$($ace.IsInherited)")
+              }
+          }
+
+          Write-Output 'PHASE03_SHADOW_PREFLIGHT_BEGIN=True'
+          Write-Output 'PHASE03_SHADOW_TARGET=WS01$'
+          Write-Output "PHASE03_SHADOW_TARGET_DN=$($target.DistinguishedName)"
+          Write-Output "PHASE03_SHADOW_TARGET_SID=$targetSid"
+          Write-Output "PHASE03_SHADOW_KCL_SCHEMA_GUID=$kclGuid"
+          Write-Output "PHASE03_SHADOW_VALIDATED_WRITE_GUID=$validatedWriteGuid"
+          Write-Output "PHASE03_SHADOW_KCL_COUNT=$($values.Count)"
+          Write-Output "PHASE03_SHADOW_KCL_EMPTY=$($values.Count -eq 0)"
+          Write-Output "PHASE03_SHADOW_SELF_VALIDATED_WRITE=$validatedWrite"
+
+          $certutil = & certutil.exe -dcinfo verify 2>&1
+          $kdcCount = 0
+          foreach ($line in $certutil) {
+              if ([string]$line -match '([0-9]+) KDC certificates for WINTERFELL') {
+                  $kdcCount = [int]$Matches[1]
+              }
+          }
+          Write-Output "PHASE03_SHADOW_KDC_CERT_COUNT=$kdcCount"
+          Write-Output "PHASE03_SHADOW_CERTUTIL_RC=$LASTEXITCODE"
+          Write-Output "PHASE03_SHADOW_PREFLIGHT_COMPLETE=True"
+
+          if (-not $validatedWrite) { throw 'WS01 SELF validated-write right was not found' }
+          if ($kdcCount -lt 1) { throw 'WINTERFELL did not report a KDC certificate' }
+      register: shadow_preflight
+
+    - name: Emit Shadow Credentials preflight markers
+      ansible.builtin.debug:
+        msg: "{{ shadow_preflight.output | default([]) }}"
+      changed_when: false
