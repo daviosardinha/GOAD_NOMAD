@@ -459,6 +459,29 @@ class Phase03OverlaySourceTests(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertTrue((phase03 / name).is_file(), name)
 
+    def test_webdav_shortcut_preflight_is_read_only(self):
+        wrapper = (ROOT / "scripts" / "phase03" / "check-webdav-shortcut-prereqs.sh").read_text()
+        playbook = (ROOT / "ansible" / "phase03-webdav-shortcut-preflight.yml").read_text()
+        self.assertIn("hosts: ws01", playbook)
+        self.assertIn("WebClient", playbook)
+        self.assertIn("MRxDAV", playbook)
+        self.assertIn("phase03-webdav.lnk", playbook)
+        self.assertIn("phase03-webdav.url", playbook)
+        self.assertIn("NORTH\\\\rickon.stark", playbook)
+        self.assertIn("PHASE03_WEBDAV_RICKON_EXPLORER", playbook)
+        self.assertIn("WebDAV preflight requires neutral state", wrapper)
+        for forbidden in ("Set-Service", "Start-Service", "Stop-Service", "New-Item", "Set-ItemProperty", "Remove-Item"):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, playbook)
+
+    def test_webdav_shortcut_preflight_checks_listener_and_tool_state(self):
+        wrapper = (ROOT / "scripts" / "phase03" / "check-webdav-shortcut-prereqs.sh").read_text()
+        self.assertIn("TCP/$port is free", wrapper)
+        self.assertIn("responder", wrapper)
+        self.assertIn("impacket-ntlmrelayx", wrapper)
+        self.assertIn("tcpdump", wrapper)
+        self.assertIn("10.4.10.31", wrapper)
+
     def test_checkpoint_does_not_modify_lab_yet(self):
         text = PLAYBOOK.read_text().lower()
         self.assertNotIn("win_regedit", text)
