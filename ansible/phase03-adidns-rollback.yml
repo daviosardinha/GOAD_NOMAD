@@ -1,19 +1,19 @@
 ---
-- name: Restore NORTH ADIDNS reserved record to the exact captured baseline
+- name: Verify NORTH ADIDNS reserved name matches the captured absent baseline
   hosts: dc02
   gather_facts: false
   vars:
     phase03_adidns_baseline_path: "{{ lookup('env','HOME') }}/.config/kingdoms/phase03-adidns-baseline.json"
     phase03_adidns_baseline: "{{ lookup('ansible.builtin.file', phase03_adidns_baseline_path) | from_json }}"
   tasks:
-    - name: Restore reserved ADIDNS name when captured baseline was absent
+    - name: Verify reserved ADIDNS record and dnsNode are absent
       ansible.windows.win_powershell:
         script: |
           $ErrorActionPreference = 'Stop'
+          $Ansible.Changed = $false
+
           Import-Module ActiveDirectory
           Import-Module DnsServer
-          $Ansible.Changed = $false
-          $changed = $false
 
           $zoneName = '{{ phase03_adidns_baseline.Zone }}'
           $recordName = '{{ phase03_adidns_baseline.RecordName }}'
@@ -21,10 +21,11 @@
           $baselineNodeExists = [System.Convert]::ToBoolean('{{ phase03_adidns_baseline.NodeExists }}')
 
           if ($zoneName -ne 'north.sevenkingdoms.local' -or $recordName -ne 'phase03-adidns') {
-              throw 'Unexpected ADIDNS baseline target; refusing rollback'
+              throw 'Unexpected ADIDNS baseline target'
           }
+
           if ($baselineRecordExists -or $baselineNodeExists) {
-              throw 'Reserved ADIDNS name existed in the captured baseline; automatic destructive rollback is disabled'
+              throw 'This rollback verifier is scoped only to the captured absent baseline'
           }
 
           $records = @()
@@ -34,46 +35,30 @@
               $records = @()
           }
 
-          if ($records.Count -gt 0) {
-              foreach ($record in $records) {
-                  Remove-DnsServerResourceRecord -ZoneName $zoneName -InputObject $record -Force
-              }
-              $changed = $true
-          }
-
           $root = Get-ADRootDSE
           $zoneObject = Get-ADObject -SearchBase "CN=MicrosoftDNS,DC=DomainDnsZones,$($root.defaultNamingContext)" -LDAPFilter "(&(objectClass=dnsZone)(name=$zoneName))" -Properties DistinguishedName
-          $node = Get-ADObject -SearchBase $zoneObject.DistinguishedName -SearchScope OneLevel -LDAPFilter "(&(objectClass=dnsNode)(name=$recordName))" -Properties DistinguishedName -ErrorAction SilentlyContinue
+          $node = Get-ADObject -SearchBase $zoneObject.DistinguishedName -SearchScope OneLevel -LDAPFilter "(&(objectClass=dnsNode)(name=$recordName))" -Properties DistinguishedName,dNSTombstoned -ErrorAction SilentlyContinue
 
-          if ($null -ne $node) {
-              Remove-ADObject -Identity $node.DistinguishedName -Recursive -Confirm:$false
-              $changed = $true
-          }
-
-          $recordsAfter = @()
-          try {
-              $recordsAfter = @(Get-DnsServerResourceRecord -ZoneName $zoneName -Name $recordName -ErrorAction Stop)
-          } catch {
-              $recordsAfter = @()
-          }
-
-          $nodeAfter = Get-ADObject -SearchBase $zoneObject.DistinguishedName -SearchScope OneLevel -LDAPFilter "(&(objectClass=dnsNode)(name=$recordName))" -ErrorAction SilentlyContinue
-          $recordMatch = ($recordsAfter.Count -eq 0)
-          $nodeMatch = ($null -eq $nodeAfter)
+          $recordMatch = ($records.Count -eq 0)
+          $nodeMatch = ($null -eq $node)
 
           Write-Output "PHASE03_ADIDNS_RESET_RECORD_MATCH=$recordMatch"
           Write-Output "PHASE03_ADIDNS_RESET_NODE_MATCH=$nodeMatch"
-          Write-Output "PHASE03_ADIDNS_RESET_CHANGED=$changed"
+          Write-Output "PHASE03_ADIDNS_RESET_RECORD_COUNT=$($records.Count)"
+          Write-Output "PHASE03_ADIDNS_RESET_NODE_EXISTS=$([bool]($null -ne $node))"
+
+          if ($null -ne $node) {
+              Write-Output "PHASE03_ADIDNS_RESET_NODE_TOMBSTONED=$([bool]$node.dNSTombstoned)"
+          }
 
           if (-not $recordMatch -or -not $nodeMatch) {
-              throw 'ADIDNS rollback did not return the reserved name to the captured absent baseline'
+              throw 'ADIDNS reserved name does not match the captured absent baseline'
           }
 
           Write-Output 'PHASE03_ADIDNS_RESET_COMPLETE=True'
-          $Ansible.Changed = $changed
       register: adidns_reset
 
-    - name: Emit ADIDNS rollback markers
+    - name: Emit ADIDNS rollback verification markers
       ansible.builtin.debug:
         msg: "{{ adidns_reset.output | default([]) }}"
       changed_when: false
