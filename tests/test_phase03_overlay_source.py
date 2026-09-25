@@ -337,6 +337,44 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         self.assertIn("| DPAPI credential-material consequence |", scope)
         self.assertNotIn("Not yet runtime-proven as a separated consequence set", scope)
 
+    def test_shadow_credentials_helpers_exist_and_parse(self):
+        phase03 = ROOT / "scripts" / "phase03"
+        required = [
+            phase03 / "check-shadow-prereqs.sh",
+            phase03 / "capture-shadow-baseline.sh",
+            phase03 / "start-shadow-relay.sh",
+            phase03 / "verify-shadow-mutation.sh",
+            phase03 / "prove-shadow-pkinit.sh",
+            phase03 / "rollback-shadow.sh",
+            ROOT / "ansible" / "phase03-shadow-preflight.yml",
+            ROOT / "ansible" / "phase03-shadow-baseline.yml",
+            ROOT / "ansible" / "phase03-shadow-verify.yml",
+            ROOT / "ansible" / "phase03-shadow-rollback.yml",
+        ]
+        for item in required:
+            with self.subTest(item=item):
+                self.assertTrue(item.is_file(), item)
+        for script in required[:6]:
+            with self.subTest(script=script):
+                result = subprocess.run(["bash", "-n", str(script)], capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_shadow_verification_is_read_only_and_rollback_is_baseline_driven(self):
+        verify = (ROOT / "ansible" / "phase03-shadow-verify.yml").read_text()
+        rollback = (ROOT / "ansible" / "phase03-shadow-rollback.yml").read_text()
+        wrapper = (ROOT / "scripts" / "phase03" / "rollback-shadow.sh").read_text()
+        self.assertIn("PHASE03_SHADOW_VERIFY_KCL_COUNT", verify)
+        self.assertNotIn("Set-ADComputer", verify)
+        self.assertIn("phase03-shadow-baseline.json", wrapper)
+        self.assertIn("PHASE03_SHADOW_RESET_KCL_MATCH", rollback)
+        self.assertIn("PHASE03_SHADOW_RESET_COMPLETE=True", rollback)
+
+    def test_shadow_pkinit_proof_is_ephemeral(self):
+        script = (ROOT / "scripts" / "phase03" / "prove-shadow-pkinit.sh").read_text()
+        self.assertIn("-no-hash", script)
+        self.assertIn("-no-save", script)
+        self.assertIn("PHASE03_SHADOW_PKINIT_TGT=True", script)
+
     def test_checkpoint_does_not_modify_lab_yet(self):
         text = PLAYBOOK.read_text().lower()
         self.assertNotIn("win_regedit", text)
