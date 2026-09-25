@@ -45,7 +45,8 @@ Historical Drop The MIC/NTLMv1 material remains optional/conditional. NORTH has 
 | SOCKS relay | Robb and Eddard sessions retained behind SOCKS5 on 127.0.0.1:1080 and reused with credential-less SMB clients; Robb C$ denied, Eddard C$ listed | PROVEN |
 | SMB share authorization consequence | Robb could enumerate shares but C$ was denied; Eddard opened and listed C$ | PROVEN |
 | SMB remote execution consequence | Eddard relay executed `whoami & hostname` as `NT AUTHORITY\SYSTEM` on CASTELBLACK; Robb relay authenticated but execution failed with DCERPC access denied | PROVEN |
-| LSASS credential-material consequence | Eddard administrative relay created an 89,796,074-byte CASTELBLACK LSASS MiniDump; Eddard SOCKS reuse retrieved it; pypykatz parsed it successfully with 27 sanitized usernames; remote and local secret-bearing artifacts were removed | PROVEN |\n| DPAPI credential-material consequence | Not yet runtime-proven as a separated consequence set | GAP |
+| LSASS credential-material consequence | Eddard administrative relay created an 89,796,074-byte CASTELBLACK LSASS MiniDump; Eddard SOCKS reuse retrieved it; pypykatz parsed it successfully with 27 sanitized usernames; remote and local secret-bearing artifacts were removed | PROVEN |
+| DPAPI credential-material consequence | Native SYSTEM Credential Manager artifact acquired and decrypted offline through the retained administrative SMB session; local secret-bearing evidence removed | PROVEN |
 | Shadow Credentials | Not yet configured/proven | GAP |
 | ADIDNS | Generic capability exists, no Phase 03 fixture yet | GAP |
 | WebDAV/.lnk/.url | No dedicated WS01 Phase 03 victim flow yet | GAP |
