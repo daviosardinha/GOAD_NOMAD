@@ -96,6 +96,7 @@ phase02_runtime() {
   env \
     INSTANCE="$INSTANCE" \
     PROVIDER="$PROVIDER" \
+    PHASE02_RDP_BOT_MODE=headless \
     bash scripts/validate-phase02-readiness.sh
 }
 
