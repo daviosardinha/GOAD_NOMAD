@@ -30,7 +30,7 @@ else
   fail "WS01 route must use $EXPECTED_INTERFACE from $EXPECTED_SOURCE"
 fi
 
-if ss -nt | grep -Eq "[[:space:]]$TARGET_IP:3389([[:space:]]|$)"; then
+if ss -H -nt state established | grep -Eq "[[:space:]]$TARGET_IP:3389([[:space:]]|$)"; then
   fail 'WS01 already has an RDP connection from this operator host'
 else
   pass 'No duplicate WS01 RDP connection is currently present'
