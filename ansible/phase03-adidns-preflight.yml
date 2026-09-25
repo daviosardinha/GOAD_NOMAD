@@ -1,0 +1,140 @@
+---
+- name: Read NORTH ADIDNS prerequisites without changing DNS or Active Directory
+  hosts: dc02
+  gather_facts: false
+  tasks:
+    - name: Inspect NORTH DNS zone, AD-backed zone object and broad-principal ACLs
+      ansible.windows.win_powershell:
+        script: |
+          $ErrorActionPreference = 'Stop'
+          $Ansible.Changed = $false
+
+          Import-Module ActiveDirectory
+          Import-Module DnsServer
+
+          $zoneName = 'north.sevenkingdoms.local'
+          $candidateName = 'phase03-adidns'
+          $root = Get-ADRootDSE
+          $domain = Get-ADDomain
+
+          Write-Output 'PHASE03_ADIDNS_PREFLIGHT_BEGIN=True'
+
+          $zone = Get-DnsServerZone -Name $zoneName
+          Write-Output "PHASE03_ADIDNS_ZONE_NAME=$($zone.ZoneName)"
+          Write-Output "PHASE03_ADIDNS_ZONE_TYPE=$($zone.ZoneType)"
+          Write-Output "PHASE03_ADIDNS_ZONE_DS_INTEGRATED=$($zone.IsDsIntegrated)"
+          Write-Output "PHASE03_ADIDNS_ZONE_DYNAMIC_UPDATE=$($zone.DynamicUpdate)"
+          Write-Output "PHASE03_ADIDNS_ZONE_REVERSE=$($zone.IsReverseLookupZone)"
+
+          if ($zone.PSObject.Properties.Name -contains 'ReplicationScope') {
+              Write-Output "PHASE03_ADIDNS_ZONE_REPLICATION_SCOPE=$($zone.ReplicationScope)"
+          }
+
+          $searchBases = @(
+              "CN=MicrosoftDNS,DC=DomainDnsZones,$($root.defaultNamingContext)",
+              "CN=MicrosoftDNS,DC=ForestDnsZones,$($root.rootDomainNamingContext)",
+              "CN=MicrosoftDNS,CN=System,$($root.defaultNamingContext)"
+          )
+
+          $zoneObject = $null
+
+          foreach ($base in $searchBases) {
+              try {
+                  $candidate = Get-ADObject -SearchBase $base -LDAPFilter "(&(objectClass=dnsZone)(name=$zoneName))" -Properties DistinguishedName,ObjectSid -ErrorAction Stop
+                  if ($null -ne $candidate) {
+                      $zoneObject = $candidate
+                      break
+                  }
+              }
+              catch {
+              }
+          }
+
+          if ($null -eq $zoneObject) {
+              throw "Could not locate AD dnsZone object for $zoneName"
+          }
+
+          Write-Output "PHASE03_ADIDNS_ZONE_DN=$($zoneObject.DistinguishedName)"
+
+          $dnsNodeSchema = Get-ADObject -SearchBase $root.schemaNamingContext -LDAPFilter '(lDAPDisplayName=dnsNode)' -Properties schemaIDGUID
+          if ($null -eq $dnsNodeSchema) { throw 'dnsNode schema class not found' }
+
+          $dnsNodeGuid = New-Object Guid (,$dnsNodeSchema.schemaIDGUID)
+          Write-Output "PHASE03_ADIDNS_DNSNODE_GUID=$dnsNodeGuid"
+
+          $domainSid = $domain.DomainSID.Value
+          $interestingSids = [ordered]@{
+              'S-1-1-0' = 'Everyone'
+              'S-1-5-11' = 'Authenticated Users'
+              "$domainSid-513" = 'Domain Users'
+              "$domainSid-515" = 'Domain Computers'
+          }
+
+          $acl = Get-Acl -Path ("AD:" + $zoneObject.DistinguishedName)
+          $broadCreate = $false
+
+          foreach ($ace in $acl.Access) {
+              $sid = $null
+              try {
+                  $sid = $ace.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value
+              }
+              catch {
+                  $sid = [string]$ace.IdentityReference
+              }
+
+              if (-not $interestingSids.Contains($sid)) { continue }
+
+              $rights = [string]$ace.ActiveDirectoryRights
+              $objectType = [Guid]$ace.ObjectType
+              $allowsDnsNodeCreate = ($ace.AccessControlType -eq 'Allow' -and ($rights -match 'GenericAll' -or ($rights -match 'CreateChild' -and ($objectType -eq [Guid]::Empty -or $objectType -eq $dnsNodeGuid))))
+
+              if ($allowsDnsNodeCreate) { $broadCreate = $true }
+
+              Write-Output ("PHASE03_ADIDNS_ZONE_ACE=" + "PRINCIPAL=$($interestingSids[$sid]);" + "SID=$sid;" + "RIGHTS=$rights;" + "OBJECTTYPE=$objectType;" + "INHERITED=$($ace.IsInherited);" + "ALLOWS_DNSNODE_CREATE=$allowsDnsNodeCreate")
+          }
+
+          Write-Output "PHASE03_ADIDNS_BROAD_CREATE_DNSNODE=$broadCreate"
+
+          foreach ($recordName in @('wpad', $candidateName)) {
+              $records = @()
+              try {
+                  $records = @(Get-DnsServerResourceRecord -ZoneName $zoneName -Name $recordName -ErrorAction Stop)
+              }
+              catch {
+                  $records = @()
+              }
+
+              Write-Output "PHASE03_ADIDNS_RECORD_NAME=$recordName;COUNT=$($records.Count)"
+
+              foreach ($record in $records) {
+                  Write-Output ("PHASE03_ADIDNS_RECORD=" + "NAME=$recordName;" + "TYPE=$($record.RecordType);" + "TIMESTAMP=$($record.Timestamp);" + "TTL=$($record.TimeToLive)")
+              }
+          }
+
+          foreach ($nodeName in @('wpad', $candidateName)) {
+              $node = Get-ADObject -SearchBase $zoneObject.DistinguishedName -SearchScope OneLevel -LDAPFilter "(&(objectClass=dnsNode)(name=$nodeName))" -Properties DistinguishedName -ErrorAction SilentlyContinue
+
+              if ($null -eq $node) {
+                  Write-Output "PHASE03_ADIDNS_NODE=$nodeName;EXISTS=False"
+                  continue
+              }
+
+              $nodeAcl = Get-Acl -Path ("AD:" + $node.DistinguishedName)
+              $ownerSid = $null
+              try {
+                  $ownerSid = $nodeAcl.Owner.Translate([System.Security.Principal.SecurityIdentifier]).Value
+              }
+              catch {
+                  $ownerSid = [string]$nodeAcl.Owner
+              }
+
+              Write-Output "PHASE03_ADIDNS_NODE=$nodeName;EXISTS=True;DN=$($node.DistinguishedName);OWNER=$ownerSid"
+          }
+
+          Write-Output 'PHASE03_ADIDNS_PREFLIGHT_COMPLETE=True'
+      register: adidns_preflight
+
+    - name: Emit ADIDNS preflight markers
+      ansible.builtin.debug:
+        msg: "{{ adidns_preflight.output | default([]) }}"
+      changed_when: false
