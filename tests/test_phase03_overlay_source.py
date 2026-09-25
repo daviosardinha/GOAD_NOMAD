@@ -417,6 +417,23 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         self.assertIn("ldapsearch", wrapper)
         self.assertIn("phase03-adidns", wrapper)
 
+    def test_adidns_rollback_uses_original_owner_context(self):
+        script = (ROOT / "scripts" / "phase03" / "rollback-adidns.sh").read_text()
+        self.assertIn("KRB5CCNAME", script)
+        self.assertIn("adidns.ccache", script)
+        self.assertIn("ldapdelete", script)
+        self.assertIn("phase03-adidns", script)
+        self.assertIn("PHASE03_ADIDNS_ROLLBACK_COMPLETE=True", script)
+
+    def test_adidns_rollback_playbook_is_read_only_verification(self):
+        playbook = (ROOT / "ansible" / "phase03-adidns-rollback.yml").read_text()
+        self.assertIn("PHASE03_ADIDNS_RESET_COMPLETE=True", playbook)
+        self.assertIn("PHASE03_ADIDNS_RESET_RECORD_MATCH", playbook)
+        self.assertIn("PHASE03_ADIDNS_RESET_NODE_MATCH", playbook)
+        for forbidden in ("Remove-ADObject", "Remove-DnsServerResourceRecord", "Set-ADObject", "New-ADObject"):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, playbook)
+
     def test_checkpoint_does_not_modify_lab_yet(self):
         text = PLAYBOOK.read_text().lower()
         self.assertNotIn("win_regedit", text)
