@@ -571,6 +571,16 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         self.assertIn("phase03-webdav.north.sevenkingdoms.local@80", playbook)
         self.assertNotIn("$webdavPath = '\\\\10.4.10.254@80", playbook)
 
+    def test_webdav_client_runtime_support_preserves_startup_mode(self):
+        wrapper = (ROOT / "scripts" / "phase03" / "prepare-webdav-client-runtime.sh").read_text()
+        playbook = (ROOT / "ansible" / "phase03-webdav-client-runtime.yml").read_text()
+        self.assertIn("PHASE03_WEBDAV_RUNTIME_READY=True", playbook)
+        self.assertIn("WebClientStartMode", playbook)
+        self.assertIn("Start-Service -Name WebClient", playbook)
+        self.assertNotIn("Set-Service -Name WebClient", playbook)
+        result = subprocess.run(["bash", "-n", str(ROOT / "scripts" / "phase03" / "prepare-webdav-client-runtime.sh")], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_checkpoint_does_not_modify_lab_yet(self):
         text = PLAYBOOK.read_text().lower()
         self.assertNotIn("win_regedit", text)
