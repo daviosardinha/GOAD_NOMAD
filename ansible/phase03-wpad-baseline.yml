@@ -1,0 +1,81 @@
+---
+- name: Capture exact WS01 IPv6 and DNS baseline for Phase 03 WPAD
+  hosts: ws01
+  gather_facts: false
+  tasks:
+    - name: Capture NORTH-facing adapter IPv6 and DNS state
+      ansible.windows.win_powershell:
+        script: |
+          $ErrorActionPreference = 'Stop'
+          $Ansible.Changed = $false
+
+          $cfg = Get-NetIPConfiguration |
+              Where-Object {
+                  $_.IPv4Address -and
+                  $_.IPv4Address.IPAddress -eq '10.4.10.31'
+              } |
+              Select-Object -First 1
+
+          if ($null -eq $cfg) {
+              throw 'Could not locate the WS01 NORTH-facing adapter carrying 10.4.10.31'
+          }
+
+          $alias = [string]$cfg.InterfaceAlias
+          $index = [int]$cfg.InterfaceIndex
+
+          $ipv6 = @(
+              Get-NetIPAddress -InterfaceIndex $index -AddressFamily IPv6 -ErrorAction SilentlyContinue |
+                  Sort-Object IPAddress |
+                  ForEach-Object {
+                      [ordered]@{
+                          Address = [string]$_.IPAddress
+                          PrefixLength = [int]$_.PrefixLength
+                          AddressState = [string]$_.AddressState
+                          PrefixOrigin = [string]$_.PrefixOrigin
+                          SuffixOrigin = [string]$_.SuffixOrigin
+                      }
+                  }
+          )
+
+          $dns = @(
+              Get-DnsClientServerAddress -InterfaceIndex $index -AddressFamily IPv6 -ErrorAction SilentlyContinue |
+                  ForEach-Object { $_.ServerAddresses } |
+                  Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }
+          )
+
+          $Ansible.Result = [ordered]@{
+              Version = 1
+              Target = 'WS01'
+              IPv4 = '10.4.10.31'
+              InterfaceAlias = $alias
+              InterfaceIndex = $index
+              IPv6Addresses = $ipv6
+              IPv6DnsServers = $dns
+              CapturedUTC = [DateTime]::UtcNow.ToString('o')
+          }
+      register: wpad_baseline
+
+    - name: Ensure local Kingdoms config directory exists
+      ansible.builtin.file:
+        path: "{{ lookup('env','HOME') }}/.config/kingdoms"
+        state: directory
+        mode: '0700'
+      delegate_to: localhost
+
+    - name: Save exact WPAD baseline locally
+      ansible.builtin.copy:
+        dest: "{{ lookup('env','HOME') }}/.config/kingdoms/phase03-wpad-baseline.json"
+        content: "{{ wpad_baseline.result | to_nice_json }}\n"
+        mode: '0600'
+      delegate_to: localhost
+
+    - name: Emit sanitized WPAD baseline markers
+      ansible.builtin.debug:
+        msg:
+          - "PHASE03_WPAD_BASELINE_TARGET={{ wpad_baseline.result.Target }}"
+          - "PHASE03_WPAD_BASELINE_INTERFACE={{ wpad_baseline.result.InterfaceAlias }}"
+          - "PHASE03_WPAD_BASELINE_INTERFACE_INDEX={{ wpad_baseline.result.InterfaceIndex }}"
+          - "PHASE03_WPAD_BASELINE_IPV6_COUNT={{ wpad_baseline.result.IPv6Addresses | length }}"
+          - "PHASE03_WPAD_BASELINE_DNSV6_COUNT={{ wpad_baseline.result.IPv6DnsServers | length }}"
+          - "PHASE03_WPAD_BASELINE_FILE={{ lookup('env','HOME') }}/.config/kingdoms/phase03-wpad-baseline.json"
+      changed_when: false
