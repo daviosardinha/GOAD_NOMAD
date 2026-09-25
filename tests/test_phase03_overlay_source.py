@@ -684,6 +684,22 @@ class Phase03OverlaySourceTests(unittest.TestCase):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(forbidden, playbook)
 
+    def test_http_ldaps_runtime_tracks_real_listener_pid(self):
+        start = (ROOT / "scripts" / "phase03" / "start-http-ldaps-readonly-relay.sh").read_text()
+        stop = (ROOT / "scripts" / "phase03" / "stop-http-ldaps-readonly-relay.sh").read_text()
+        self.assertIn("listener_pid_80", start)
+        self.assertIn("pid_cmdline", start)
+        self.assertIn("ntlmrelayx process owning TCP/80", start)
+        self.assertIn("PHASE03_HTTP_LDAPS_RUNTIME_READY=True", start)
+        self.assertIn("recovered orphaned ntlmrelayx TCP/80 listener", stop)
+        self.assertIn("refusing to kill PID", stop)
+        for script in (
+            ROOT / "scripts" / "phase03" / "start-http-ldaps-readonly-relay.sh",
+            ROOT / "scripts" / "phase03" / "stop-http-ldaps-readonly-relay.sh",
+        ):
+            result = subprocess.run(["bash", "-n", str(script)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_checkpoint_does_not_modify_lab_yet(self):
         text = PLAYBOOK.read_text().lower()
         self.assertNotIn("win_regedit", text)
