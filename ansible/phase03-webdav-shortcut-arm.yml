@@ -10,7 +10,7 @@
 
           $shortcutPath = 'C:\Users\rickon.stark\Desktop\phase03-webdav.lnk'
           $expectedIcon = '\\10.4.10.254@80\DavWWWRoot\kingdoms.ico'
-          $webdavPath = '\\10.4.10.254@80\DavWWWRoot\'
+          $webdavPath = '\\phase03-webdav.north.sevenkingdoms.local@80\DavWWWRoot\'
 
           if (-not (Test-Path -LiteralPath $shortcutPath)) {
               throw 'Controlled WebDAV shortcut is missing'
