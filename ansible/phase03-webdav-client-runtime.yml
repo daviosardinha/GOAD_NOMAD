@@ -1,0 +1,51 @@
+---
+- name: Prepare WS01 WebClient runtime for the controlled WebDAV interaction
+  hosts: ws01
+  gather_facts: false
+  vars:
+    phase03_webdav_baseline_path: "{{ lookup('env','HOME') }}/.config/kingdoms/phase03-webdav-baseline.json"
+    phase03_webdav_baseline: "{{ lookup('ansible.builtin.file', phase03_webdav_baseline_path) | from_json }}"
+  tasks:
+    - name: Start WebClient without changing captured startup configuration
+      ansible.windows.win_powershell:
+        script: |
+          $ErrorActionPreference = 'Stop'
+
+          $baselineState = '{{ phase03_webdav_baseline.WebClientState }}'
+          $baselineMode = '{{ phase03_webdav_baseline.WebClientStartMode }}'
+
+          if ($baselineState -ine 'Stopped' -or $baselineMode -ine 'Manual') {
+              throw 'Unexpected WebClient baseline; refusing runtime preparation'
+          }
+
+          $before = Get-CimInstance Win32_Service -Filter "Name='WebClient'" -ErrorAction Stop
+
+          Write-Output "PHASE03_WEBDAV_RUNTIME_WEBCLIENT_BEFORE=$($before.State)"
+          Write-Output "PHASE03_WEBDAV_RUNTIME_WEBCLIENT_STARTMODE=$($before.StartMode)"
+
+          if ($before.State -ne 'Running') {
+              Start-Service -Name WebClient -ErrorAction Stop
+              Start-Sleep -Seconds 2
+          }
+
+          $after = Get-CimInstance Win32_Service -Filter "Name='WebClient'" -ErrorAction Stop
+
+          Write-Output "PHASE03_WEBDAV_RUNTIME_WEBCLIENT_AFTER=$($after.State)"
+          Write-Output "PHASE03_WEBDAV_RUNTIME_WEBCLIENT_STARTMODE_AFTER=$($after.StartMode)"
+
+          if ($after.State -ne 'Running') {
+              throw 'WebClient did not enter Running state'
+          }
+
+          if ($after.StartMode -ine $baselineMode) {
+              throw 'WebClient startup mode changed unexpectedly'
+          }
+
+          Write-Output 'PHASE03_WEBDAV_RUNTIME_READY=True'
+          $Ansible.Changed = ($before.State -ne $after.State)
+      register: webdav_runtime
+
+    - name: Emit WebClient runtime markers
+      ansible.builtin.debug:
+        msg: "{{ webdav_runtime.output | default([]) }}"
+      changed_when: false
