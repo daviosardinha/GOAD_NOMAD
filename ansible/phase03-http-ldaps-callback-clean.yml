@@ -1,0 +1,28 @@
+---
+- name: Verify deterministic WS01 HTTP callback task is absent
+  hosts: ws01
+  gather_facts: false
+  tasks:
+    - name: Inspect temporary Phase 03 HTTP callback task
+      ansible.windows.win_powershell:
+        script: |
+          $ErrorActionPreference = 'Stop'
+          $Ansible.Changed = $false
+
+          $taskName = 'Kingdoms-Phase03-System-HTTP'
+          $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+          $exists = ($null -ne $task)
+
+          Write-Output "PHASE03_HTTP_LDAPS_CALLBACK_TASK_EXISTS=$exists"
+
+          if ($exists) {
+              throw 'Temporary Phase 03 HTTP callback task remains on WS01'
+          }
+
+          Write-Output 'PHASE03_HTTP_LDAPS_CALLBACK_CLEAN=True'
+      register: callback_cleanup
+
+    - name: Emit callback cleanup markers
+      ansible.builtin.debug:
+        msg: "{{ callback_cleanup.output | default([]) }}"
+      changed_when: false
