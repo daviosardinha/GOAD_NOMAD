@@ -847,6 +847,8 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         self.assertIn("validate-network-segmentation-runtime.sh", script)
         self.assertIn("validate-ws01-runtime.sh", script)
         self.assertIn("validate-rickon-session.sh", script)
+        self.assertIn("Waiting for the supervised Rickon session", script)
+        self.assertIn("240-second lifecycle window", script)
         self.assertIn("PHASE03_FINAL_REGRESSION_COMPLETE=True", script)
         self.assertNotIn("validate-kingdoms-release-acceptance.sh", script)
 
