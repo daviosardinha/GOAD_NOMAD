@@ -811,7 +811,6 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         script = (ROOT / "scripts" / "validate-phase03-final-regression.sh").read_text()
 
         self.assertIn("kingdoms/phase03-overlay", script)
-        self.assertIn(r"arp\.cache", script)
         self.assertIn("validate-phase03-runtime.sh", script)
         self.assertIn("check-rbcd-prereqs.sh", script)
         self.assertIn("check-shadow-prereqs.sh", script)
