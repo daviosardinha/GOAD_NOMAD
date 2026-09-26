@@ -24,10 +24,11 @@ find_ntlmrelayx() {
 cd "$ROOT" || exit 1
 
 echo '===== SOURCE ====='
-branch="$(git branch --show-current 2>/dev/null || true)"
-[[ "$branch" == "kingdoms/phase03-overlay" ]] &&
-  pass 'Phase 03 overlay branch selected' ||
-  fail "unexpected branch: $branch"
+if bash scripts/verify-test-source.sh; then
+  pass 'Git source gate passed'
+else
+  fail 'source checkout does not match its configured upstream'
+fi
 
 echo
 echo '===== TARGET ====='
