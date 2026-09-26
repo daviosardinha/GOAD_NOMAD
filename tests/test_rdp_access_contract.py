@@ -227,7 +227,10 @@ class RdpAccessContractTests(unittest.TestCase):
         self.assertIn('RDP_DESKTOP_LOGON_MATRIX=PASS:15/15', text)
         self.assertIn('RDP_RELEASE_ACCEPTANCE_COMPLETE=True', text)
         self.assertIn('EXPECTED_DENIALS_PASS=%d', text)
+        self.assertIn('capture-rdp-release-event-baseline.yml', text)
         self.assertIn('validate-rdp-denial-event.yml', text)
+        self.assertIn('RDP_SECURITY_BASELINE_RECORD_ID=', text)
+        self.assertIn('RDP_RDPCORE_BASELINE_RECORD_ID=', text)
         self.assertIn('RDP_DENIAL_EVENT=PASS', text)
         self.assertIn('NXC_PATH="$nxc_path"', text)
         self.assertIn('xfreerdp3 /args-from:stdin', text)
@@ -245,6 +248,19 @@ class RdpAccessContractTests(unittest.TestCase):
             check=True, capture_output=True, text=True)
         self.assertIn('fourteen fresh RDP attempts', result.stdout)
         self.assertIn('one fresh NORTH\\rickon.stark -> WS01 RDP desktop login', result.stdout)
+
+    def test_release_denial_baseline_uses_event_record_ids(self):
+        baseline = self.text('ansible/capture-rdp-release-event-baseline.yml')
+        validator = self.text('ansible/validate-rdp-denial-event.yml')
+
+        self.assertIn('RDP_SECURITY_BASELINE_RECORD_ID=', baseline)
+        self.assertIn('RDP_RDPCORE_BASELINE_RECORD_ID=', baseline)
+        self.assertIn('RecordId', baseline)
+        self.assertIn('SecurityAfterRecordId', validator)
+        self.assertIn('RdpCoreAfterRecordId', validator)
+        self.assertIn('$_.RecordId -gt $SecurityAfterRecordId', validator)
+        self.assertIn('$_.RecordId -gt $RdpCoreAfterRecordId', validator)
+        self.assertNotIn('SinceUtc', validator)
 
     def test_release_denial_validator_correlates_rdp_core_access_denial(self):
         playbook = self.text('ansible/validate-rdp-denial-event.yml')
