@@ -136,7 +136,34 @@ evidence can predate a policy change. The script deliberately reports
 `DESKTOP_LOGON_MATRIX=NOT_EXECUTED` rather than claiming a credential-login test.
 
 Release acceptance must additionally record fresh RDP attempts using the known
-lab identities through the normal client:
+lab identities through the normal client.
+
+The committed release-only gate is:
+
+```bash
+bash scripts/validate-rdp-release-acceptance.sh
+```
+
+It first proves all five course credentials are still valid over SMB using an
+isolated NetExec workspace, then performs the fourteen expected RDP denials and
+one fresh Rickon -> WS01 allow. For the positive case it temporarily stops the
+permanent Rickon supervisor, removes the pre-existing Windows session, opens a
+new desktop, inspects that fresh Explorer token for the Administrators SID, and
+restores/validates the permanent Phase 03 Rickon session before returning. The
+gate does not change RDP policy, group membership, GPOs or the lab network mode.
+
+Required success markers are:
+
+```text
+EXPECTED_DENIALS_PASS=14
+EXPECTED_DENIALS_FAIL=0
+RDP_MATRIX=WS01:NORTH\\rickon.stark:ALLOW_NONADMIN:PASS
+RDP_DESKTOP_LOGON_MATRIX=PASS:15/15
+RDP_RELEASE_ACCEPTANCE_COMPLETE=True
+```
+
+The expected matrix is:
+
 
 | NORTH identity | WINTERFELL | CASTELBLACK | WS01 |
 | --- | --- | --- | --- |
