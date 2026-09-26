@@ -146,11 +146,16 @@ bash scripts/validate-rdp-release-acceptance.sh
 
 It first proves all five course credentials are still valid over SMB using an
 isolated NetExec workspace, then performs the fourteen expected RDP denials and
-one fresh Rickon -> WS01 allow. For the positive case it temporarily stops the
-permanent Rickon supervisor, removes the pre-existing Windows session, opens a
-new desktop, inspects that fresh Explorer token for the Administrators SID, and
-restores/validates the permanent Phase 03 Rickon session before returning. The
-gate does not change RDP policy, group membership, GPOs or the lab network mode.
+one fresh Rickon -> WS01 allow. Denials are not inferred from FreeRDP client
+wording: the gate correlates the exact NORTH identity/source with Windows
+Security authentication evidence and the target RdpCoreTS access-denied event
+("User is not granted access to this connection"). A Security 4625 type-10
+STATUS_LOGON_TYPE_NOT_GRANTED event is also accepted when that host emits it.
+For the positive case it temporarily stops the permanent Rickon supervisor,
+removes the pre-existing Windows session, opens a new desktop, inspects that
+fresh Explorer token for the Administrators SID, and restores/validates the
+permanent Phase 03 Rickon session before returning. The gate does not change RDP
+policy, group membership, GPOs or the lab network mode.
 
 Required success markers are:
 
