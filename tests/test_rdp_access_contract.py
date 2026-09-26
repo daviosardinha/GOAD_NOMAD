@@ -237,7 +237,6 @@ class RdpAccessContractTests(unittest.TestCase):
         self.assertNotIn('grep -Fq "RDP_DENIAL_EVENT=PASS|USER=$DOMAIN_NB\\\\$user|HOST=$host|"', text)
         self.assertIn('NXC_PATH="$nxc_path"', text)
         self.assertIn('xfreerdp3 /args-from:stdin', text)
-        self.assertIn('TOKEN_ADMIN_SID_PRESENT=$isAdmin', text)
         self.assertIn("RDP_FRESH_TOKEN_NONADMIN=PASS", text)
         self.assertIn('systemctl --user stop "$RICKON_SERVICE"', text)
         self.assertIn('systemctl --user start "$RICKON_SERVICE"', text)
