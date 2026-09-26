@@ -42,7 +42,8 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         text = APPLY.read_text()
         self.assertIn("--confirm", text)
         self.assertIn("working tree must be clean", text)
-        self.assertIn("kingdoms/phase03-overlay", text)
+        self.assertIn("verify-test-source.sh", text)
+        self.assertNotIn("kingdoms/phase03-overlay", text)
         self.assertIn("validate-phase03-readiness.sh", text)
         self.assertIn("-e phase03_apply=true", text)
         self.assertIn("ad/GOAD/data/inventory", text)
@@ -54,6 +55,42 @@ class Phase03OverlaySourceTests(unittest.TestCase):
             text.index("validate-phase03-readiness.sh"),
             text.index("ansible-playbook"),
         )
+
+    def test_phase03_runtime_source_gates_do_not_pin_retired_feature_branch(self):
+        scripts = [
+            ROOT / "scripts" / "apply-phase03.sh",
+            ROOT / "scripts" / "phase03" / "check-http-ldaps-readonly-relay.sh",
+            ROOT / "scripts" / "phase03" / "check-ldap-readonly-relay.sh",
+            ROOT / "scripts" / "phase03" / "check-wpad-permanent-prereqs.sh",
+            ROOT / "scripts" / "phase03" / "start-smb-interactive-relay.sh",
+            ROOT / "scripts" / "phase03" / "diagnostics" / "diagnose-http-ldaps-listener.sh",
+        ]
+
+        for script in scripts:
+            with self.subTest(script=script):
+                text = script.read_text()
+                self.assertIn("verify-test-source.sh", text)
+                self.assertNotIn("kingdoms/phase03-overlay", text)
+
+    def test_final_regression_dependencies_do_not_pin_retired_feature_branches(self):
+        scripts = [
+            ROOT / "scripts" / "validate-phase02-readiness.sh",
+            ROOT / "scripts" / "validate-rdp-runtime.sh",
+            ROOT / "scripts" / "validate-network-segmentation-runtime.sh",
+            ROOT / "scripts" / "validate-ws01-runtime.sh",
+            ROOT / "scripts" / "phase03" / "check-rbcd-prereqs.sh",
+            ROOT / "scripts" / "phase03" / "check-shadow-prereqs.sh",
+            ROOT / "scripts" / "phase03" / "check-adidns-prereqs.sh",
+            ROOT / "scripts" / "phase03" / "check-webdav-shortcut-prereqs.sh",
+            ROOT / "scripts" / "phase03" / "verify-wpad-reset.sh",
+            ROOT / "scripts" / "phase03" / "verify-http-ldaps-callback-clean.sh",
+        ]
+
+        for script in scripts:
+            with self.subTest(script=script):
+                text = script.read_text()
+                self.assertNotIn("kingdoms/phase03-overlay", text)
+                self.assertNotIn("kingdoms/rdp-access-contract", text)
 
     def test_reset_is_non_destructive_at_checkpoint(self):
         text = RESET.read_text().lower()
