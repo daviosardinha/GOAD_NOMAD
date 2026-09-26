@@ -7,7 +7,7 @@ set -uo pipefail
 ROOT="${ROOT:-$HOME/Documents/GOAD_NOMAD}"
 INSTANCE="${1:-${INSTANCE:-cebee3-goad-vmware}}"
 PROVIDER="${PROVIDER:-$ROOT/workspace/$INSTANCE/provider}"
-BRANCH='kingdoms/phase03-overlay'
+EXPECTED_BRANCH="${PHASE03_EXPECTED_BRANCH:-}"
 
 cd "$ROOT" || exit 1
 
@@ -47,40 +47,35 @@ stage() {
 source_identity() {
   git fetch origin || return 1
 
-  local current local_head remote_head dirty
+  local current local_head upstream remote_head
   current="$(git branch --show-current)"
   local_head="$(git rev-parse HEAD)"
-  remote_head="$(git rev-parse "origin/$BRANCH")"
+  upstream="$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null)" || {
+    echo 'current branch has no upstream' >&2
+    return 1
+  }
+  remote_head="$(git rev-parse "$upstream")"
 
   printf 'Branch      : %s\n' "$current"
+  printf 'Upstream    : %s\n' "$upstream"
   printf 'Local HEAD  : %s\n' "$local_head"
   printf 'Remote HEAD : %s\n' "$remote_head"
   printf 'Instance    : %s\n' "$INSTANCE"
   printf 'Provider    : %s\n' "$PROVIDER"
 
-  [[ "$current" == "$BRANCH" ]] || {
-    echo "unexpected branch: $current" >&2
+  if [[ -n "$EXPECTED_BRANCH" && "$current" != "$EXPECTED_BRANCH" ]]; then
+    echo "unexpected branch: $current (expected $EXPECTED_BRANCH)" >&2
     return 1
-  }
+  fi
 
-  [[ "$local_head" == "$remote_head" ]] || {
-    echo 'local branch does not match origin' >&2
-    return 1
-  }
+  bash scripts/verify-test-source.sh || return 1
 
   [[ -d "$PROVIDER" ]] || {
     echo "provider missing: $PROVIDER" >&2
     return 1
   }
 
-  dirty="$(git status --porcelain)"
-  if [[ -n "$dirty" ]]; then
-    echo 'working tree is not clean:' >&2
-    printf '%s\n' "$dirty" >&2
-    return 1
-  fi
-
-  echo 'working tree is clean'
+  echo 'Phase 03 source identity is valid'
   return 0
 }
 
