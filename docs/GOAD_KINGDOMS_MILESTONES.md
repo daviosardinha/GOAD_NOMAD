@@ -300,6 +300,46 @@ These items were identified while stabilizing the current fresh-install/runtime 
 
 ---
 
+## Phase 03 engineering baseline — Poisoning and relay
+
+**Status: COMPLETE / VALIDATED / FROZEN FOR INTEGRATION**
+
+The NORTH poisoning-and-relay runtime is now a validated Kingdoms baseline rather
+than an experimental overlay.
+
+Delivered attack/runtime families include:
+
+- LLMNR, NBT-NS and mDNS poisoning with NetNTLMv2 capture;
+- SMB relay target selection, automated relay, interactive relay and SOCKS reuse;
+- privilege-dependent SMB consequences including share access, remote execution,
+  LSASS material and native DPAPI credential decryption;
+- MSSQL `xp_dirtree` outbound authentication coercion;
+- PrinterBug / MS-RPRN and PetitPotam / MS-EFSR coercion;
+- mitm6 IPv6/DNS takeover and WPAD;
+- HTTP -> LDAPS read-only relay;
+- RBCD via relay with S4U consequence and exact rollback;
+- Shadow Credentials via relay with PKINIT consequence and exact rollback;
+- ADIDNS secure record injection with exact absent-state restoration;
+- WebDAV / malicious `.lnk` authentication behavior with exact service/DNS reset;
+- permanent Rickon WS01 victim-session lifecycle with release-grade RDP acceptance.
+
+Final acceptance on 2026-09-26:
+
+- Phase 03 final orchestrator: **11 PASS / 0 FAIL**;
+- NORTH segmentation lifecycle: **29 PASS / 0 WARN / 0 FAIL**;
+- final no-residual-state gate: **PASS**;
+- fresh NORTH RDP desktop-logon matrix: **15/15 PASS**;
+- restored permanent Rickon runtime: **5 PASS / 0 FAIL**;
+- final lab mode: `exercise`.
+
+DFSCoerce / MS-DFSNM and ShadowCoerce / MS-FSRVP are deliberately deferred to
+the future-feature backlog and do not block the current Phase 03 baseline.
+
+The remaining Phase 03 work is curriculum production: final GOAD Part 4 parity
+review, screenshot selection and the Notion teaching walkthrough.
+
+---
+
 # Student learning path
 
 GOAD Kingdoms preserves the style of Mayfly's GOAD walkthrough while adding learning stages that the original flat/server-focused environment did not provide.
