@@ -163,6 +163,18 @@ fresh Explorer token for the Administrators SID, and restores/validates the
 permanent Phase 03 Rickon session before returning. The gate does not change RDP
 policy, group membership, GPOs or the lab network mode.
 
+If a release run already proves all fourteen denials and then fails only in the
+fresh Rickon positive-proof machinery, do not repeat the denial matrix. After the
+validator fix, resume from the newest evidence set with:
+
+```bash
+bash scripts/validate-rdp-release-acceptance.sh --resume-latest
+```
+
+Resume mode revalidates the current source, RDP policy, listeners and credentials,
+verifies all fourteen authoritative denial evidence files, then executes only the
+fresh Rickon -> WS01 allow/non-admin proof and baseline restoration.
+
 Required success markers are:
 
 ```text
