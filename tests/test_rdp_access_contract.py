@@ -266,6 +266,25 @@ class RdpAccessContractTests(unittest.TestCase):
         script = ROOT / 'scripts/diagnose-rdp-release-denial.sh'
         subprocess.run(['bash', '-n', str(script)], check=True)
 
+    def test_rdp_release_timeline_diagnostic_is_read_only(self):
+        playbook = self.text('ansible/diagnose-rdp-release-timeline.yml')
+        diagnostic = self.text('scripts/diagnose-rdp-release-timeline.sh')
+
+        self.assertIn('RDP_TIMELINE_DIAGNOSTIC_COMPLETE=True', playbook)
+        self.assertIn('SECURITY|ID={0}', playbook)
+        self.assertIn('TerminalServices-RemoteConnectionManager/Operational', playbook)
+        self.assertIn('TerminalServices-LocalSessionManager/Operational', playbook)
+        self.assertIn('RemoteDesktopServices-RdpCoreTS/Operational', playbook)
+        self.assertIn('SYSTEM_TIMELINE_COUNT=', playbook)
+        self.assertIn('diagnose-rdp-release-timeline.yml', diagnostic)
+
+        for forbidden in ('xfreerdp', 'Set-AD', 'Add-LocalGroupMember',
+                          'Remove-LocalGroupMember', 'gpupdate', 'logoff.exe'):
+            self.assertNotIn(forbidden, diagnostic)
+
+        script = ROOT / 'scripts/diagnose-rdp-release-timeline.sh'
+        subprocess.run(['bash', '-n', str(script)], check=True)
+
     def test_invalid_runtime_options_fail_closed(self):
         script = ROOT / 'scripts/validate-rdp-runtime.sh'
         for args in (['--host', 'dc01'], ['--bogus'], ['--source-only', '--phase01']):
