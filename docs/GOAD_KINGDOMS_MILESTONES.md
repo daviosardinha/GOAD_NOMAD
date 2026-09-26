@@ -1,3 +1,13 @@
+## Deferred / Future Features
+
+The repository backlog for intentionally deferred Kingdoms capabilities is:
+
+- `docs/KINGDOMS_FUTURE_FEATURES.md`
+
+Current deferred Phase 03 candidates include DFSCoerce / MS-DFSNM and
+ShadowCoerce / MS-FSRVP. They do not block closure of the current Phase 03
+baseline.
+
 # GOAD Kingdoms — Major Project Milestones
 
 This is the canonical engineering milestone tracker for **GOAD Kingdoms**.
