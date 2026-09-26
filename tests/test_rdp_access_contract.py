@@ -272,7 +272,7 @@ class RdpAccessContractTests(unittest.TestCase):
         self.assertIn('SECURITY_4625_LOGON_TYPE_NOT_GRANTED', playbook)
         self.assertIn('RDP_DENIAL_CORRELATION', playbook)
         self.assertIn('DELTA_MS=', playbook)
-        self.assertIn('$_ .TimeCreated', playbook.replace('$_.TimeCreated', '$_ .TimeCreated'))
+        self.assertIn('$_.TimeCreated -ge $authTime', playbook)
         self.assertIn('$authTime.AddSeconds(2)', playbook)
         self.assertIn('Event 65 is useful', playbook)
 
