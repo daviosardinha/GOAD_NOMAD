@@ -293,23 +293,48 @@ inventory_host_for() {
 run_expected_deny() {
     local host="$1" ip="$2" user="$3"
     local log="$EVIDENCE/${host,,}-$user.log"
+    local baseline_log="$EVIDENCE/${host,,}-$user-event-baseline.log"
     local event_log="$EVIDENCE/${host,,}-$user-denial-event.log"
-    local inventory_host since rc event_rc
+    local inventory_host security_baseline rdpcore_baseline rc event_rc
 
     inventory_host="$(inventory_host_for "$host")" ||
         fail "No Ansible inventory mapping for $host"
-    since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
     printf '\n===== EXPECT DENY: %s\\%s -> %s =====\n' "$DOMAIN_NB" "$user" "$host"
 
-    set +e
+    ANSIBLE_CONFIG="$ROOT/ansible/ansible.cfg" \
+        "$ANSIBLE" \
+        -i "$INV1" \
+        -i "$INV2" \
+        ansible/capture-rdp-release-event-baseline.yml \
+        -e "rdp_event_target=$inventory_host" \
+        >"$baseline_log" 2>&1
+    if [[ $? -ne 0 ]]; then
+        printf 'Event baseline evidence: %s\n' "$baseline_log" >&2
+        tail -80 "$baseline_log" >&2 || true
+        fail "Could not capture fresh-event baseline for $host"
+    fi
+
+    security_baseline="$(
+        grep -oE 'RDP_SECURITY_BASELINE_RECORD_ID=[0-9]+' "$baseline_log" |
+            tail -1 | cut -d= -f2
+    )"
+    rdpcore_baseline="$(
+        grep -oE 'RDP_RDPCORE_BASELINE_RECORD_ID=[0-9]+' "$baseline_log" |
+            tail -1 | cut -d= -f2
+    )"
+
+    [[ "$security_baseline" =~ ^[0-9]+$ ]] ||
+        fail "Missing Security event baseline for $host"
+    [[ "$rdpcore_baseline" =~ ^[0-9]+$ ]] ||
+        fail "Missing RdpCoreTS event baseline for $host"
+
     rdp_client_args "$ip" "$user" |
         timeout --signal=TERM --kill-after=3s 15s \
             xvfb-run -a -s '-screen 0 1024x768x24 -nolisten tcp' \
             xfreerdp3 /args-from:stdin \
             >"$log" 2>&1
     rc=${PIPESTATUS[1]}
-    set -e
 
     if [[ "$rc" -eq 124 || "$rc" -eq 137 ]]; then
         printf 'Unexpected live-session evidence: %s\n' "$log" >&2
@@ -323,7 +348,8 @@ run_expected_deny() {
         ansible/validate-rdp-denial-event.yml \
         -e "rdp_event_target=$inventory_host" \
         -e "rdp_event_user=$user" \
-        -e "rdp_event_since_utc=$since" \
+        -e "rdp_security_after_record_id=$security_baseline" \
+        -e "rdp_rdpcore_after_record_id=$rdpcore_baseline" \
         -e 'rdp_event_source=10.4.10.254' \
         >"$event_log" 2>&1
     event_rc=$?
@@ -335,9 +361,10 @@ run_expected_deny() {
     fi
 
     printf 'Client evidence: %s\n' "$log" >&2
+    printf 'Event baseline evidence: %s\n' "$baseline_log" >&2
     printf 'Server denial evidence: %s\n' "$event_log" >&2
     tail -80 "$event_log" >&2 || true
-    fail "$host -> $DOMAIN_NB\\$user did not produce authoritative server-side RDP denial evidence"
+    fail "$host -> $DOMAIN_NB\\$user did not produce authoritative fresh server-side RDP denial evidence"
 }
 
 run_ansible_playbook() {
