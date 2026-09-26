@@ -272,6 +272,16 @@ class RdpAccessContractTests(unittest.TestCase):
         self.assertIn("RICKON_LOGOFF_COMPLETE=True", logoff)
         self.assertNotIn('using System;', playbook)
 
+    def test_release_event_playbooks_are_syntax_check_self_contained(self):
+        baseline = self.text('ansible/capture-rdp-release-event-baseline.yml')
+        validator = self.text('ansible/validate-rdp-denial-event.yml')
+
+        self.assertIn("rdp_event_target | default('dc02')", baseline)
+        self.assertIn("rdp_event_target | default('dc02')", validator)
+        self.assertIn("rdp_event_user | default('hodor')", validator)
+        self.assertIn("rdp_security_after_record_id | default(0)", validator)
+        self.assertIn("rdp_rdpcore_after_record_id | default(0)", validator)
+
     def test_release_denial_baseline_uses_event_record_ids(self):
         baseline = self.text('ansible/capture-rdp-release-event-baseline.yml')
         validator = self.text('ansible/validate-rdp-denial-event.yml')
