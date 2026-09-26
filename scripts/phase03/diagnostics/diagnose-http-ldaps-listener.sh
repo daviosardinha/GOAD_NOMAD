@@ -98,9 +98,8 @@ cd "$ROOT"
 echo '===== HTTP -> LDAPS LISTENER DIAGNOSTIC ====='
 echo 'NOTE: this helper does NOT trigger WS01 authentication.'
 
-branch="$(git branch --show-current 2>/dev/null || true)"
-[[ "$branch" == "kingdoms/phase03-overlay" ]] || {
-  echo "FAIL: unexpected branch: $branch" >&2
+bash scripts/verify-test-source.sh || {
+  echo "FAIL: source checkout does not match its configured upstream" >&2
   exit 1
 }
 
