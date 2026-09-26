@@ -1,0 +1,104 @@
+---
+- name: Validate one fresh RDP authorization denial from Windows Security auditing
+  hosts: "{{ rdp_event_target }}"
+  gather_facts: false
+
+  tasks:
+    - name: Prove Event 4625 is the expected RDP logon-right denial
+      ansible.windows.win_powershell:
+        parameters:
+          ExpectedUser: "{{ rdp_event_user }}"
+          SinceUtc: "{{ rdp_event_since_utc }}"
+          ExpectedSource: "{{ rdp_event_source | default('10.4.10.254') }}"
+        script: |
+          param(
+              [Parameter(Mandatory=$true)][string]$ExpectedUser,
+              [Parameter(Mandatory=$true)][string]$SinceUtc,
+              [Parameter(Mandatory=$true)][string]$ExpectedSource
+          )
+
+          $ErrorActionPreference = 'Stop'
+          $Ansible.Changed = $false
+
+          try {
+              $since = [DateTimeOffset]::Parse(
+                  $SinceUtc,
+                  [System.Globalization.CultureInfo]::InvariantCulture,
+                  [System.Globalization.DateTimeStyles]::AssumeUniversal
+              ).UtcDateTime
+          }
+          catch {
+              throw "Invalid SinceUtc value '$SinceUtc': $($_.Exception.Message)"
+          }
+
+          $deadline = (Get-Date).AddSeconds(20)
+          $observed = @()
+
+          do {
+              $events = @(
+                  Get-WinEvent -FilterHashtable @{
+                      LogName   = 'Security'
+                      Id        = 4625
+                      StartTime = $since
+                  } -ErrorAction Stop
+              )
+
+              foreach ($event in $events) {
+                  [xml]$xml = $event.ToXml()
+                  $data = @{}
+
+                  foreach ($node in @($xml.Event.EventData.Data)) {
+                      $data[[string]$node.Name] = [string]$node.'#text'
+                  }
+
+                  if ($data.TargetUserName -ine $ExpectedUser) {
+                      continue
+                  }
+                  if ($data.TargetDomainName -ine 'NORTH') {
+                      continue
+                  }
+                  if ($data.LogonType -ne '10') {
+                      continue
+                  }
+
+                  $source = [string]$data.IpAddress
+                  if ($source -notin @($ExpectedSource, "::ffff:$ExpectedSource")) {
+                      continue
+                  }
+
+                  $status = ([string]$data.Status).ToUpperInvariant()
+                  $subStatus = ([string]$data.SubStatus).ToUpperInvariant()
+
+                  $observed += (
+                      "EVENT=4625|TIME={0:o}|USER=NORTH\{1}|LOGON_TYPE={2}|SOURCE={3}|STATUS={4}|SUBSTATUS={5}|REASON={6}" -f
+                      $event.TimeCreated.ToUniversalTime(),
+                      $ExpectedUser,
+                      $data.LogonType,
+                      $source,
+                      $status,
+                      $subStatus,
+                      $data.FailureReason
+                  )
+
+                  if ($status -eq '0XC000015B' -or $subStatus -eq '0XC000015B') {
+                      $observed | ForEach-Object { Write-Output $_ }
+                      Write-Output "RDP_DENIAL_EVENT=PASS|USER=NORTH\$ExpectedUser|HOST=$env:COMPUTERNAME|STATUS=0xC000015B"
+                      exit 0
+                  }
+              }
+
+              Start-Sleep -Seconds 1
+          } while ((Get-Date) -lt $deadline)
+
+          $observed | ForEach-Object { Write-Output $_ }
+
+          if ($observed.Count -gt 0) {
+              throw "Fresh Event 4625 exists for NORTH\$ExpectedUser RDP from $ExpectedSource, but it is not STATUS_LOGON_TYPE_NOT_GRANTED (0xC000015B)"
+          }
+
+          throw "No fresh Event 4625 RemoteInteractive denial found for NORTH\$ExpectedUser from $ExpectedSource since $SinceUtc"
+      register: denial_event
+
+    - name: Emit RDP denial event evidence
+      ansible.builtin.debug:
+        var: denial_event.output
