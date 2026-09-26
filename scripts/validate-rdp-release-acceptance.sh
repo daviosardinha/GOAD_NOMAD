@@ -21,7 +21,9 @@ EVIDENCE="${KINGDOMS_RDP_RELEASE_EVIDENCE:-$HOME/Kingdoms-evidence/rdp-release-a
 
 usage() {
     cat <<'EOF'
-Usage: bash scripts/validate-rdp-release-acceptance.sh
+Usage:
+  bash scripts/validate-rdp-release-acceptance.sh
+  bash scripts/validate-rdp-release-acceptance.sh --resume-latest
 
 Release-only runtime gate. Performs:
   - a five-user SMB credential preflight with isolated NetExec state;
@@ -33,18 +35,49 @@ Release-only runtime gate. Performs:
 No RDP policy/group configuration is changed.
 Evidence defaults to ~/Kingdoms-evidence/rdp-release-acceptance-<timestamp>.
 Override with KINGDOMS_RDP_RELEASE_EVIDENCE.
+
+--resume-latest reuses the newest existing release evidence set only for the
+fourteen already-proven denial cases. It revalidates the current source,
+policy/listeners/credentials, verifies the exact 14 denial evidence files, and
+then runs the fresh Rickon -> WS01 positive/non-admin proof.
 EOF
 }
 
-if [[ "${1:-}" == '-h' || "${1:-}" == '--help' ]]; then
-    usage
-    exit 0
-fi
+RESUME_LATEST=0
+case "${1:-}" in
+    '')
+        ;;
+    -h|--help)
+        usage
+        exit 0
+        ;;
+    --resume-latest)
+        RESUME_LATEST=1
+        shift
+        ;;
+    *)
+        usage >&2
+        exit 2
+        ;;
+esac
 [[ $# -eq 0 ]] || { usage >&2; exit 2; }
 
 cd "$ROOT" || exit 1
-mkdir -p "$EVIDENCE"
-chmod 700 "$EVIDENCE"
+
+if [[ "$RESUME_LATEST" -eq 1 ]]; then
+    EVIDENCE="$(
+        find "$HOME/Kingdoms-evidence" -maxdepth 1 -type d \
+            -name 'rdp-release-acceptance-*' -printf '%T@ %p\n' 2>/dev/null |
+            sort -nr |
+            head -1 |
+            cut -d' ' -f2-
+    )"
+    [[ -n "$EVIDENCE" && -d "$EVIDENCE" ]] ||
+        { printf '[FAIL] no prior RDP release evidence set exists\n' >&2; exit 1; }
+else
+    mkdir -p "$EVIDENCE"
+    chmod 700 "$EVIDENCE"
+fi
 
 ANSIBLE="${KINGDOMS_RDP_ANSIBLE:-$HOME/.goad/.venv/bin/ansible-playbook}"
 INV1="$ROOT/ad/GOAD/data/inventory"
@@ -228,6 +261,34 @@ run_expected_deny() {
     fail "$host -> $DOMAIN_NB\\$user did not produce authoritative fresh server-side RDP denial evidence"
 }
 
+verify_denial_evidence_set() {
+    local host user event_log count=0
+
+    for host in WINTERFELL CASTELBLACK WS01; do
+        for user in "${USERS[@]}"; do
+            if [[ "$host" == WS01 && "$user" == rickon.stark ]]; then
+                continue
+            fi
+
+            event_log="$EVIDENCE/${host,,}-$user-denial-event.log"
+            [[ -f "$event_log" ]] ||
+                fail "Resume evidence missing: $event_log"
+
+            grep -Fq 'RDP_DENIAL_EVENT=PASS|' "$event_log" ||
+                fail "Resume evidence lacks PASS marker: $event_log"
+            grep -Fq "|HOST=$host|" "$event_log" ||
+                fail "Resume evidence host mismatch: $event_log"
+
+            count=$((count + 1))
+        done
+    done
+
+    [[ "$count" -eq 14 ]] ||
+        fail "Resume evidence contains $count/14 expected denial proofs"
+
+    pass 'Prior release evidence contains all 14 authoritative fresh RDP denials'
+}
+
 run_ansible_playbook() {
     local playbook="$1" logfile="$2"
     ANSIBLE_CONFIG="$ROOT/ansible/ansible.cfg"         "$ANSIBLE" -i "$INV1" -i "$INV2" "$playbook" 2>&1 | tee "$logfile"
@@ -298,24 +359,33 @@ printf '\n============================================================\n'
 printf 'FOURTEEN EXPECTED DENIALS\n'
 printf '============================================================\n'
 
-for rec in     "WINTERFELL:$WINTERFELL"     "CASTELBLACK:$CASTELBLACK"     "WS01:$WS01"
-do
-    host="${rec%%:*}"
-    ip="${rec##*:}"
+if [[ "$RESUME_LATEST" -eq 1 ]]; then
+    printf 'RESUME_EVIDENCE=%s\n' "$EVIDENCE"
+    verify_denial_evidence_set
+    MATRIX_PASS=14
+else
+    for rec in \
+        "WINTERFELL:$WINTERFELL" \
+        "CASTELBLACK:$CASTELBLACK" \
+        "WS01:$WS01"
+    do
+        host="${rec%%:*}"
+        ip="${rec##*:}"
 
-    for user in "${USERS[@]}"; do
-        if [[ "$host" == WS01 && "$user" == rickon.stark ]]; then
-            continue
-        fi
+        for user in "${USERS[@]}"; do
+            if [[ "$host" == WS01 && "$user" == rickon.stark ]]; then
+                continue
+            fi
 
-        if run_expected_deny "$host" "$ip" "$user"; then
-            MATRIX_PASS=$((MATRIX_PASS + 1))
-        else
-            MATRIX_FAIL=$((MATRIX_FAIL + 1))
-            fail 'Expected-denial matrix stopped at first mismatch'
-        fi
+            if run_expected_deny "$host" "$ip" "$user"; then
+                MATRIX_PASS=$((MATRIX_PASS + 1))
+            else
+                MATRIX_FAIL=$((MATRIX_FAIL + 1))
+                fail 'Expected-denial matrix stopped at first mismatch'
+            fi
+        done
     done
-done
+fi
 
 printf 'EXPECTED_DENIALS_PASS=%d\n' "$MATRIX_PASS"
 printf 'EXPECTED_DENIALS_FAIL=%d\n' "$MATRIX_FAIL"
