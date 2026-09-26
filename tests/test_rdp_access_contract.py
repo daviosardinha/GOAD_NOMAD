@@ -245,16 +245,20 @@ class RdpAccessContractTests(unittest.TestCase):
         self.assertIn('fourteen fresh RDP attempts', result.stdout)
         self.assertIn('one fresh NORTH\\rickon.stark -> WS01 RDP desktop login', result.stdout)
 
-    def test_rdp_release_denial_diagnostic_is_read_only_and_event_backed(self):
-        playbook = self.text('ansible/validate-rdp-denial-event.yml')
+    def test_rdp_release_denial_diagnostic_is_read_only_and_broad(self):
+        playbook = self.text('ansible/diagnose-rdp-release-attempt.yml')
         diagnostic = self.text('scripts/diagnose-rdp-release-denial.sh')
 
-        self.assertIn("Id        = 4625", playbook)
-        self.assertIn("$data.LogonType -ne '10'", playbook)
-        self.assertIn("'0XC000015B'", playbook)
-        self.assertIn('RDP_DENIAL_EVENT=PASS', playbook)
+        self.assertIn("Id        = 4624,4625", playbook)
+        self.assertIn("Credential Validation", playbook)
+        self.assertIn("Id        = 4776", playbook)
+        self.assertIn("TerminalServices-RemoteConnectionManager/Operational", playbook)
+        self.assertIn("TerminalServices-LocalSessionManager/Operational", playbook)
+        self.assertIn("-ErrorAction SilentlyContinue", playbook)
+        self.assertIn("RDP_TARGET_DIAGNOSTIC_COMPLETE=True", playbook)
+        self.assertIn("RDP_DC_DIAGNOSTIC_COMPLETE=True", playbook)
         self.assertIn('10.4.10.254', diagnostic)
-        self.assertIn('validate-rdp-denial-event.yml', diagnostic)
+        self.assertIn('diagnose-rdp-release-attempt.yml', diagnostic)
         for forbidden in ('xfreerdp', 'Set-AD', 'Add-LocalGroupMember',
                           'Remove-LocalGroupMember', 'gpupdate', 'logoff.exe'):
             self.assertNotIn(forbidden, diagnostic)
