@@ -1,15 +1,15 @@
 ---
 - name: Validate one fresh RDP authorization denial from authoritative Windows events
-  hosts: "{{ rdp_event_target }}"
+  hosts: "{{ rdp_event_target | default('dc02') }}"
   gather_facts: false
 
   tasks:
     - name: Correlate authentication, source connection and RDP access denial
       ansible.windows.win_powershell:
         parameters:
-          ExpectedUser: "{{ rdp_event_user }}"
-          SecurityAfterRecordId: "{{ rdp_security_after_record_id }}"
-          RdpCoreAfterRecordId: "{{ rdp_rdpcore_after_record_id }}"
+          ExpectedUser: "{{ rdp_event_user | default('hodor') }}"
+          SecurityAfterRecordId: "{{ rdp_security_after_record_id | default(0) }}"
+          RdpCoreAfterRecordId: "{{ rdp_rdpcore_after_record_id | default(0) }}"
           ExpectedSource: "{{ rdp_event_source | default('10.4.10.254') }}"
         script: |
           param(
