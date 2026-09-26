@@ -1,0 +1,188 @@
+---
+- name: Diagnose recent RDP authentication attempt on the target
+  hosts: "{{ rdp_diag_target }}"
+  gather_facts: false
+
+  tasks:
+    - name: Collect target-side RDP and Security evidence
+      ansible.windows.win_powershell:
+        parameters:
+          ExpectedUser: "{{ rdp_diag_user }}"
+          MinutesBack: "{{ rdp_diag_minutes | default(30) }}"
+          ExpectedSource: "{{ rdp_diag_source | default('10.4.10.254') }}"
+        script: |
+          param(
+              [Parameter(Mandatory=$true)][string]$ExpectedUser,
+              [Parameter(Mandatory=$true)][int]$MinutesBack,
+              [Parameter(Mandatory=$true)][string]$ExpectedSource
+          )
+
+          $ErrorActionPreference = 'Stop'
+          $Ansible.Changed = $false
+          $since = (Get-Date).AddMinutes(-1 * [math]::Abs($MinutesBack))
+
+          Write-Output "TARGET_HOST=$env:COMPUTERNAME"
+          Write-Output "TARGET_NOW=$((Get-Date).ToString('o'))"
+          Write-Output "TARGET_SINCE=$($since.ToString('o'))"
+
+          $securityLog = Get-WinEvent -ListLog Security -ErrorAction Stop
+          Write-Output "SECURITY_LOG_ENABLED=$($securityLog.IsEnabled)"
+          Write-Output "SECURITY_LOG_RECORD_COUNT=$($securityLog.RecordCount)"
+
+          $logonAudit = @(& auditpol.exe /get /subcategory:"Logon" 2>&1)
+          Write-Output 'AUDITPOL_LOGON_BEGIN'
+          $logonAudit | ForEach-Object { Write-Output ([string]$_) }
+          Write-Output "AUDITPOL_LOGON_RC=$LASTEXITCODE"
+          Write-Output 'AUDITPOL_LOGON_END'
+
+          $securityEvents = @(
+              Get-WinEvent -FilterHashtable @{
+                  LogName   = 'Security'
+                  Id        = 4624,4625
+                  StartTime = $since
+              } -ErrorAction SilentlyContinue
+          )
+
+          $matchingSecurity = @()
+          foreach ($event in $securityEvents) {
+              [xml]$xml = $event.ToXml()
+              $data = @{}
+              foreach ($node in @($xml.Event.EventData.Data)) {
+                  $data[[string]$node.Name] = [string]$node.'#text'
+              }
+
+              if ($data.TargetUserName -ine $ExpectedUser) { continue }
+              if ($data.TargetDomainName -ine 'NORTH') { continue }
+
+              $source = [string]$data.IpAddress
+              if ($source -and $source -notin @('-', $ExpectedSource, "::ffff:$ExpectedSource")) {
+                  continue
+              }
+
+              $matchingSecurity += $event
+              Write-Output (
+                  'SECURITY_EVENT|ID={0}|TIME={1:o}|USER=NORTH\{2}|LOGON_TYPE={3}|SOURCE={4}|STATUS={5}|SUBSTATUS={6}|REASON={7}' -f
+                  $event.Id,
+                  $event.TimeCreated,
+                  $ExpectedUser,
+                  $data.LogonType,
+                  $source,
+                  $data.Status,
+                  $data.SubStatus,
+                  $data.FailureReason
+              )
+          }
+          Write-Output "TARGET_SECURITY_MATCH_COUNT=$($matchingSecurity.Count)"
+
+          foreach ($logName in @(
+              'Microsoft-Windows-TerminalServices-RemoteConnectionManager/Operational',
+              'Microsoft-Windows-TerminalServices-LocalSessionManager/Operational'
+          )) {
+              $short = if ($logName -match 'RemoteConnectionManager') { 'RCM' } else { 'LSM' }
+              try {
+                  $log = Get-WinEvent -ListLog $logName -ErrorAction Stop
+                  Write-Output "TS_${short}_LOG_ENABLED=$($log.IsEnabled)"
+                  $events = @(
+                      Get-WinEvent -FilterHashtable @{
+                          LogName   = $logName
+                          StartTime = $since
+                      } -ErrorAction SilentlyContinue
+                  )
+                  $matches = @(
+                      $events | Where-Object {
+                          $_.Message -match [regex]::Escape($ExpectedUser) -or
+                          $_.Message -match [regex]::Escape($ExpectedSource)
+                      }
+                  )
+                  foreach ($event in $matches | Sort-Object TimeCreated) {
+                      $msg = ([string]$event.Message -replace "`r",' ' -replace "`n",' ')
+                      Write-Output (
+                          'TS_EVENT|LOG={0}|ID={1}|TIME={2:o}|MESSAGE={3}' -f
+                          $short,
+                          $event.Id,
+                          $event.TimeCreated,
+                          $msg
+                      )
+                  }
+                  Write-Output "TS_${short}_MATCH_COUNT=$($matches.Count)"
+              }
+              catch {
+                  Write-Output "TS_${short}_QUERY_ERROR=$($_.Exception.Message)"
+              }
+          }
+
+          Write-Output 'RDP_TARGET_DIAGNOSTIC_COMPLETE=True'
+      register: target_diag
+      changed_when: false
+
+    - name: Emit target-side RDP diagnostic
+      ansible.builtin.debug:
+        var: target_diag.output
+      changed_when: false
+
+- name: Diagnose domain credential-validation evidence
+  hosts: dc02
+  gather_facts: false
+
+  tasks:
+    - name: Collect WINTERFELL credential-validation evidence
+      ansible.windows.win_powershell:
+        parameters:
+          ExpectedUser: "{{ rdp_diag_user }}"
+          MinutesBack: "{{ rdp_diag_minutes | default(30) }}"
+        script: |
+          param(
+              [Parameter(Mandatory=$true)][string]$ExpectedUser,
+              [Parameter(Mandatory=$true)][int]$MinutesBack
+          )
+
+          $ErrorActionPreference = 'Stop'
+          $Ansible.Changed = $false
+          $since = (Get-Date).AddMinutes(-1 * [math]::Abs($MinutesBack))
+
+          Write-Output "DC_HOST=$env:COMPUTERNAME"
+          Write-Output "DC_NOW=$((Get-Date).ToString('o'))"
+          Write-Output "DC_SINCE=$($since.ToString('o'))"
+
+          $credentialAudit = @(& auditpol.exe /get /subcategory:"Credential Validation" 2>&1)
+          Write-Output 'AUDITPOL_CREDENTIAL_VALIDATION_BEGIN'
+          $credentialAudit | ForEach-Object { Write-Output ([string]$_) }
+          Write-Output "AUDITPOL_CREDENTIAL_VALIDATION_RC=$LASTEXITCODE"
+          Write-Output 'AUDITPOL_CREDENTIAL_VALIDATION_END'
+
+          $events = @(
+              Get-WinEvent -FilterHashtable @{
+                  LogName   = 'Security'
+                  Id        = 4776
+                  StartTime = $since
+              } -ErrorAction SilentlyContinue
+          )
+
+          $matches = @()
+          foreach ($event in $events) {
+              [xml]$xml = $event.ToXml()
+              $data = @{}
+              foreach ($node in @($xml.Event.EventData.Data)) {
+                  $data[[string]$node.Name] = [string]$node.'#text'
+              }
+              if ($data.TargetUserName -ine $ExpectedUser) { continue }
+
+              $matches += $event
+              Write-Output (
+                  'DC_EVENT|ID=4776|TIME={0:o}|USER={1}|WORKSTATION={2}|STATUS={3}' -f
+                  $event.TimeCreated,
+                  $ExpectedUser,
+                  $data.Workstation,
+                  $data.Status
+              )
+          }
+
+          Write-Output "DC_4776_MATCH_COUNT=$($matches.Count)"
+          Write-Output 'RDP_DC_DIAGNOSTIC_COMPLETE=True'
+      register: dc_diag
+      changed_when: false
+
+    - name: Emit domain credential-validation diagnostic
+      ansible.builtin.debug:
+        var: dc_diag.output
+      changed_when: false
