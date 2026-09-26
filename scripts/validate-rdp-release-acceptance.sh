@@ -66,8 +66,8 @@ elif command -v nxc >/dev/null 2>&1; then
     NXC=(nxc)
 fi
 
-TMP_LOGOFF="$(mktemp /tmp/kingdoms-rdp-release-logoff.XXXXXX.yml)"
-TMP_PROBE="$(mktemp /tmp/kingdoms-rdp-release-probe.XXXXXX.yml)"
+RICKON_LOGOFF_PLAYBOOK="$ROOT/ansible/logoff-rickon-rdp.yml"
+RICKON_PROBE_PLAYBOOK="$ROOT/ansible/validate-rdp-fresh-rickon.yml"
 RICKON_RESTORE_REQUIRED=0
 RDP_TEST_PID=''
 
@@ -80,13 +80,14 @@ best_effort_restore() {
     fi
 
     if [[ "$RICKON_RESTORE_REQUIRED" -eq 1 ]]; then
-        if [[ -x "$ANSIBLE" && -f "$TMP_LOGOFF" ]]; then
-            ANSIBLE_CONFIG="$ROOT/ansible/ansible.cfg"                 "$ANSIBLE" -i "$INV1" -i "$INV2" "$TMP_LOGOFF"                 >/dev/null 2>&1 || true
+        if [[ -x "$ANSIBLE" && -f "$RICKON_LOGOFF_PLAYBOOK" ]]; then
+            ANSIBLE_CONFIG="$ROOT/ansible/ansible.cfg" \
+                "$ANSIBLE" -i "$INV1" -i "$INV2" "$RICKON_LOGOFF_PLAYBOOK" \
+                >/dev/null 2>&1 || true
         fi
         systemctl --user start "$RICKON_SERVICE" >/dev/null 2>&1 || true
     fi
 
-    rm -f "$TMP_LOGOFF" "$TMP_PROBE"
     return "$rc"
 }
 trap best_effort_restore EXIT INT TERM
@@ -99,150 +100,9 @@ for cmd in git nc timeout xvfb-run xfreerdp3 systemctl ss; do
 done
 [[ -x "$ANSIBLE" ]] || fail "ansible-playbook not found: $ANSIBLE"
 [[ -f "$INV1" && -f "$INV2" ]] || fail 'Kingdoms VMware inventories are missing'
+[[ -f "$RICKON_LOGOFF_PLAYBOOK" ]] || fail 'Committed Rickon logoff playbook is missing'
+[[ -f "$RICKON_PROBE_PLAYBOOK" ]] || fail 'Committed fresh Rickon token playbook is missing'
 [[ ${#NXC[@]} -gt 0 ]] || fail 'NetExec/nxc is required for the credential preflight'
-
-cat >"$TMP_LOGOFF" <<'YAML'
----
-- name: Remove only Rickon's WS01 RDP sessions
-  hosts: ws01
-  gather_facts: false
-
-  tasks:
-    - name: Log off Rickon RDP sessions
-      ansible.windows.win_powershell:
-        script: |
-          $ErrorActionPreference = 'Stop'
-          $Ansible.Changed = $false
-          $lines = @(& quser.exe 2>$null)
-
-          foreach ($line in $lines) {
-              if ($line -notmatch '(?i)rickon\.stark') {
-                  continue
-              }
-
-              if ($line -match '\s+(?<id>\d+)\s+(Active|Disc|Disconnected)\s+') {
-                  $id = [int]$Matches['id']
-                  Write-Output "LOGOFF_RICKON_SESSION_ID=$id"
-                  & logoff.exe $id
-                  if ($LASTEXITCODE -ne 0) {
-                      throw "logoff.exe failed for Rickon session $id"
-                  }
-                  $Ansible.Changed = $true
-              }
-          }
-
-          Write-Output 'RICKON_LOGOFF_COMPLETE=True'
-      register: result
-
-    - name: Emit Rickon logoff evidence
-      ansible.builtin.debug:
-        var: result.output
-YAML
-
-cat >"$TMP_PROBE" <<'YAML'
----
-- name: Validate fresh Rickon RDP desktop and token
-  hosts: ws01
-  gather_facts: false
-
-  tasks:
-    - name: Inspect fresh Rickon desktop token
-      ansible.windows.win_powershell:
-        script: |
-          $ErrorActionPreference = 'Stop'
-          $Ansible.Changed = $false
-
-          $deadline = (Get-Date).AddSeconds(25)
-          $active = $null
-          $explorer = $null
-
-          while ((Get-Date) -lt $deadline) {
-              $sessions = @(& quser.exe 2>$null)
-              $active = @(
-                  $sessions |
-                      Where-Object {
-                          $_ -match '(?i)rickon\.stark' -and
-                          $_ -match '(?i)\bActive\b'
-                      }
-              ) | Select-Object -First 1
-
-              $explorer = Get-Process explorer -IncludeUserName -ErrorAction SilentlyContinue |
-                  Where-Object { $_.UserName -ieq 'NORTH\rickon.stark' } |
-                  Select-Object -First 1
-
-              if ($active -and $explorer) {
-                  break
-              }
-
-              Start-Sleep -Seconds 1
-          }
-
-          if (-not $active) {
-              throw 'No fresh Active Rickon RDP session is visible'
-          }
-          if (-not $explorer) {
-              throw 'Rickon Explorer process is not visible in the fresh desktop session'
-          }
-
-          if (-not ('KingdomsFreshTokenProbe' -as [type])) {
-              Add-Type -TypeDefinition @'
-using System;
-using System.Runtime.InteropServices;
-
-public static class KingdomsFreshTokenProbe {
-    [DllImport("advapi32.dll", SetLastError=true)]
-    public static extern bool OpenProcessToken(
-        IntPtr ProcessHandle,
-        UInt32 DesiredAccess,
-        out IntPtr TokenHandle
-    );
-
-    [DllImport("kernel32.dll", SetLastError=true)]
-    public static extern bool CloseHandle(IntPtr Handle);
-}
-'@
-          }
-
-          $token = [IntPtr]::Zero
-          if (-not [KingdomsFreshTokenProbe]::OpenProcessToken(
-              $explorer.Handle,
-              0x0008,
-              [ref]$token
-          )) {
-              throw "OpenProcessToken failed: $([Runtime.InteropServices.Marshal]::GetLastWin32Error())"
-          }
-
-          try {
-              $identity = [System.Security.Principal.WindowsIdentity]::new($token)
-              $groups = @($identity.Groups | ForEach-Object { $_.Value })
-              $isAdmin = $groups -contains 'S-1-5-32-544'
-
-              Write-Output "FRESH_RDP_SESSION=$($active.Trim())"
-              Write-Output "TOKEN_IDENTITY=$($identity.Name)"
-              Write-Output "TOKEN_EXPLORER_PID=$($explorer.Id)"
-              Write-Output "TOKEN_ADMIN_SID_PRESENT=$isAdmin"
-
-              if ($identity.Name -ine 'NORTH\rickon.stark') {
-                  throw "Unexpected token identity: $($identity.Name)"
-              }
-              if ($isAdmin) {
-                  throw 'Rickon fresh desktop token contains BUILTIN\Administrators'
-              }
-          }
-          finally {
-              if ($token -ne [IntPtr]::Zero) {
-                  [void][KingdomsFreshTokenProbe]::CloseHandle($token)
-              }
-          }
-
-          Write-Output 'RDP_FRESH_SESSION=PASS'
-          Write-Output 'RDP_FRESH_TOKEN_NONADMIN=PASS'
-      register: probe
-
-    - name: Emit fresh Rickon token evidence
-      ansible.builtin.debug:
-        var: probe.output
-YAML
 
 run_nxc() {
     local logfile="$1"
@@ -400,6 +260,20 @@ printf 'KINGDOMS — NORTH RDP RELEASE ACCEPTANCE\n'
 printf '============================================================\n'
 printf 'Evidence: %s\n' "$EVIDENCE"
 
+printf '\n===== RELEASE PLAYBOOK SYNTAX GATE =====\n'
+for playbook in \
+    ansible/capture-rdp-release-event-baseline.yml \
+    ansible/validate-rdp-denial-event.yml \
+    ansible/logoff-rickon-rdp.yml \
+    ansible/validate-rdp-fresh-rickon.yml
+do
+    ANSIBLE_CONFIG="$ROOT/ansible/ansible.cfg" \
+        "$ANSIBLE" -i "$INV1" -i "$INV2" --syntax-check "$playbook" \
+        >/dev/null ||
+        fail "Ansible syntax check failed: $playbook"
+    pass "Ansible syntax: $playbook"
+done
+
 printf '\n===== SOURCE GATE =====\n'
 bash scripts/verify-test-source.sh || fail 'Git source gate failed'
 
@@ -459,7 +333,7 @@ systemctl --user stop "$RICKON_SERVICE" ||
     fail 'Could not stop the permanent Rickon service for the fresh-login test'
 RICKON_RESTORE_REQUIRED=1
 
-run_ansible_playbook "$TMP_LOGOFF" "$EVIDENCE/rickon-pre-logoff.log" ||
+run_ansible_playbook "$RICKON_LOGOFF_PLAYBOOK" "$EVIDENCE/rickon-pre-logoff.log" ||
     fail 'Could not remove the pre-existing Rickon Windows session'
 
 sleep 3
@@ -472,7 +346,7 @@ rdp_client_args "$WS01" rickon.stark |
     timeout --signal=TERM --kill-after=3s 35s         xvfb-run -a -s '-screen 0 1280x800x24 -nolisten tcp'         xfreerdp3 /args-from:stdin         >"$EVIDENCE/ws01-rickon.stark-fresh.log" 2>&1 &
 RDP_TEST_PID=$!
 
-run_ansible_playbook "$TMP_PROBE" "$EVIDENCE/rickon-fresh-token.log" ||
+run_ansible_playbook "$RICKON_PROBE_PLAYBOOK" "$EVIDENCE/rickon-fresh-token.log" ||
     fail 'Fresh Rickon WS01 desktop/token proof failed'
 
 grep -Fq 'RDP_FRESH_SESSION=PASS' "$EVIDENCE/rickon-fresh-token.log" ||
@@ -491,7 +365,7 @@ MATRIX_PASS=$((MATRIX_PASS + 1))
 wait "$RDP_TEST_PID" 2>/dev/null || true
 RDP_TEST_PID=''
 
-run_ansible_playbook "$TMP_LOGOFF" "$EVIDENCE/rickon-post-logoff.log" ||
+run_ansible_playbook "$RICKON_LOGOFF_PLAYBOOK" "$EVIDENCE/rickon-post-logoff.log" ||
     fail 'Could not clean the temporary fresh Rickon Windows session'
 
 systemctl --user start "$RICKON_SERVICE" ||
