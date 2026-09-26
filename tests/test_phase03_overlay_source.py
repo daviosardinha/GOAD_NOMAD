@@ -851,7 +851,11 @@ class Phase03OverlaySourceTests(unittest.TestCase):
     def test_phase03_final_regression_orchestrates_closed_contracts(self):
         script = (ROOT / "scripts" / "validate-phase03-final-regression.sh").read_text()
 
-        self.assertIn("kingdoms/phase03-overlay", script)
+        self.assertIn("PHASE03_EXPECTED_BRANCH", script)
+        self.assertIn("verify-test-source.sh", script)
+        self.assertIn("git branch --show-current", script)
+        self.assertIn("git rev-parse --abbrev-ref --symbolic-full-name '@{u}'", script)
+        self.assertNotIn("BRANCH='kingdoms/phase03-overlay'", script)
         self.assertIn("validate-phase03-runtime.sh", script)
         self.assertIn("check-rbcd-prereqs.sh", script)
         self.assertIn("check-shadow-prereqs.sh", script)
