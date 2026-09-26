@@ -1,0 +1,36 @@
+---
+- name: Capture pre-attempt Windows event-log record IDs for RDP release acceptance
+  hosts: "{{ rdp_event_target }}"
+  gather_facts: false
+
+  tasks:
+    - name: Capture Security and RdpCoreTS event baselines
+      ansible.windows.win_powershell:
+        script: |
+          $ErrorActionPreference = 'Stop'
+          $Ansible.Changed = $false
+
+          function Get-LatestRecordId {
+              param([Parameter(Mandatory=$true)][string]$LogName)
+
+              $event = Get-WinEvent -LogName $LogName -MaxEvents 1 -ErrorAction Stop
+              if ($null -eq $event) {
+                  return [Int64]0
+              }
+
+              return [Int64]$event.RecordId
+          }
+
+          $security = Get-LatestRecordId -LogName 'Security'
+          $rdpCore = Get-LatestRecordId -LogName 'Microsoft-Windows-RemoteDesktopServices-RdpCoreTS/Operational'
+
+          Write-Output "RDP_SECURITY_BASELINE_RECORD_ID=$security"
+          Write-Output "RDP_RDPCORE_BASELINE_RECORD_ID=$rdpCore"
+          Write-Output 'RDP_EVENT_BASELINE_CAPTURE_COMPLETE=True'
+      register: event_baseline
+      changed_when: false
+
+    - name: Emit RDP event baseline
+      ansible.builtin.debug:
+        var: event_baseline.output
+      changed_when: false
