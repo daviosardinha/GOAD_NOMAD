@@ -1,6 +1,6 @@
 # Kingdoms — Phase 03 Runtime Checkpoint
 
-Date: 2026-09-25
+Date: 2026-09-26
 Branch: \`kingdoms/phase03-overlay\`
 Lab instance: \`cebee3-goad-vmware\`
 Scope: NORTH / \`10.4.10.0/24\` / \`vmnet10\`
@@ -364,22 +364,49 @@ WebDAV/.lnk is therefore closed end-to-end: **read-only preflight -> exact WS01 
 
 `.url` was not independently exercised because the `.lnk` path already proves the intended victim-interaction/WebDAV behavior; it remains optional course material rather than a separate acceptance gate.
 
-## Remaining Phase 03 engineering
+## Final Phase 03 acceptance
 
-- Final Phase 03 regression.
-- Phase 00–02 regression.
-- NORTH segmentation regression.
-- RDP contract regression.
-- MSSQL regression.
-- traffic-generator regression.
-- no-residual-mutation/listener/process validation.
-- final screenshots.
-- final GOAD Part 4 parity review.
+Phase 03 infrastructure/configuration acceptance is **COMPLETE**.
+
+The origin-synchronized Phase 03 runtime completed the final orchestrated regression with:
+
+- **PASS: 11**
+- **FAIL: 0**
+- `PHASE03_FINAL_REGRESSION_COMPLETE=True`
+
+The final gate covered the complete source regression, Phase 03 runtime/readiness,
+pre- and post-run no-residual-state checks, Phase 02 readiness/MSSQL, Phase 01
+and RDP readiness, the complete NORTH segmentation lifecycle, WS01 foundation,
+the permanent Rickon session lifecycle, and a final neutral Phase 03 runtime.
+
+The segmentation lifecycle independently completed with **29 PASS / 0 WARN / 0 FAIL**
+and returned the lab to deny-by-default `exercise` mode.
+
+The release-only NORTH RDP desktop-logon matrix then completed with:
+
+- **MATRIX_PASS=15**
+- **MATRIX_FAIL=0**
+- fourteen authoritative fresh RDP denials;
+- fresh `NORTH\rickon.stark -> WS01` interactive login;
+- fresh Rickon desktop token verified non-administrative;
+- permanent Rickon victim session restored and revalidated with **5 PASS / 0 FAIL**;
+- `RDP_DESKTOP_LOGON_MATRIX=PASS:15/15`;
+- `RDP_RELEASE_ACCEPTANCE_COMPLETE=True`.
+
+No raw credentials, hashes, tickets, private keys, captured authentication material
+or other secret-bearing runtime evidence is committed to Git.
+
+## Engineering closure
+
+The Phase 03 lab implementation is now **FROZEN for integration**. Remaining
+Phase 03 work is curriculum production rather than infrastructure engineering:
+
+- final screenshot/evidence selection;
+- final GOAD Part 4 parity review;
 - final Notion teaching sections and handoff.
 
-## Next acceptance gate
-
-The next acceptance gate is the **final regression suite and no-residual-state validation**. mitm6/WPAD and HTTP -> LDAPS permanentization are both closed and must not be re-engineered unless regression exposes a concrete failure.
+DFSCoerce / MS-DFSNM and ShadowCoerce / MS-FSRVP are explicitly deferred future
+features in `docs/KINGDOMS_FUTURE_FEATURES.md`; they do not block this closure.
 
 ## Regression rule
 
