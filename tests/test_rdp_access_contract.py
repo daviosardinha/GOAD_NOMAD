@@ -264,7 +264,7 @@ class RdpAccessContractTests(unittest.TestCase):
 
     def test_release_denial_validator_correlates_rdp_core_access_denial(self):
         playbook = self.text('ansible/validate-rdp-denial-event.yml')
-        self.assertIn("Id        = 4624,4625", playbook)
+        self.assertRegex(playbook, r"Id\s*=\s*4624,4625")
         self.assertIn("LogonType -eq '3'", playbook)
         self.assertIn("Id -eq 65", playbook)
         self.assertIn("Id -eq 227", playbook)
@@ -277,7 +277,7 @@ class RdpAccessContractTests(unittest.TestCase):
         playbook = self.text('ansible/diagnose-rdp-release-attempt.yml')
         diagnostic = self.text('scripts/diagnose-rdp-release-denial.sh')
 
-        self.assertIn("Id        = 4624,4625", playbook)
+        self.assertRegex(playbook, r"Id\s*=\s*4624,4625")
         self.assertIn("Credential Validation", playbook)
         self.assertIn("Id        = 4776", playbook)
         self.assertIn("TerminalServices-RemoteConnectionManager/Operational", playbook)
