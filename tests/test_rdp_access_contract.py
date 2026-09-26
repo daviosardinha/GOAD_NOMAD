@@ -242,7 +242,8 @@ class RdpAccessContractTests(unittest.TestCase):
         result = subprocess.run(
             ['bash', str(script), '--help'],
             check=True, capture_output=True, text=True)
-        self.assertIn('fifteen', result.stdout.lower())
+        self.assertIn('fourteen fresh RDP attempts', result.stdout)
+        self.assertIn('one fresh NORTH\\rickon.stark -> WS01 RDP desktop login', result.stdout)
 
     def test_invalid_runtime_options_fail_closed(self):
         script = ROOT / 'scripts/validate-rdp-runtime.sh'
