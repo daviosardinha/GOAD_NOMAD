@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Read-only diagnosis for an RDP release-matrix denial.
-# It queries the target Windows Security log only; it does not make a new RDP
-# connection, change policy, touch group membership, or change lab mode.
+# Read-only diagnosis for one RDP release-matrix attempt.
+# It inspects Windows Security auditing, Terminal Services operational logs and
+# domain credential-validation evidence. It does not create a new RDP session or
+# change policy, group membership, services, GPOs or lab mode.
 set -uo pipefail
 
 ROOT="${ROOT:-$HOME/Documents/GOAD_NOMAD}"
@@ -15,11 +16,16 @@ Usage:
   bash scripts/diagnose-rdp-release-denial.sh <WINTERFELL|CASTELBLACK|WS01> <user> [minutes]
 
 Example:
-  bash scripts/diagnose-rdp-release-denial.sh WINTERFELL hodor 15
+  bash scripts/diagnose-rdp-release-denial.sh WINTERFELL hodor 30
 
-Read-only. Searches recent Event ID 4625 entries for the exact NORTH user,
-RemoteInteractive logon type, attacker source 10.4.10.254, and reports whether
-Windows recorded STATUS_LOGON_TYPE_NOT_GRANTED (0xC000015B).
+Read-only. Reviews the already-performed RDP attempt using:
+  - target Security 4624/4625 evidence;
+  - effective Logon audit policy;
+  - Terminal Services RemoteConnectionManager/LocalSessionManager logs;
+  - WINTERFELL Security 4776 credential-validation evidence;
+  - target/DC clock values so time-window problems are visible.
+
+No new RDP login is performed.
 EOF
 }
 
@@ -27,7 +33,7 @@ EOF
 
 HOST="$1"
 USER="$2"
-MINUTES="${3:-15}"
+MINUTES="${3:-30}"
 
 case "$HOST" in
     WINTERFELL) TARGET='dc02' ;;
@@ -36,11 +42,19 @@ case "$HOST" in
     *) usage >&2; exit 2 ;;
 esac
 
-[[ "$MINUTES" =~ ^[0-9]+$ ]] || { echo 'minutes must be an integer' >&2; exit 2; }
-[[ -x "$ANSIBLE" ]] || { echo "ansible-playbook not found: $ANSIBLE" >&2; exit 1; }
+[[ "$MINUTES" =~ ^[0-9]+$ ]] || {
+    echo 'minutes must be an integer' >&2
+    exit 2
+}
+[[ -x "$ANSIBLE" ]] || {
+    echo "ansible-playbook not found: $ANSIBLE" >&2
+    exit 1
+}
+[[ -f "$INV1" && -f "$INV2" ]] || {
+    echo 'Kingdoms VMware inventories are missing' >&2
+    exit 1
+}
 
 cd "$ROOT" || exit 1
 
-SINCE="$(date -u -d "$MINUTES minutes ago" +%Y-%m-%dT%H:%M:%SZ)"
-
-ANSIBLE_CONFIG="$ROOT/ansible/ansible.cfg"     "$ANSIBLE"     -i "$INV1"     -i "$INV2"     ansible/validate-rdp-denial-event.yml     -e "rdp_event_target=$TARGET"     -e "rdp_event_user=$USER"     -e "rdp_event_since_utc=$SINCE"     -e 'rdp_event_source=10.4.10.254'
+ANSIBLE_CONFIG="$ROOT/ansible/ansible.cfg"     "$ANSIBLE"     -i "$INV1"     -i "$INV2"     ansible/diagnose-rdp-release-attempt.yml     -e "rdp_diag_target=$TARGET"     -e "rdp_diag_user=$USER"     -e "rdp_diag_minutes=$MINUTES"     -e 'rdp_diag_source=10.4.10.254'
