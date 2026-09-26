@@ -281,16 +281,33 @@ rdp_client_args() {
     printf '%s\n'         '/cert:ignore'         '/size:1024x768'         '/audio-mode:2'         '-clipboard'         '/log-level:INFO'
 }
 
+inventory_host_for() {
+    case "$1" in
+        WINTERFELL) printf '%s' 'dc02' ;;
+        CASTELBLACK) printf '%s' 'srv02' ;;
+        WS01) printf '%s' 'ws01' ;;
+        *) return 1 ;;
+    esac
+}
+
 run_expected_deny() {
     local host="$1" ip="$2" user="$3"
     local log="$EVIDENCE/${host,,}-$user.log"
-    local rc
+    local event_log="$EVIDENCE/${host,,}-$user-denial-event.log"
+    local inventory_host since rc event_rc
+
+    inventory_host="$(inventory_host_for "$host")" ||
+        fail "No Ansible inventory mapping for $host"
+    since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
     printf '\n===== EXPECT DENY: %s\\%s -> %s =====\n' "$DOMAIN_NB" "$user" "$host"
 
     set +e
     rdp_client_args "$ip" "$user" |
-        timeout --signal=TERM --kill-after=3s 15s             xvfb-run -a -s '-screen 0 1024x768x24 -nolisten tcp'             xfreerdp3 /args-from:stdin             >"$log" 2>&1
+        timeout --signal=TERM --kill-after=3s 15s \
+            xvfb-run -a -s '-screen 0 1024x768x24 -nolisten tcp' \
+            xfreerdp3 /args-from:stdin \
+            >"$log" 2>&1
     rc=${PIPESTATUS[1]}
     set -e
 
@@ -299,14 +316,28 @@ run_expected_deny() {
         fail "$host unexpectedly kept $DOMAIN_NB\\$user RDP alive"
     fi
 
-    if grep -Eiq         'ERRCONNECT_ACCOUNT_RESTRICTION|STATUS_ACCOUNT_RESTRICTION|STATUS_LOGON_TYPE_NOT_GRANTED|ERRINFO_SERVER_DENIED_CONNECTION|not authorized for remote login|not been granted the requested logon type|account restrictions are preventing'         "$log"; then
+    ANSIBLE_CONFIG="$ROOT/ansible/ansible.cfg" \
+        "$ANSIBLE" \
+        -i "$INV1" \
+        -i "$INV2" \
+        ansible/validate-rdp-denial-event.yml \
+        -e "rdp_event_target=$inventory_host" \
+        -e "rdp_event_user=$user" \
+        -e "rdp_event_since_utc=$since" \
+        -e 'rdp_event_source=10.4.10.254' \
+        >"$event_log" 2>&1
+    event_rc=$?
+
+    if [[ "$event_rc" -eq 0 ]] &&
+       grep -Fq "RDP_DENIAL_EVENT=PASS|USER=$DOMAIN_NB\\$user|HOST=$host|" "$event_log"; then
         printf 'RDP_MATRIX=%s:%s\\%s:DENY:PASS\n' "$host" "$DOMAIN_NB" "$user"
         return 0
     fi
 
-    printf 'Inconclusive RDP evidence: %s\n' "$log" >&2
-    tail -80 "$log" >&2 || true
-    fail "$host -> $DOMAIN_NB\\$user did not produce explicit authorization-denial evidence"
+    printf 'Client evidence: %s\n' "$log" >&2
+    printf 'Server denial evidence: %s\n' "$event_log" >&2
+    tail -80 "$event_log" >&2 || true
+    fail "$host -> $DOMAIN_NB\\$user did not produce authoritative server-side RDP denial evidence"
 }
 
 run_ansible_playbook() {
