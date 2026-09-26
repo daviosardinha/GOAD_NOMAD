@@ -245,6 +245,23 @@ class RdpAccessContractTests(unittest.TestCase):
         self.assertIn('fourteen fresh RDP attempts', result.stdout)
         self.assertIn('one fresh NORTH\\rickon.stark -> WS01 RDP desktop login', result.stdout)
 
+    def test_rdp_release_denial_diagnostic_is_read_only_and_event_backed(self):
+        playbook = self.text('ansible/validate-rdp-denial-event.yml')
+        diagnostic = self.text('scripts/diagnose-rdp-release-denial.sh')
+
+        self.assertIn("Id        = 4625", playbook)
+        self.assertIn("$data.LogonType -ne '10'", playbook)
+        self.assertIn("'0XC000015B'", playbook)
+        self.assertIn('RDP_DENIAL_EVENT=PASS', playbook)
+        self.assertIn('10.4.10.254', diagnostic)
+        self.assertIn('validate-rdp-denial-event.yml', diagnostic)
+        for forbidden in ('xfreerdp', 'Set-AD', 'Add-LocalGroupMember',
+                          'Remove-LocalGroupMember', 'gpupdate', 'logoff.exe'):
+            self.assertNotIn(forbidden, diagnostic)
+
+        script = ROOT / 'scripts/diagnose-rdp-release-denial.sh'
+        subprocess.run(['bash', '-n', str(script)], check=True)
+
     def test_invalid_runtime_options_fail_closed(self):
         script = ROOT / 'scripts/validate-rdp-runtime.sh'
         for args in (['--host', 'dc01'], ['--bogus'], ['--source-only', '--phase01']):
