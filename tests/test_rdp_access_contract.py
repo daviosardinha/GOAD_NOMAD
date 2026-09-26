@@ -227,7 +227,8 @@ class RdpAccessContractTests(unittest.TestCase):
         self.assertIn('RDP_DESKTOP_LOGON_MATRIX=PASS:15/15', text)
         self.assertIn('RDP_RELEASE_ACCEPTANCE_COMPLETE=True', text)
         self.assertIn('EXPECTED_DENIALS_PASS=%d', text)
-        self.assertIn('STATUS_LOGON_TYPE_NOT_GRANTED', text)
+        self.assertIn('validate-rdp-denial-event.yml', text)
+        self.assertIn('RDP_DENIAL_EVENT=PASS', text)
         self.assertIn('NXC_PATH="$nxc_path"', text)
         self.assertIn('xfreerdp3 /args-from:stdin', text)
         self.assertIn('TOKEN_ADMIN_SID_PRESENT=$isAdmin', text)
@@ -244,6 +245,17 @@ class RdpAccessContractTests(unittest.TestCase):
             check=True, capture_output=True, text=True)
         self.assertIn('fourteen fresh RDP attempts', result.stdout)
         self.assertIn('one fresh NORTH\\rickon.stark -> WS01 RDP desktop login', result.stdout)
+
+    def test_release_denial_validator_correlates_rdp_core_access_denial(self):
+        playbook = self.text('ansible/validate-rdp-denial-event.yml')
+        self.assertIn("Id        = 4624,4625", playbook)
+        self.assertIn("LogonType -eq '3'", playbook)
+        self.assertIn("Id -eq 65", playbook)
+        self.assertIn("Id -eq 227", playbook)
+        self.assertIn('User is not granted access to this connection', playbook)
+        self.assertIn('RDPCORE_ACCESS_NOT_GRANTED', playbook)
+        self.assertIn('SECURITY_4625_LOGON_TYPE_NOT_GRANTED', playbook)
+        self.assertIn('RDP_DENIAL_CORRELATION', playbook)
 
     def test_rdp_release_denial_diagnostic_is_read_only_and_broad(self):
         playbook = self.text('ansible/diagnose-rdp-release-attempt.yml')
