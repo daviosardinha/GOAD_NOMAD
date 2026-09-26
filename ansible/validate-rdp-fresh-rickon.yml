@@ -1,0 +1,16 @@
+---
+- name: Validate fresh Rickon RDP desktop and token
+  hosts: ws01
+  gather_facts: false
+
+  tasks:
+    - name: Inspect fresh Rickon desktop token
+      ansible.windows.win_powershell:
+        script: "{{ lookup('ansible.builtin.file', playbook_dir + '/files/validate-rdp-fresh-rickon.ps1') }}"
+      register: probe
+      changed_when: false
+
+    - name: Emit fresh Rickon token evidence
+      ansible.builtin.debug:
+        var: probe.output
+      changed_when: false
