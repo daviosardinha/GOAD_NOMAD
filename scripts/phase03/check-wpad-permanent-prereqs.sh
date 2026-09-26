@@ -31,8 +31,10 @@ cd "$ROOT"
 echo '===== PHASE 03 WPAD / LDAPS PERMANENT PREFLIGHT ====='
 
 echo '===== SOURCE / RUNTIME ====='
-branch="$(git branch --show-current 2>/dev/null || true)"
-[[ "$branch" == "kingdoms/phase03-overlay" ]] || { echo "FAIL: unexpected branch: $branch" >&2; exit 1; }
+bash scripts/verify-test-source.sh || {
+  echo "FAIL: source checkout does not match its configured upstream" >&2
+  exit 1
+}
 
 if pgrep -af '(^|[ /])(mitm6|impacket-ntlmrelayx|ntlmrelayx[.]py|Responder[.]py|responder)([ ]|$)' >/dev/null; then
   echo 'FAIL: conflicting Phase 03 attack runtime is active' >&2

@@ -34,9 +34,8 @@ if [[ -n "$(git status --porcelain)" ]]; then
   exit 1
 fi
 
-branch="$(git branch --show-current)"
-[[ "$branch" == "kingdoms/phase03-overlay" ]] || {
-  echo "FAIL: expected kingdoms/phase03-overlay, got $branch" >&2
+bash scripts/verify-test-source.sh || {
+  echo "FAIL: Phase 03 apply requires a clean source checkout matching its upstream" >&2
   exit 1
 }
 

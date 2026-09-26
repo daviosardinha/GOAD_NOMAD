@@ -36,9 +36,8 @@ cd "$ROOT" || exit 1
 
 echo '===== INTERACTIVE SMB RELAY PREFLIGHT ====='
 
-branch="$(git branch --show-current)"
-[[ "$branch" == "kingdoms/phase03-overlay" ]] || {
-  echo "FAIL: expected kingdoms/phase03-overlay, got $branch" >&2
+bash scripts/verify-test-source.sh || {
+  echo "FAIL: source checkout does not match its configured upstream" >&2
   exit 1
 }
 
