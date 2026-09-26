@@ -145,32 +145,48 @@
               foreach ($auth in $matchingNetworkAuth) {
                   $authTime = $auth.Event.TimeCreated
 
-                  $sourceEvent = @(
-                      $sourceConnections | Where-Object {
-                          [math]::Abs(($_.TimeCreated - $authTime).TotalSeconds) -le 5
-                      } | Sort-Object {
-                          [math]::Abs(($_.TimeCreated - $authTime).TotalMilliseconds)
-                      }
-                  ) | Select-Object -First 1
-
+                  # The Security 4624 record already binds this fresh attempt to
+                  # the exact NORTH identity and attacker source address. RdpCoreTS
+                  # 227 carries the authoritative authorization decision but does
+                  # not include the username. Correlate the first fresh 227 emitted
+                  # immediately after that exact authentication. Event 65 is useful
+                  # supplemental transport evidence when present, but is not
+                  # required because some RDP/NLA failure paths do not emit it.
                   $denialEvent = @(
                       $accessDenials | Where-Object {
-                          $_.TimeCreated -ge $authTime.AddSeconds(-2) -and
-                          $_.TimeCreated -le $authTime.AddSeconds(5)
+                          $_.TimeCreated -ge $authTime -and
+                          $_.TimeCreated -le $authTime.AddSeconds(2)
                       } | Sort-Object TimeCreated
                   ) | Select-Object -First 1
 
-                  if ($sourceEvent -and $denialEvent) {
+                  if ($denialEvent) {
+                      $sourceEvent = @(
+                          $sourceConnections | Where-Object {
+                              $_.TimeCreated -ge $authTime.AddSeconds(-2) -and
+                              $_.TimeCreated -le $authTime.AddSeconds(2)
+                          } | Sort-Object {
+                              [math]::Abs(($_.TimeCreated - $authTime).TotalMilliseconds)
+                          }
+                      ) | Select-Object -First 1
+
                       $securityEvidence | Select-Object -Unique | ForEach-Object { Write-Output $_ }
                       $rdpEvidence | Select-Object -Unique | ForEach-Object { Write-Output $_ }
+
+                      if ($sourceEvent) {
+                          Write-Output (
+                              'RDP_SOURCE_CONNECTION|RECORD_ID={0}|TIME={1:o}' -f
+                              $sourceEvent.RecordId,
+                              $sourceEvent.TimeCreated.ToUniversalTime()
+                          )
+                      }
+
                       Write-Output (
-                          'RDP_DENIAL_CORRELATION|AUTH_RECORD_ID={0}|SOURCE_RECORD_ID={1}|DENIAL_RECORD_ID={2}|AUTH_TIME={3:o}|SOURCE_TIME={4:o}|DENIAL_TIME={5:o}' -f
+                          'RDP_DENIAL_CORRELATION|AUTH_RECORD_ID={0}|DENIAL_RECORD_ID={1}|AUTH_TIME={2:o}|DENIAL_TIME={3:o}|DELTA_MS={4:N3}' -f
                           $auth.Event.RecordId,
-                          $sourceEvent.RecordId,
                           $denialEvent.RecordId,
                           $authTime.ToUniversalTime(),
-                          $sourceEvent.TimeCreated.ToUniversalTime(),
-                          $denialEvent.TimeCreated.ToUniversalTime()
+                          $denialEvent.TimeCreated.ToUniversalTime(),
+                          ($denialEvent.TimeCreated - $authTime).TotalMilliseconds
                       )
                       Write-Output "RDP_DENIAL_EVENT=PASS|USER=NORTH\$ExpectedUser|HOST=$env:COMPUTERNAME|EVIDENCE=RDPCORE_ACCESS_NOT_GRANTED"
                       exit 0
