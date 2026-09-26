@@ -1,6 +1,6 @@
 ---
 - name: Capture pre-attempt Windows event-log record IDs for RDP release acceptance
-  hosts: "{{ rdp_event_target }}"
+  hosts: "{{ rdp_event_target | default('dc02') }}"
   gather_facts: false
 
   tasks:
