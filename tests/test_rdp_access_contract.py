@@ -266,12 +266,15 @@ class RdpAccessContractTests(unittest.TestCase):
         playbook = self.text('ansible/validate-rdp-denial-event.yml')
         self.assertRegex(playbook, r"Id\s*=\s*4624,4625")
         self.assertIn("LogonType -eq '3'", playbook)
-        self.assertIn("Id -eq 65", playbook)
         self.assertIn("Id -eq 227", playbook)
         self.assertIn('User is not granted access to this connection', playbook)
         self.assertIn('RDPCORE_ACCESS_NOT_GRANTED', playbook)
         self.assertIn('SECURITY_4625_LOGON_TYPE_NOT_GRANTED', playbook)
         self.assertIn('RDP_DENIAL_CORRELATION', playbook)
+        self.assertIn('DELTA_MS=', playbook)
+        self.assertIn('$_ .TimeCreated', playbook.replace('$_.TimeCreated', '$_ .TimeCreated'))
+        self.assertIn('$authTime.AddSeconds(2)', playbook)
+        self.assertIn('Event 65 is useful', playbook)
 
     def test_rdp_release_denial_diagnostic_is_read_only_and_broad(self):
         playbook = self.text('ansible/diagnose-rdp-release-attempt.yml')
