@@ -222,6 +222,28 @@ class RdpAccessContractTests(unittest.TestCase):
         result = subprocess.run(['bash', str(script), '--help'], check=True, capture_output=True, text=True)
         self.assertIn('No credential attempts are made', result.stdout)
 
+    def test_release_acceptance_uses_real_fresh_logons_and_restores_rickon(self):
+        text = self.text('scripts/validate-rdp-release-acceptance.sh')
+        self.assertIn('RDP_DESKTOP_LOGON_MATRIX=PASS:15/15', text)
+        self.assertIn('RDP_RELEASE_ACCEPTANCE_COMPLETE=True', text)
+        self.assertIn('EXPECTED_DENIALS_PASS=%d', text)
+        self.assertIn('STATUS_LOGON_TYPE_NOT_GRANTED', text)
+        self.assertIn('NXC_PATH="$nxc_path"', text)
+        self.assertIn('xfreerdp3 /args-from:stdin', text)
+        self.assertIn('TOKEN_ADMIN_SID_PRESENT=$isAdmin', text)
+        self.assertIn("RDP_FRESH_TOKEN_NONADMIN=PASS", text)
+        self.assertIn('systemctl --user stop "$RICKON_SERVICE"', text)
+        self.assertIn('systemctl --user start "$RICKON_SERVICE"', text)
+        self.assertIn('validate-rickon-session.sh', text)
+        self.assertNotIn('xfreerdp3 /p:', text)
+
+        script = ROOT / 'scripts/validate-rdp-release-acceptance.sh'
+        subprocess.run(['bash', '-n', str(script)], check=True)
+        result = subprocess.run(
+            ['bash', str(script), '--help'],
+            check=True, capture_output=True, text=True)
+        self.assertIn('fifteen', result.stdout.lower())
+
     def test_invalid_runtime_options_fail_closed(self):
         script = ROOT / 'scripts/validate-rdp-runtime.sh'
         for args in (['--host', 'dc01'], ['--bogus'], ['--source-only', '--phase01']):
