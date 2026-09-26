@@ -1,0 +1,53 @@
+---
+- name: Validate domain controller health contract
+  ansible.windows.win_powershell:
+    script: |
+      [CmdletBinding()]
+      param (
+          [Parameter(Mandatory = $true)]
+          [String]$DomainName
+      )
+
+      $ErrorActionPreference = 'Stop'
+      $Ansible.Changed = $false
+
+      $computer = Get-CimInstance Win32_ComputerSystem
+      if (-not $computer.PartOfDomain) {
+          throw "$($env:COMPUTERNAME) is not joined to a domain"
+      }
+      if ($computer.Domain -ine $DomainName) {
+          throw "$($env:COMPUTERNAME) reports domain '$($computer.Domain)' instead of '$DomainName'"
+      }
+
+      foreach ($serviceName in @('NTDS', 'DNS', 'ADWS', 'Netlogon', 'Kdc', 'W32Time')) {
+          $service = Get-Service -Name $serviceName -ErrorAction Stop
+          if ($service.Status -ne 'Running') {
+              throw "$serviceName is $($service.Status) on $($env:COMPUTERNAME)"
+          }
+      }
+
+      foreach ($shareName in @('SYSVOL', 'NETLOGON')) {
+          if (-not (Get-SmbShare -Name $shareName -ErrorAction SilentlyContinue)) {
+              throw "$shareName share is missing on $($env:COMPUTERNAME)"
+          }
+      }
+
+      Get-ADDomain -Identity $DomainName -ErrorAction Stop | Out-Null
+      Resolve-DnsName "_ldap._tcp.dc._msdcs.$DomainName" -ErrorAction Stop | Out-Null
+
+      $dcDiscovery = & nltest.exe "/dsgetdc:$DomainName" 2>&1
+      if ($LASTEXITCODE -ne 0) {
+          throw "DC discovery failed for ${DomainName}: $($dcDiscovery -join ' ')"
+      }
+
+      foreach ($port in @(88, 389)) {
+          $probe = Test-NetConnection -ComputerName 127.0.0.1 -Port $port -WarningAction SilentlyContinue
+          if (-not $probe.TcpTestSucceeded) {
+              throw "Local AD service port $port is not reachable on $($env:COMPUTERNAME)"
+          }
+      }
+
+      Write-Output "KINGDOMS_DC_HEALTH_OK host=$($env:COMPUTERNAME) domain=$DomainName"
+    parameters:
+      DomainName: "{{ kingdoms_health_domain }}"
+  changed_when: false

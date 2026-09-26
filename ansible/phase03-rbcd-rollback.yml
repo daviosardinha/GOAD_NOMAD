@@ -1,0 +1,114 @@
+---
+- name: Restore NORTH RBCD fixture to the captured pre-attack baseline
+  hosts: dc02
+  gather_facts: false
+  vars:
+    phase03_rbcd_baseline_path: "{{ lookup('env','HOME') }}/.config/kingdoms/phase03-rbcd-baseline.json"
+    phase03_rbcd_baseline: "{{ lookup('ansible.builtin.file', phase03_rbcd_baseline_path) | from_json }}"
+  tasks:
+    - name: Restore WS01 RBCD attribute and PHASE03RBCD candidate state
+      ansible.windows.win_powershell:
+        script: |
+          $ErrorActionPreference = 'Stop'
+          Import-Module ActiveDirectory
+
+          $Ansible.Changed = $false
+          $changed = $false
+
+          $baselineTarget = '{{ phase03_rbcd_baseline.Target }}'
+          $baselinePresent = [System.Convert]::ToBoolean('{{ phase03_rbcd_baseline.RBCDPresent }}')
+          $baselineBase64 = '{{ phase03_rbcd_baseline.RBCDBase64 | default("", true) }}'
+          $candidateName = '{{ phase03_rbcd_baseline.CandidateName }}'
+          $candidateExisted = [System.Convert]::ToBoolean('{{ phase03_rbcd_baseline.CandidateExisted }}')
+
+          if ($baselineTarget -ne 'WS01$') {
+              throw "Unexpected baseline target: $baselineTarget"
+          }
+
+          $target = Get-ADComputer -Identity 'WS01' -Properties msDS-AllowedToActOnBehalfOfOtherIdentity
+          $current = $target.'msDS-AllowedToActOnBehalfOfOtherIdentity'
+          $currentPresent = $null -ne $current -and $current.Length -gt 0
+
+          if ($baselinePresent) {
+              if ([string]::IsNullOrWhiteSpace($baselineBase64)) {
+                  throw 'Baseline says RBCD was present but no descriptor was captured'
+              }
+              $wanted = [Convert]::FromBase64String($baselineBase64)
+
+              $currentBase64 = $null
+              if ($currentPresent) {
+                  if ($current -is [System.DirectoryServices.ActiveDirectorySecurity]) {
+                      $currentBytes = $current.GetSecurityDescriptorBinaryForm()
+                  } elseif ($current -is [byte[]]) {
+                      $currentBytes = [byte[]]$current
+                  } else {
+                      throw "Unexpected current RBCD descriptor type: $($current.GetType().FullName)"
+                  }
+                  $currentBase64 = [Convert]::ToBase64String($currentBytes)
+              }
+
+              if ($currentBase64 -ne $baselineBase64) {
+                  Set-ADComputer -Identity 'WS01' -Replace @{
+                      'msDS-AllowedToActOnBehalfOfOtherIdentity' = $wanted
+                  }
+                  $changed = $true
+              }
+          } else {
+              if ($currentPresent) {
+                  Set-ADComputer -Identity 'WS01' -Clear 'msDS-AllowedToActOnBehalfOfOtherIdentity'
+                  $changed = $true
+              }
+          }
+
+          $candidate = Get-ADComputer -LDAPFilter "(sAMAccountName=$candidateName)" -ErrorAction SilentlyContinue
+          if (-not $candidateExisted -and $null -ne $candidate) {
+              Remove-ADComputer -Identity $candidate.DistinguishedName -Confirm:$false
+              $changed = $true
+          } elseif ($candidateExisted -and $null -eq $candidate) {
+              throw "$candidateName existed in the captured baseline but is now missing; refusing a lossy rollback"
+          }
+
+          $targetAfter = Get-ADComputer -Identity 'WS01' -Properties msDS-AllowedToActOnBehalfOfOtherIdentity
+          $after = $targetAfter.'msDS-AllowedToActOnBehalfOfOtherIdentity'
+          $afterPresent = $null -ne $after -and $after.Length -gt 0
+
+          if ($baselinePresent) {
+              if (-not $afterPresent) {
+                  $rbcdMatches = $false
+              } else {
+                  if ($after -is [System.DirectoryServices.ActiveDirectorySecurity]) {
+                      $afterBytes = $after.GetSecurityDescriptorBinaryForm()
+                  } elseif ($after -is [byte[]]) {
+                      $afterBytes = [byte[]]$after
+                  } else {
+                      throw "Unexpected post-rollback RBCD descriptor type: $($after.GetType().FullName)"
+                  }
+                  $rbcdMatches = ([Convert]::ToBase64String($afterBytes) -eq $baselineBase64)
+              }
+          } else {
+              $rbcdMatches = -not $afterPresent
+          }
+
+          $candidateAfter = Get-ADComputer -LDAPFilter "(sAMAccountName=$candidateName)" -ErrorAction SilentlyContinue
+          $candidateMatches = ([bool]($null -ne $candidateAfter) -eq $candidateExisted)
+
+          Write-Output "PHASE03_RBCD_RESET_BASELINE_PRESENT=$baselinePresent"
+          Write-Output "PHASE03_RBCD_RESET_RBCD_MATCH=$rbcdMatches"
+          Write-Output "PHASE03_RBCD_RESET_CANDIDATE_MATCH=$candidateMatches"
+          Write-Output "PHASE03_RBCD_RESET_CHANGED=$changed"
+
+          if (-not $rbcdMatches) {
+              throw 'WS01 RBCD state does not match the captured baseline after rollback'
+          }
+          if (-not $candidateMatches) {
+              throw 'PHASE03RBCD candidate state does not match the captured baseline after rollback'
+          }
+
+          Write-Output 'PHASE03_RBCD_RESET_COMPLETE=True'
+          $Ansible.Changed = $changed
+      register: rbcd_reset
+
+    - name: Emit RBCD rollback markers
+      ansible.builtin.debug:
+        msg: "{{ rbcd_reset.output | default([]) }}"
+      changed_when: false

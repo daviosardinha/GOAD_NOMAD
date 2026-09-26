@@ -1,6 +1,6 @@
 - name: "User {{user_name}}"
   debug:
-    msg: "Domain : {{user_domain_name}} | user : {{user_name}} | password: {{user_password}} | host: {{hosts_data.key}}"
+    msg: "Domain : {{user_domain_name}} | user : {{user_name}} | host: {{hosts_data.key}}"
   loop: "{{ user_hosts_list | dict2items }}"
   loop_control:
     loop_var: hosts_data
@@ -36,14 +36,9 @@
   loop_control:
     loop_var: hosts_data
   when: >-
-    hostvars[hosts_data.key] is defined and
-    user_guacamole == "yes" and (hosts_data.value.os | default('') in ['', 'windows']) and (
-       (hosts_data.value.local_groups.get('Administrators', []) | default([]) | map('regex_replace', '.*\\\\', '') | list | intersect(user_groups) | length > 0)
-    or (hosts_data.value.local_groups.get('Remote Desktop Users', []) | default([]) | map('regex_replace', '.*\\\\', '') | list | intersect(user_groups) | length > 0)
-    or ((user_domain_name == hosts_data.value.domain) and (['Domain Admins']| list | intersect(user_groups) | length > 0))
-    or (hosts_data.value.local_groups.get('Administrators', []) | default([])  | map('regex_replace', '.*\\\\', '') | list | intersect([user_name]) | length > 0)
-    or (hosts_data.value.local_groups.get('Remote Desktop Users', []) | default([]) | map('regex_replace', '.*\\\\', '') | list | intersect([user_name]) | length > 0)
-    )
+    hostvars[hosts_data.key] is defined and user_guacamole == "yes"
+    and (hosts_data.value.os | default('') in ['', 'windows'])
+    and (hosts_data.value | kingdoms_rdp_allowed(user_domain_name, user_name, user_groups, domains))
 
 - name: Add RDP user to list of connections
   set_fact:
@@ -52,14 +47,44 @@
   loop_control:
     loop_var: hosts_data
   when: >-
-    hostvars[hosts_data.key] is defined and
-    user_guacamole == "yes" and (hosts_data.value.os | default('') in ['', 'windows']) and (
-       (hosts_data.value.local_groups.get('Administrators', []) | default([]) | map('regex_replace', '.*\\\\', '') | list | intersect(user_groups) | length > 0)
-    or (hosts_data.value.local_groups.get('Remote Desktop Users', []) | default([]) | map('regex_replace', '.*\\\\', '') | list | intersect(user_groups) | length > 0)
-    or ((user_domain_name == hosts_data.value.domain) and (['Domain Admins']| list | intersect(user_groups) | length > 0))
-    or (hosts_data.value.local_groups.get('Administrators', []) | default([])  | map('regex_replace', '.*\\\\', '') | list | intersect([user_name]) | length > 0)
-    or (hosts_data.value.local_groups.get('Remote Desktop Users', []) | default([]) | map('regex_replace', '.*\\\\', '') | list | intersect([user_name]) | length > 0)
-    )
+    hostvars[hosts_data.key] is defined and user_guacamole == "yes"
+    and (hosts_data.value.os | default('') in ['', 'windows'])
+    and (hosts_data.value | kingdoms_rdp_allowed(user_domain_name, user_name, user_groups, domains))
+
+# Delete only names owned by this generator on explicitly managed hosts.
+# Administrative connections remain allowed via the same shared predicate.
+- name: Remove obsolete Kingdoms user RDP connections
+  scicore.guacamole.guacamole_connection:
+    base_url: "{{guac_url}}"
+    auth_username: "{{guacadmin_username}}"
+    auth_password: "{{guacadmin_password}}"
+    connection_name: "RDP-{{hosts_data.key}}-{{hosts_data.value.hostname}}-{{user_name}}"
+    group_name: "{{user_name}}"
+    protocol: rdp
+    validate_certs: false
+    state: absent
+  loop: "{{ user_hosts_list | dict2items }}"
+  loop_control:
+    loop_var: hosts_data
+  when: >-
+    hostvars[hosts_data.key] is defined and user_guacamole == "yes"
+    and 'Remote Desktop Users' in hosts_data.value.get('exact_local_groups', [])
+    and not (hosts_data.value | kingdoms_rdp_allowed(user_domain_name, user_name, user_groups, domains))
+
+- name: Remove generated legacy CasterlyRock user connections from Kingdoms
+  scicore.guacamole.guacamole_connection:
+    base_url: "{{guac_url}}"
+    auth_username: "{{guacadmin_username}}"
+    auth_password: "{{guacadmin_password}}"
+    connection_name: "RDP-ws01-casterlyrock-{{user_name}}"
+    group_name: "{{user_name}}"
+    protocol: rdp
+    validate_certs: false
+    state: absent
+  when:
+    - user_guacamole == "yes"
+    - "'ws01' in hosts"
+    - "'Remote Desktop Users' in hosts.ws01.get('exact_local_groups', [])"
 
 - name: "Add Local SSH connection for User : {{user_name}}"
   scicore.guacamole.guacamole_connection:

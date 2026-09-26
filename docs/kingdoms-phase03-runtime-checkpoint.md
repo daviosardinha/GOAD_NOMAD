@@ -1,0 +1,413 @@
+# Kingdoms — Phase 03 Runtime Checkpoint
+
+Date: 2026-09-26
+Branch: \`kingdoms/phase03-overlay\`
+Lab instance: \`cebee3-goad-vmware\`
+Scope: NORTH / \`10.4.10.0/24\` / \`vmnet10\`
+
+This file records runtime evidence only. Raw credentials, hashes, tickets and other secret-bearing material stay outside Git.
+
+## Baseline readiness
+
+\`scripts/validate-phase03-readiness.sh\` completed with **58 PASS / 0 WARN / 0 FAIL** from a neutral operator state.
+
+## Runtime techniques proven
+
+- LLMNR/NBT-NS/mDNS poisoning behavior in NORTH.
+- NetNTLMv2 capture for the built-in Robb Stark and Eddard Stark traffic generators.
+- SMB relay of Eddard Stark authentication to CASTELBLACK.
+- Administrative SMB relay impact on CASTELBLACK, including SAM extraction.
+- CASTELBLACK MSSQL \`xp_dirtree\` outbound authentication as \`NORTH\sql_svc\`.
+- PrinterBug/MS-RPRN callback behavior in NORTH.
+- MS-EFSR/PetitPotam-family callback proof on CASTELBLACK.
+- Rickon Stark permanent headless RDP victim session on WS01 with credential and certificate-pin protections.
+
+## mitm6 / WPAD
+
+The deterministic WS01 mitm6/WPAD chain is **PROVEN** and permanentized as a baseline/prove/reset workflow.
+
+Exact baseline capture established:
+
+- WS01 interface `Ethernet1`, interface index `5`;
+- one baseline IPv6 address: `fe80::50d2:c933:5bd8:e0a3%5`;
+- zero baseline IPv6 DNS servers;
+- attacker IPv6 DNS: `fe80::250:56ff:fec0:a`;
+- retained baseline: `~/.config/kingdoms/phase03-wpad-baseline.json`.
+
+Permanent preflight proved a neutral Phase 03 runtime, the expected mitm6/ntlmrelayx/tcpdump/tshark tooling, correct `vmnet10` routing, WINTERFELL TCP/636 reachability, and free TCP/80 and TCP/445 listeners.
+
+Same-capture acceptance sequence:
+
+1. WS01 DHCPv6 Solicit.
+2. Attacker Advertise.
+3. WS01 Request.
+4. Attacker Reply.
+5. WS01 adopts attacker IPv6 DNS `fe80::250:56ff:fec0:a`.
+6. WS01 resolves WPAD through the attacker-controlled IPv6 DNS path.
+7. WS01 automatically requests `GET /wpad.dat`.
+
+`scripts/phase03/validate-wpad-chain.sh` completed with **PASS: 8 / FAIL: 0**.
+
+Exact reset is **PROVEN**:
+
+- mitm6 was stopped before restoration;
+- WS01 was renewed after the attacker service stopped;
+- IPv6 returned to the captured baseline address;
+- IPv6 DNS returned to zero configured servers;
+- the interface-zone suffix was normalized during exact comparison;
+- reset markers returned `PHASE03_WPAD_RESET_IPV6_MATCH=True`, `PHASE03_WPAD_RESET_DNSV6_MATCH=True`, and `PHASE03_WPAD_RESET_COMPLETE=True`.
+
+mitm6/WPAD permanentization is therefore closed: **exact baseline -> deterministic DHCPv6/DNS/WPAD proof -> independent same-capture validation -> exact network reset**.
+
+## LDAP / LDAPS relay
+
+The permanent NORTH HTTP -> LDAPS read-only relay fixture is **PROVEN** and closed.
+
+Safety/runtime contract:
+
+- target is `ldaps://10.4.10.11`;
+- mutation is disabled with `--no-dump --no-da --no-acl`;
+- non-required listener families are disabled with `--no-smb-server --no-wcf-server --no-raw-server`;
+- the retained relay log is operator-owned with mode `0600`;
+- detached runtime uses `setsid -f` plus `scripts/phase03/run-with-open-stdin.sh` so ntlmrelayx stdin remains open without a TTY;
+- a 60-second longevity diagnostic proved one stable ntlmrelayx PID continuously owned `0.0.0.0:80`, with stdin backed by the deleted private FIFO rather than `/dev/null`.
+
+Acceptance sequence is **PROVEN**:
+
+- a fresh relay passed its persistence gate across separate shell invocations;
+- the deterministic WS01 scheduled-task callback ran as LocalSystem;
+- the HTTP authentication arrived as `NORTH\WS01$` from `10.4.10.31`;
+- ntlmrelayx authenticated successfully to `ldaps://10.4.10.11`;
+- read-only privilege enumeration started successfully;
+- proof markers returned `PHASE03_HTTP_LDAPS_AUTH_SUCCESS=True`, `PHASE03_HTTP_LDAPS_READONLY_ENUMERATION=True`, and `PHASE03_HTTP_LDAPS_PROVEN=True`;
+- the relay stopped through its tracked PID;
+- the temporary WS01 callback task was absent afterward with `PHASE03_HTTP_LDAPS_CALLBACK_CLEAN=True`;
+- final runtime verification showed no Phase 03 relay process and free TCP/80 and TCP/445 listeners.
+
+The MSSQL `sql_svc` SMB-origin path remains outside this LDAP base path because the observed SMB client requested signing.
+
+HTTP -> LDAPS permanentization is therefore closed: **neutral preflight -> durable detached listener -> deterministic WS01$ callback -> successful read-only LDAPS relay -> proof -> scoped stop -> callback cleanup -> neutral runtime**.
+
+## RBCD end-to-end proof
+
+Preflight established:
+
+- target \`WS01$\`;
+- RBCD attribute initially absent;
+- \`ms-DS-MachineAccountQuota = 10\`;
+- \`PHASE03RBCD$\` initially absent;
+- WS01 SELF has \`WriteProperty\` on the exact RBCD attribute.
+
+The exact pre-attack baseline is retained locally in mode-0600 \`~/.config/kingdoms/phase03-rbcd-baseline.json\`.
+
+Stage 1 is **PROVEN**:
+
+- \`PHASE03RBCD$\` was created;
+- candidate SID: \`S-1-5-21-3668019051-2784807040-3421729346-1124\`;
+- WS01 RBCD remained empty immediately afterward.
+
+Stage 2 is **PROVEN**:
+
+- deterministic LocalSystem HTTP callback from WS01 authenticated as \`NORTH\WS01$\`;
+- ntlmrelayx reported delegation modification success;
+- read-only verification confirmed the WS01 RBCD DACL contained the \`PHASE03RBCD$\` SID.
+
+S4U consequence is **PROVEN**:
+
+- \`PHASE03RBCD$\` obtained a forwardable TGT;
+- Impacket completed S4U2Self and S4U2Proxy while impersonating \`Administrator\`;
+- an Administrator CIFS service ticket for \`cifs/ws01.north.sevenkingdoms.local\` was created;
+- Kerberos-authenticated SMB access listed \`ADMIN$\`, \`C$\` and \`IPC$\`;
+- \`C$\` was opened and listed successfully without remote command execution.
+
+Rollback is **PROVEN**:
+
+- WS01 RBCD was restored to the captured baseline;
+- \`PHASE03RBCD$\` was removed because it did not exist in the baseline;
+- the local candidate password was removed;
+- temporary RBCD Kerberos caches/helper files were removed;
+- the mode-0600 baseline file was retained for audit/verification;
+- rollback markers returned \`RBCD_MATCH=True\`, \`CANDIDATE_MATCH=True\` and \`RESET_COMPLETE=True\`.
+
+RBCD is therefore closed end-to-end: **preflight -> relay -> mutation -> S4U consequence -> exact rollback**.
+
+## Interactive SMB relay
+
+Interactive SMB relay to CASTELBLACK is **PROVEN**.
+
+- Responder operated as poisoner-only with SMB and HTTP servers disabled.
+- ntlmrelayx relayed NORTH SMB authentication to \`smb://10.4.10.22\` with \`-i --keep-relaying\`.
+- \`NORTH\ROBB.STARK\` produced retained interactive SMB sessions on \`127.0.0.1:11000+\`; share enumeration worked, but opening/listing \`C$\` was denied.
+- \`NORTH\EDDARD.STARK\` produced retained interactive SMB sessions on \`127.0.0.1:11000+\`; an Eddard session was connected with netcat, \`C$\` was selected, and the root directory was listed successfully.
+- This proves the authorization distinction cleanly: relay preserves the relayed principal's effective privileges rather than granting privileges by itself.
+
+The interactive relay runtime was then stopped and verified clean: no listeners remained on TCP/445, TCP/80 or \`127.0.0.1:11000+\`, and no ntlmrelayx/Responder process remained.
+
+## SOCKS SMB relay
+
+SOCKS SMB relay to CASTELBLACK is **PROVEN**.
+
+- ntlmrelayx exposed its SOCKS5 proxy on \`127.0.0.1:1080\` while relaying SMB authentication to \`smb://10.4.10.22\`.
+- Responder remained poisoner-only with SMB and HTTP servers disabled.
+- The built-in Robb/Eddard traffic generators naturally supplied repeatable NORTH authentication.
+- ntlmrelayx retained both identities simultaneously:
+  - \`NORTH\ROBB.STARK\` with \`AdminStatus FALSE\`;
+  - \`NORTH\EDDARD.STARK\` with \`AdminStatus TRUE\`.
+- A dedicated temporary ProxyChains configuration pointed only to \`socks5 127.0.0.1 1080\`; the global ProxyChains configuration was not modified.
+- \`impacket-smbclient -no-pass\` reused Robb's retained session through SOCKS: share enumeration succeeded, while \`C$\` returned \`STATUS_ACCESS_DENIED\`.
+- The same client then reused Eddard's retained session through SOCKS: \`C$\` opened and its root filesystem was listed successfully.
+- ntlmrelayx logged the corresponding \`SOCKS: Proxying client session\` events for both identities.
+
+This proves the same authorization rule as interactive relay: SOCKS retains and reuses the relayed identity; it does not create new privilege.
+
+Cleanup is **PROVEN**:
+
+- Responder and ntlmrelayx were stopped.
+- No attack process remained.
+- TCP/80, 135, 445, 1080, 5985, 5986, 6666 and 9389 were free.
+- The temporary ProxyChains configuration was removed.
+
+SOCKS SMB relay is therefore closed runtime-wise: **poison -> relay -> retained SOCKS session -> credential-less client reuse -> privilege-dependent authorization -> clean shutdown**.
+
+## SMB share authorization consequence
+
+SMB share authorization on CASTELBLACK is **PROVEN**.
+
+- Relayed \`NORTH\ROBB.STARK\` could enumerate shares but could not open \`C$\`.
+- Relayed \`NORTH\EDDARD.STARK\` could enumerate shares, open \`C$\`, and list the root filesystem.
+- The same distinction was reproduced through both interactive relay and SOCKS session reuse.
+
+This consequence is therefore closed: **relay succeeds for both identities, but share access follows target-side authorization**.
+
+## SMB remote execution consequence
+
+SMB remote execution on CASTELBLACK is **PROVEN**.
+
+- ntlmrelayx relayed authentication to \`smb://10.4.10.22\` with \`-c 'cmd.exe /Q /c "whoami & hostname"'\`.
+- \`NORTH\EDDARD.STARK\` authenticated successfully and the command executed on CASTELBLACK.
+- Command output proved the remote execution context was \`NT AUTHORITY\SYSTEM\` on \`CASTELBLACK\`.
+- ntlmrelayx temporarily started the stopped \`RemoteRegistry\` service as part of its SMB execution path and then stopped it again.
+- \`NORTH\ROBB.STARK\` also authenticated successfully to the relay target, but the execution mechanism failed with \`rpc_s_access_denied\` / DCERPC error \`0x5\`.
+- This proves that successful relay authentication alone is not enough for remote execution; the relayed principal must already have the required target-side administrative authorization.
+
+Cleanup is **PROVEN**:
+
+- Responder was stopped.
+- ntlmrelayx was stopped.
+- No ntlmrelayx/Responder process remained.
+- TCP/80, 135, 445, 5985, 5986, 6666 and 9389 were free.
+
+SMB remote execution is therefore closed runtime-wise: **relay -> administrative authorization -> service-backed command execution as SYSTEM -> clean shutdown**.
+
+## LSASS credential-material consequence
+
+LSASS credential-material access on CASTELBLACK is **PROVEN**.
+
+- A relayed `NORTH\EDDARD.STARK` administrative session executed the controlled dump command on CASTELBLACK.
+- CASTELBLACK produced `C:\Windows\Temp\kingdoms-phase03-lsass.dmp` with size `89,796,074` bytes.
+- `NORTH\ROBB.STARK` relayed successfully but the privileged execution path failed with DCERPC `0x5 / rpc_s_access_denied`, preserving the limited-vs-administrative comparison.
+- A retained Eddard SMB SOCKS session with `AdminStatus TRUE` was used to retrieve the dump from `C$\Windows\Temp`.
+- The local copy matched the expected `89,796,074` byte size and was identified as a Windows MiniDump with the `MDMP` signature.
+- Local pypykatz parsing completed with return code `0` and the sanitized result reported `username_count=27`, confirming parseable LSASS credential material without committing secrets to Git.
+- The sanitized identity-only evidence included NORTH and CASTELBLACK principals as well as service identities; hashes, passwords and other secret-bearing parser output were not retained in Git.
+
+Cleanup is **PROVEN**:
+
+- The remote CASTELBLACK dump was deleted and a follow-up SMB listing returned `STATUS_NO_SUCH_FILE`.
+- The local raw LSASS dump was deleted.
+- The full secret-bearing pypykatz output was deleted.
+- Only the sanitized local summary was retained outside Git.
+- Responder and ntlmrelayx were stopped.
+- No relay process remained and the relay/SOCKS listener ports were free.
+
+LSASS is therefore closed end-to-end: **administrative relay -> SYSTEM-capable dump creation -> retained SOCKS retrieval -> MiniDump validation -> local credential parsing -> remote/local secret-bearing artifact cleanup**.
+
+## DPAPI credential-material consequence
+
+Native Windows DPAPI credential recovery on CASTELBLACK is **PROVEN**.
+
+- The retained `NORTH\EDDARD.STARK` SMB SOCKS session had `AdminStatus TRUE` and was used to acquire native SYSTEM DPAPI material without modifying CASTELBLACK.
+- Four root SYSTEM masterkeys and three SYSTEM User masterkeys were acquired from the existing Windows DPAPI protection store.
+- The native Credential Manager artifact `DFBE70A7E5CC19A398EBF1B96859CE5D` was acquired with size `11,120` bytes.
+- Credential metadata identified masterkey GUID `AB2516B4-FCD6-4E4E-8FFE-42BA0FB20641`, and the corresponding masterkey file was present in the acquired SYSTEM User store.
+- `impacket-secretsdump` completed successfully through the retained Eddard session and recovered both DPAPI_SYSTEM `UserKey` and `MachineKey` material locally.
+- The matching masterkey decrypted successfully with the DPAPI_SYSTEM `UserKey`.
+- The native Windows Credential Manager artifact then decrypted successfully with Impacket; sanitized metadata showed a generic, local-machine-persisted Windows Credential Manager entry without retaining the underlying secret value.
+- Raw DPAPI masterkeys, Credential Manager data and other secret-bearing local output were removed after validation; only the sanitized summary was retained outside Git.
+- No native DPAPI or Credential Manager artifact was deleted from CASTELBLACK.
+
+Cleanup is **PROVEN**:
+
+- The local raw/secret-bearing DPAPI evidence directory was removed.
+- The sanitized summary was retained.
+- Responder and ntlmrelayx were stopped.
+- No relay process remained and relay/SOCKS listener ports were free.
+- The repository remained unchanged except for the pre-existing untracked `arp.cache`.
+
+DPAPI is therefore closed end-to-end: **administrative relay -> retained SOCKS session -> native DPAPI artifact acquisition -> masterkey GUID correlation -> DPAPI_SYSTEM key recovery -> masterkey decryption -> Credential Manager decryption -> local secret-bearing artifact cleanup**.
+
+## Shadow Credentials end-to-end proof
+
+Shadow Credentials against `WS01$` is **PROVEN** and exactly rolled back.
+
+Preflight established:
+
+- target `WS01$`;
+- `msDS-KeyCredentialLink` initially contained zero values;
+- WS01 SELF held the `DS-Validated-Write-Computer` validated-write right associated with the KeyCredentialLink security GUID;
+- WINTERFELL reported one KDC certificate through `certutil -dcinfo verify`;
+- the installed Impacket build exposed Shadow Credentials relay support;
+- Certipy v5.1.0 was available for certificate-backed Kerberos authentication.
+
+The exact pre-attack KeyCredentialLink baseline was captured locally in mode-0600 `~/.config/kingdoms/phase03-shadow-baseline.json`.
+
+Controlled mutation is **PROVEN**:
+
+- the deterministic WS01 LocalSystem HTTP callback authenticated as `NORTH\WS01$`;
+- authentication relayed successfully to `ldaps://10.4.10.11`;
+- ntlmrelayx generated temporary certificate/private-key material and updated `WS01$` `msDS-KeyCredentialLink`;
+- independent read-only verification returned `KCL_PRESENT=True` and `KCL_COUNT=1`;
+- only a SHA-256 fingerprint of the injected KeyCredential was emitted as sanitized evidence.
+
+PKINIT consequence is **PROVEN**:
+
+- Certipy authenticated as `north.sevenkingdoms.local/WS01$` using the generated PFX;
+- the KDC returned a Kerberos TGT;
+- the proof used `-no-hash` and `-no-save`, so no NT hash was requested and no TGT cache was retained;
+- the acceptance marker returned `PHASE03_SHADOW_PKINIT_TGT=True`.
+
+Rollback is **PROVEN**:
+
+- the relay process was stopped before restoration;
+- `WS01$` KeyCredentialLink was restored to the exact captured baseline;
+- post-rollback markers returned `KCL_MATCH=True` and `RESET_COMPLETE=True`;
+- the final KeyCredentialLink count returned to `0`;
+- generated certificate/private-key/password material was removed;
+- the exact mode-0600 baseline file was retained for audit.
+
+Shadow Credentials is therefore closed end-to-end: **preflight -> exact baseline -> WS01$ relay -> KeyCredential injection -> independent attribute verification -> certificate-backed PKINIT -> exact rollback -> ephemeral cryptographic-material cleanup**.
+
+## ADIDNS end-to-end proof
+
+Authenticated AD-integrated DNS node creation in NORTH is **PROVEN** and exactly rolled back.
+
+Preflight established:
+
+- `north.sevenkingdoms.local` is an AD-integrated primary zone stored in `DomainDnsZones`;
+- dynamic updates are configured as `Secure`;
+- `Authenticated Users` has `CreateChild` on the zone for DNS node creation;
+- `wpad` was intentionally left untouched;
+- the reserved teaching name `phase03-adidns.north.sevenkingdoms.local` initially had no DNS record, no backing `dnsNode`, and no tombstone.
+
+The exact pre-attack state was captured locally in mode-0600 `~/.config/kingdoms/phase03-adidns-baseline.json`.
+
+Controlled mutation is **PROVEN**:
+
+- a normal NORTH principal, `NORTH\hodor`, obtained a Kerberos TGT;
+- `nsupdate -g` submitted an authenticated secure dynamic update to WINTERFELL;
+- `phase03-adidns.north.sevenkingdoms.local` was created as an A record for `10.4.10.254`;
+- the update returned `NOERROR` and the authoritative DNS server resolved the new name to `10.4.10.254`;
+- independent verification confirmed one A record and a backing AD `dnsNode`;
+- the `dnsNode` owner was `NORTH\hodor`, demonstrating creator ownership of the secure dynamic DNS object.
+
+Rollback behavior is **PROVEN**:
+
+- deleting the visible DNS record removed the A record but left a tombstoned backing `dnsNode`;
+- the tombstone remained owned by `NORTH\hodor` and Hodor retained explicit `GenericAll` on that node;
+- owner-context Kerberos/GSSAPI LDAP cleanup removed the exact reserved tombstoned `dnsNode`;
+- the final verifier returned `RECORD_MATCH=True`, `NODE_MATCH=True`, `RECORD_COUNT=0`, `NODE_EXISTS=False`, and `RESET_COMPLETE=True`;
+- the retained Kerberos/update work directory was removed after successful restoration;
+- the mode-0600 baseline file was retained for audit.
+
+ADIDNS is therefore closed end-to-end: **read-only ACL/zone preflight -> exact absent baseline -> authenticated secure DNS update -> DNS resolution proof -> backing dnsNode verification -> tombstone behavior -> owner-context cleanup -> exact absent-state verification**.
+
+## WebDAV / .lnk victim-interaction proof
+
+WS01 WebDAV interaction through a controlled Rickon shortcut is **PROVEN** and exactly rolled back.
+
+Preflight and baseline established:
+
+- Rickon's profile and Desktop existed and an interactive `explorer.exe` session was active;
+- `WebClient` existed with `Stopped` state and `Manual` startup mode;
+- `MRxDAV` existed and was `STOPPED`;
+- reserved `phase03-webdav.lnk` and `.url` artifacts were absent;
+- the exact pre-mutation WS01 state was captured locally in mode-0600 `~/.config/kingdoms/phase03-webdav-baseline.json`.
+
+Behavioral findings:
+
+- passive Desktop refresh of a `.lnk` carrying a remote WebDAV icon did not trigger a request on this WS01 build;
+- direct IP-literal WebDAV UNC access also remained inactive while WebClient was stopped;
+- an authenticated temporary ADIDNS support record, `phase03-webdav.north.sevenkingdoms.local -> 10.4.10.254`, was therefore created with the same controlled Hodor secure-update path used by the ADIDNS fixture;
+- a transient service probe proved that the hostname-backed WebDAV UNC path reaches Kali when WebClient is explicitly running;
+- the probe restored WebClient and MRxDAV to the captured stopped state immediately afterward.
+
+Controlled user interaction is **PROVEN**:
+
+- the reserved Rickon `.lnk` was armed to launch `explorer.exe` against `\\phase03-webdav.north.sevenkingdoms.local@80\DavWWWRoot\`;
+- WebClient was started for the proof without changing its `Manual` startup mode;
+- Rickon's existing headless RDP session launched the shortcut as an interactive user action;
+- the Kali observer recorded an HTTP `OPTIONS /kingdoms.ico` request from WS01 `10.4.10.31`;
+- independent verification returned `REMOTE_REQUEST=True`, `TCP_EVIDENCE=True`, `TARGET_MATCH=True`, `ARGUMENTS_MATCH=True`, `ICON_MATCH=True`, and `VERIFY_COMPLETE=True`;
+- `WebClient` and `MRxDAV` were observed running during the successful interaction.
+
+Rollback is **PROVEN**:
+
+- the reserved `.lnk` and `.url` artifacts were absent after reset;
+- WebClient returned to `Stopped` with startup mode still `Manual`;
+- MRxDAV returned to `STOPPED`;
+- the shortcut reset returned `RESET_COMPLETE=True` and the local observer/runtime evidence directory was removed;
+- the temporary `phase03-webdav` DNS support record was deleted and its Hodor-owned tombstoned `dnsNode` was removed with the retained owner Kerberos/GSSAPI context;
+- the DNS-support rollback returned `PHASE03_WEBDAV_DNS_SUPPORT_ROLLBACK_COMPLETE=True`;
+- rerunning DNS rollback after success originally reported missing retained context because the first successful rollback had already deleted it; the helper is now idempotent and verifies the absent baseline before returning `ALREADY_CLEAN=True`.
+
+WebDAV/.lnk is therefore closed end-to-end: **read-only preflight -> exact WS01 baseline -> hostname support -> explicit WebClient runtime prerequisite -> Rickon interactive shortcut launch -> WS01 HTTP/WebDAV request proof -> independent shortcut verification -> exact WS01 rollback -> exact DNS support rollback**.
+
+`.url` was not independently exercised because the `.lnk` path already proves the intended victim-interaction/WebDAV behavior; it remains optional course material rather than a separate acceptance gate.
+
+## Final Phase 03 acceptance
+
+Phase 03 infrastructure/configuration acceptance is **COMPLETE**.
+
+The origin-synchronized Phase 03 runtime completed the final orchestrated regression with:
+
+- **PASS: 11**
+- **FAIL: 0**
+- `PHASE03_FINAL_REGRESSION_COMPLETE=True`
+
+The final gate covered the complete source regression, Phase 03 runtime/readiness,
+pre- and post-run no-residual-state checks, Phase 02 readiness/MSSQL, Phase 01
+and RDP readiness, the complete NORTH segmentation lifecycle, WS01 foundation,
+the permanent Rickon session lifecycle, and a final neutral Phase 03 runtime.
+
+The segmentation lifecycle independently completed with **29 PASS / 0 WARN / 0 FAIL**
+and returned the lab to deny-by-default `exercise` mode.
+
+The release-only NORTH RDP desktop-logon matrix then completed with:
+
+- **MATRIX_PASS=15**
+- **MATRIX_FAIL=0**
+- fourteen authoritative fresh RDP denials;
+- fresh `NORTH\rickon.stark -> WS01` interactive login;
+- fresh Rickon desktop token verified non-administrative;
+- permanent Rickon victim session restored and revalidated with **5 PASS / 0 FAIL**;
+- `RDP_DESKTOP_LOGON_MATRIX=PASS:15/15`;
+- `RDP_RELEASE_ACCEPTANCE_COMPLETE=True`.
+
+No raw credentials, hashes, tickets, private keys, captured authentication material
+or other secret-bearing runtime evidence is committed to Git.
+
+## Engineering closure
+
+The Phase 03 lab implementation is now **FROZEN for integration**. Remaining
+Phase 03 work is curriculum production rather than infrastructure engineering:
+
+- final screenshot/evidence selection;
+- final GOAD Part 4 parity review;
+- final Notion teaching sections and handoff.
+
+DFSCoerce / MS-DFSNM and ShadowCoerce / MS-FSRVP are explicitly deferred future
+features in `docs/KINGDOMS_FUTURE_FEATURES.md`; they do not block this closure.
+
+## Regression rule
+
+Every Phase 03 state-changing fixture must be independently reversible and must not break Phases 00–02, the NORTH segmentation contract, existing traffic generators, the RDP contract, Phase 02 MSSQL behavior or later WS01 fixtures.

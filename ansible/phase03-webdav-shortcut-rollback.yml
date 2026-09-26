@@ -1,0 +1,99 @@
+---
+- name: Restore WS01 WebDAV shortcut fixture to the exact captured baseline
+  hosts: ws01
+  gather_facts: false
+  vars:
+    phase03_webdav_baseline_path: "{{ lookup('env','HOME') }}/.config/kingdoms/phase03-webdav-baseline.json"
+    phase03_webdav_baseline: "{{ lookup('ansible.builtin.file', phase03_webdav_baseline_path) | from_json }}"
+  tasks:
+    - name: Restore reserved shortcut and WebDAV service state
+      ansible.windows.win_powershell:
+        script: |
+          $ErrorActionPreference = 'Stop'
+
+          $Ansible.Changed = $false
+          $changed = $false
+
+          $lnkPath = '{{ phase03_webdav_baseline.CandidateLnk }}'
+          $urlPath = '{{ phase03_webdav_baseline.CandidateUrl }}'
+          $baselineLnkExists = [System.Convert]::ToBoolean('{{ phase03_webdav_baseline.CandidateLnkExists }}')
+          $baselineUrlExists = [System.Convert]::ToBoolean('{{ phase03_webdav_baseline.CandidateUrlExists }}')
+          $baselineWebClientState = '{{ phase03_webdav_baseline.WebClientState }}'
+          $baselineWebClientStartMode = '{{ phase03_webdav_baseline.WebClientStartMode }}'
+          $baselineMRxDAVState = '{{ phase03_webdav_baseline.MRxDAVState }}'
+
+          if ($baselineLnkExists -or $baselineUrlExists) {
+              throw 'Automatic WebDAV rollback is scoped only to the captured absent artifact baseline'
+          }
+
+          foreach ($path in @($lnkPath, $urlPath)) {
+              if (Test-Path -LiteralPath $path) {
+                  Remove-Item -LiteralPath $path -Force
+                  $changed = $true
+              }
+          }
+
+          $webClient = Get-Service -Name WebClient -ErrorAction SilentlyContinue
+
+          if ($null -ne $webClient) {
+              if ($baselineWebClientState -ieq 'Stopped' -and $webClient.Status -ne 'Stopped') {
+                  Stop-Service -Name WebClient -Force -ErrorAction Stop
+                  $changed = $true
+              }
+
+              switch -Regex ($baselineWebClientStartMode) {
+                  '^Manual$' {
+                      Set-Service -Name WebClient -StartupType Manual
+                  }
+                  '^Auto' {
+                      Set-Service -Name WebClient -StartupType Automatic
+                  }
+                  '^Disabled$' {
+                      Set-Service -Name WebClient -StartupType Disabled
+                  }
+              }
+          }
+
+          if ($baselineMRxDAVState -ieq 'STOPPED') {
+              [void](& sc.exe stop MRxDAV 2>&1)
+          }
+
+          Start-Sleep -Seconds 3
+
+          $webClientAfter = Get-CimInstance Win32_Service -Filter "Name='WebClient'" -ErrorAction SilentlyContinue
+
+          $mrxAfter = 'UNKNOWN'
+          foreach ($line in @(& sc.exe query MRxDAV 2>&1)) {
+              if ([string]$line -match 'STATE\s*:\s*\d+\s+(\S+)') {
+                  $mrxAfter = $Matches[1]
+                  break
+              }
+          }
+
+          $lnkMatch = (-not (Test-Path -LiteralPath $lnkPath))
+          $urlMatch = (-not (Test-Path -LiteralPath $urlPath))
+          $webClientStateMatch = ($webClientAfter.State -ieq $baselineWebClientState)
+          $webClientModeMatch = ($webClientAfter.StartMode -ieq $baselineWebClientStartMode)
+          $mrxMatch = ($mrxAfter -ieq $baselineMRxDAVState)
+
+          Write-Output "PHASE03_WEBDAV_RESET_LNK_MATCH=$lnkMatch"
+          Write-Output "PHASE03_WEBDAV_RESET_URL_MATCH=$urlMatch"
+          Write-Output "PHASE03_WEBDAV_RESET_WEBCLIENT_STATE=$($webClientAfter.State)"
+          Write-Output "PHASE03_WEBDAV_RESET_WEBCLIENT_STATE_MATCH=$webClientStateMatch"
+          Write-Output "PHASE03_WEBDAV_RESET_WEBCLIENT_STARTMODE=$($webClientAfter.StartMode)"
+          Write-Output "PHASE03_WEBDAV_RESET_WEBCLIENT_STARTMODE_MATCH=$webClientModeMatch"
+          Write-Output "PHASE03_WEBDAV_RESET_MRXDAV_STATE=$mrxAfter"
+          Write-Output "PHASE03_WEBDAV_RESET_MRXDAV_MATCH=$mrxMatch"
+
+          if (-not $lnkMatch -or -not $urlMatch -or -not $webClientStateMatch -or -not $webClientModeMatch -or -not $mrxMatch) {
+              throw 'WebDAV shortcut rollback does not match the captured baseline'
+          }
+
+          Write-Output 'PHASE03_WEBDAV_RESET_COMPLETE=True'
+          $Ansible.Changed = $changed
+      register: webdav_reset
+
+    - name: Emit WebDAV rollback markers
+      ansible.builtin.debug:
+        msg: "{{ webdav_reset.output | default([]) }}"
+      changed_when: false

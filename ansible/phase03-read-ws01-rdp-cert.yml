@@ -1,0 +1,71 @@
+---
+- name: Read WS01 RDP certificate identity
+  hosts: ws01
+  gather_facts: false
+  tasks:
+    - name: Resolve the certificate bound to RDP-Tcp
+      ansible.windows.win_powershell:
+        script: |
+          $ErrorActionPreference = 'Stop'
+          $Ansible.Changed = $false
+
+          $setting = Get-CimInstance `
+              -Namespace 'root\cimv2\terminalservices' `
+              -ClassName Win32_TSGeneralSetting `
+              -Filter "TerminalName='RDP-tcp'"
+
+          if ($null -eq $setting) {
+              throw 'RDP-Tcp configuration was not found'
+          }
+
+          $boundThumbprint = (
+              [string]$setting.SSLCertificateSHA1Hash
+          ).Replace(' ', '').ToUpperInvariant()
+
+          if ([string]::IsNullOrWhiteSpace($boundThumbprint)) {
+              throw 'RDP-Tcp has no certificate thumbprint bound'
+          }
+
+          $cert = Get-ChildItem 'Cert:\LocalMachine\Remote Desktop' `
+              -ErrorAction SilentlyContinue |
+              Where-Object { $_.Thumbprint -eq $boundThumbprint } |
+              Select-Object -First 1
+
+          if ($null -eq $cert) {
+              $cert = Get-ChildItem 'Cert:\LocalMachine\My' `
+                  -ErrorAction SilentlyContinue |
+                  Where-Object { $_.Thumbprint -eq $boundThumbprint } |
+                  Select-Object -First 1
+          }
+
+          if ($null -eq $cert) {
+              throw "Could not locate bound certificate $boundThumbprint"
+          }
+
+          $sha256 = [System.Security.Cryptography.SHA256]::Create()
+          try {
+              $hashBytes = $sha256.ComputeHash($cert.RawData)
+          }
+          finally {
+              $sha256.Dispose()
+          }
+
+          $sha256Hex = (
+              $hashBytes | ForEach-Object { $_.ToString('x2') }
+          ) -join ''
+
+          Write-Output "HOST=$env:COMPUTERNAME"
+          Write-Output "RDP_SHA1=$boundThumbprint"
+          Write-Output "RDP_SHA256=$sha256Hex"
+          Write-Output "SUBJECT=$($cert.Subject)"
+          Write-Output "ISSUER=$($cert.Issuer)"
+          Write-Output "SERIAL=$($cert.SerialNumber)"
+          Write-Output "NOT_BEFORE=$($cert.NotBefore.ToString('o'))"
+          Write-Output "NOT_AFTER=$($cert.NotAfter.ToString('o'))"
+      changed_when: false
+      register: ws01_rdp_cert
+
+    - name: Emit WS01 RDP certificate identity
+      ansible.builtin.debug:
+        msg: "{{ ws01_rdp_cert.output | default([]) }}"
+      changed_when: false

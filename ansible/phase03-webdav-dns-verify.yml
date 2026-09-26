@@ -1,0 +1,43 @@
+---
+- name: Verify temporary WebDAV DNS support state without changing AD
+  hosts: dc02
+  gather_facts: false
+  tasks:
+    - name: Verify phase03-webdav DNS record and dnsNode
+      ansible.windows.win_powershell:
+        script: |
+          $ErrorActionPreference = 'Stop'
+          $Ansible.Changed = $false
+          Import-Module ActiveDirectory
+          Import-Module DnsServer
+
+          $zoneName = 'north.sevenkingdoms.local'
+          $recordName = 'phase03-webdav'
+          $expectedIp = '10.4.10.254'
+          $root = Get-ADRootDSE
+
+          $records = @()
+          try { $records = @(Get-DnsServerResourceRecord -ZoneName $zoneName -Name $recordName -ErrorAction Stop) }
+          catch { $records = @() }
+
+          $ips = @($records | Where-Object { $_.RecordType -eq 'A' } | ForEach-Object { [string]$_.RecordData.IPv4Address })
+          $zoneObject = Get-ADObject -SearchBase "CN=MicrosoftDNS,DC=DomainDnsZones,$($root.defaultNamingContext)" -LDAPFilter "(&(objectClass=dnsZone)(name=$zoneName))" -Properties DistinguishedName
+          $node = Get-ADObject -SearchBase $zoneObject.DistinguishedName -SearchScope OneLevel -LDAPFilter "(&(objectClass=dnsNode)(name=$recordName))" -Properties DistinguishedName,dNSTombstoned -ErrorAction SilentlyContinue
+
+          Write-Output "PHASE03_WEBDAV_DNS_VERIFY_RECORD_COUNT=$($records.Count)"
+          Write-Output "PHASE03_WEBDAV_DNS_VERIFY_IPS=$($ips -join ',')"
+          Write-Output "PHASE03_WEBDAV_DNS_VERIFY_NODE_EXISTS=$([bool]($null -ne $node))"
+          if ($null -ne $node) {
+              $acl = Get-Acl -Path ("AD:" + $node.DistinguishedName)
+              Write-Output "PHASE03_WEBDAV_DNS_VERIFY_NODE_OWNER=$($acl.Owner)"
+          }
+
+          $match = ($ips -contains $expectedIp) -and ($null -ne $node)
+          Write-Output "PHASE03_WEBDAV_DNS_VERIFY_MATCH=$match"
+          if (-not $match) { throw 'WebDAV DNS support record does not match expected state' }
+      register: webdav_dns_verify
+
+    - name: Emit WebDAV DNS support verification markers
+      ansible.builtin.debug:
+        msg: "{{ webdav_dns_verify.output | default([]) }}"
+      changed_when: false

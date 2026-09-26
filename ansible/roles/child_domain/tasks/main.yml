@@ -165,10 +165,16 @@
     IPAddresses:
       - "{{dns_server_forwarder}}"
 
-- name: "Install XactiveDirectory"
+- name: Install ActiveDirectoryDSC from PSGallery
   win_psmodule:
     name: ActiveDirectoryDSC
+    repository: PSGallery
+    required_version: "6.7.1"
     state: present
+  register: active_directory_dsc_install
+  retries: 5
+  delay: 30
+  until: active_directory_dsc_install is succeeded
 
 # Orange-Cyberdefense/GOAD issue #156 documents intermittent child-DC ADWS
 # startup failures. Setting only StartupType is not enough for a running lab,

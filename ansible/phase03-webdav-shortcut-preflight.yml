@@ -1,0 +1,105 @@
+---
+- name: Read WS01 WebDAV and shortcut-interaction prerequisites without changing the host
+  hosts: ws01
+  gather_facts: false
+  tasks:
+    - name: Inspect WebClient, WebDAV redirector, Rickon session and reserved artifact state
+      ansible.windows.win_powershell:
+        script: |
+          $ErrorActionPreference = 'Stop'
+          $Ansible.Changed = $false
+
+          $rickonProfile = 'C:\Users\rickon.stark'
+          $rickonDesktop = Join-Path $rickonProfile 'Desktop'
+          $candidateLnk = Join-Path $rickonDesktop 'phase03-webdav.lnk'
+          $candidateUrl = Join-Path $rickonDesktop 'phase03-webdav.url'
+
+          Write-Output 'PHASE03_WEBDAV_PREFLIGHT_BEGIN=True'
+
+          $webClient = Get-CimInstance Win32_Service -Filter "Name='WebClient'" -ErrorAction SilentlyContinue
+
+          if ($null -eq $webClient) {
+              Write-Output 'PHASE03_WEBDAV_WEBCLIENT_EXISTS=False'
+          }
+          else {
+              Write-Output 'PHASE03_WEBDAV_WEBCLIENT_EXISTS=True'
+              Write-Output "PHASE03_WEBDAV_WEBCLIENT_STATE=$($webClient.State)"
+              Write-Output "PHASE03_WEBDAV_WEBCLIENT_STARTMODE=$($webClient.StartMode)"
+              Write-Output "PHASE03_WEBDAV_WEBCLIENT_PATH=$($webClient.PathName)"
+          }
+
+          $triggerOutput = & sc.exe qtriggerinfo WebClient 2>&1
+          foreach ($line in $triggerOutput) {
+              if (-not [string]::IsNullOrWhiteSpace([string]$line)) {
+                  Write-Output "PHASE03_WEBDAV_WEBCLIENT_TRIGGER=$([string]$line)"
+              }
+          }
+
+          $mrxDavOutput = & sc.exe query MRxDAV 2>&1
+          foreach ($line in $mrxDavOutput) {
+              if (-not [string]::IsNullOrWhiteSpace([string]$line)) {
+                  Write-Output "PHASE03_WEBDAV_MRXDAV=$([string]$line)"
+              }
+          }
+
+          $parametersPath = 'HKLM:\SYSTEM\CurrentControlSet\Services\WebClient\Parameters'
+          if (Test-Path -LiteralPath $parametersPath) {
+              $params = Get-ItemProperty -LiteralPath $parametersPath
+
+              foreach ($name in @(
+                  'BasicAuthLevel',
+                  'FileSizeLimitInBytes',
+                  'FileAttributesLimitInBytes',
+                  'ServerNotFoundCacheLifeTime',
+                  'AuthForwardServerList'
+              )) {
+                  if ($params.PSObject.Properties.Name -contains $name) {
+                      Write-Output "PHASE03_WEBDAV_PARAMETER_$($name.ToUpperInvariant())=$($params.$name)"
+                  }
+                  else {
+                      Write-Output "PHASE03_WEBDAV_PARAMETER_$($name.ToUpperInvariant())=NOT_CONFIGURED"
+                  }
+              }
+          }
+          else {
+              Write-Output 'PHASE03_WEBDAV_PARAMETERS_KEY_EXISTS=False'
+          }
+
+          Write-Output "PHASE03_WEBDAV_RICKON_PROFILE_EXISTS=$(Test-Path -LiteralPath $rickonProfile)"
+          Write-Output "PHASE03_WEBDAV_RICKON_DESKTOP_EXISTS=$(Test-Path -LiteralPath $rickonDesktop)"
+          Write-Output "PHASE03_WEBDAV_CANDIDATE_LNK_EXISTS=$(Test-Path -LiteralPath $candidateLnk)"
+          Write-Output "PHASE03_WEBDAV_CANDIDATE_URL_EXISTS=$(Test-Path -LiteralPath $candidateUrl)"
+
+          $explorerFound = $false
+          $explorers = @(Get-CimInstance Win32_Process -Filter "Name='explorer.exe'" -ErrorAction SilentlyContinue)
+
+          foreach ($process in $explorers) {
+              $owner = Invoke-CimMethod -InputObject $process -MethodName GetOwner -ErrorAction SilentlyContinue
+              $ownerName = ''
+              if ($null -ne $owner -and $owner.ReturnValue -eq 0) {
+                  $ownerName = "$($owner.Domain)\$($owner.User)"
+              }
+
+              Write-Output "PHASE03_WEBDAV_EXPLORER=PID=$($process.ProcessId);SESSION=$($process.SessionId);OWNER=$ownerName"
+
+              if ($ownerName -ieq 'NORTH\rickon.stark') {
+                  $explorerFound = $true
+              }
+          }
+
+          Write-Output "PHASE03_WEBDAV_RICKON_EXPLORER=$explorerFound"
+
+          $sessions = & quser.exe 2>&1
+          foreach ($line in $sessions) {
+              if (-not [string]::IsNullOrWhiteSpace([string]$line)) {
+                  Write-Output "PHASE03_WEBDAV_QUSER=$([string]$line)"
+              }
+          }
+
+          Write-Output 'PHASE03_WEBDAV_PREFLIGHT_COMPLETE=True'
+      register: webdav_preflight
+
+    - name: Emit WebDAV shortcut preflight markers
+      ansible.builtin.debug:
+        msg: "{{ webdav_preflight.output | default([]) }}"
+      changed_when: false

@@ -1,0 +1,31 @@
+---
+# Targeted migration; no domain-group, service, ACL, firewall or GPO changes.
+- name: Enforce the Kingdoms NORTH RDP baseline
+  hosts: dc02:srv02:ws01
+  gather_facts: false
+  any_errors_fatal: true
+  vars_files:
+    - ../ad/GOAD/data/config.json
+  pre_tasks:
+    - name: Require the Kingdoms opt-in and expected machine identity
+      ansible.windows.win_powershell:
+        script: |
+          $Ansible.Changed = $false
+          $cs = Get-CimInstance Win32_ComputerSystem
+          if ($cs.Name -ine '{{ lab.hosts[dict_key].hostname }}' -or
+              $cs.Domain -ine 'north.sevenkingdoms.local') {
+              throw 'Refusing RDP migration on an unexpected host/domain'
+          }
+      changed_when: false
+    - name: Require the explicit exact RDP contract
+      ansible.builtin.assert:
+        that:
+          - lab.hosts[dict_key].exact_local_groups == ['Remote Desktop Users']
+  roles:
+    - role: settings/adjust_rights
+    - role: settings/user_rights
+  vars:
+    # Do not reapply even additive administrator grants during this migration.
+    local_groups:
+      Remote Desktop Users: "{{ lab.hosts[dict_key].local_groups['Remote Desktop Users'] }}"
+    exact_local_groups: "{{ lab.hosts[dict_key].exact_local_groups }}"

@@ -1,3 +1,13 @@
+## Deferred / Future Features
+
+The repository backlog for intentionally deferred Kingdoms capabilities is:
+
+- `docs/KINGDOMS_FUTURE_FEATURES.md`
+
+Current deferred Phase 03 candidates include DFSCoerce / MS-DFSNM and
+ShadowCoerce / MS-FSRVP. They do not block closure of the current Phase 03
+baseline.
+
 # GOAD Kingdoms — Major Project Milestones
 
 This is the canonical engineering milestone tracker for **GOAD Kingdoms**.
@@ -253,6 +263,80 @@ v1.1.1 now:
 The real 180-second timeout path was exercised during validation. No Vagrant action-lock race was reproduced, and all six Windows guests plus GOAD-ROUTER finished powered off.
 
 The merged `main` clean-install source gate passed after the maintenance fix.
+
+---
+
+## Maintenance backlog — post-release technical debt
+
+These items were identified while stabilizing the current fresh-install/runtime lifecycle. They are deliberately tracked as maintenance work rather than being folded opportunistically into release acceptance.
+
+### Ansible / dependency maintenance
+
+- [ ] Migrate deprecated `ansible.windows.win_domain` to `microsoft.ad.domain`.
+- [ ] Migrate deprecated `ansible.windows.win_domain_controller` to `microsoft.ad.domain_controller`.
+- [ ] Migrate deprecated `ansible.windows.win_domain_membership` to `microsoft.ad.membership`.
+- [ ] Migrate deprecated `community.windows.win_domain_group_membership` to the supported `microsoft.ad` group-management equivalent.
+- [ ] Pin and regression-test compatible `ansible.windows`, `community.windows`, and `microsoft.ad` collection versions so future collection upgrades cannot silently break provisioning.
+- [ ] Remove the `reset_connection task does not support when conditional` warning in the trust/NAT transition flow without changing lifecycle semantics.
+
+### Idempotency / lifecycle cleanup
+
+- [ ] Review child-domain/DNS replay tasks that still report `changed` on subsequent validation runs and make genuinely repeatable configuration idempotent where possible.
+- [ ] Improve non-interactive destroy behavior. `./goad.sh -t destroy -i <instance>` currently reaches interactive `vagrant destroy`; scripted use should confirm once at the Kingdoms controller boundary and then destroy non-interactively.
+- [ ] Keep the current fail-closed AD readiness and exercise-isolation contracts intact while making the maintenance changes above.
+
+### Fresh-install performance
+
+- [ ] Reduce VMware Tools / VIX guest-IP telemetry recovery overhead when authenticated WinRM and guest-side VMware Tools health are already authoritative.
+- [ ] Profile and shorten the slowest fresh-build recovery cycles, especially WS01 and member-server first boot, without weakening readiness checks.
+- [ ] Cache/pin PowerShell Gallery dependencies such as ActiveDirectoryDSC to reduce download latency and transient external failures.
+- [ ] Evaluate safe dependency-aware parallelism for independent topology branches instead of serializing every machine.
+- [ ] Add a faster development path that can reuse cached artifacts/base state, while keeping the true zero-state build as the release acceptance path.
+- [ ] Consider explicit install/validation modes such as fast, full, and release after the current lifecycle is frozen.
+
+### Low-priority naming cleanup
+
+- [ ] Review remaining internal `GOAD_NOMAD` compatibility identifiers after lifecycle stabilization. Do not rename state files, scripts, or compatibility contracts purely cosmetically if doing so risks regressions.
+
+---
+
+## Phase 03 engineering baseline — Poisoning and relay
+
+**Status: COMPLETE / VALIDATED / FROZEN FOR INTEGRATION**
+
+The NORTH poisoning-and-relay runtime is now a validated Kingdoms baseline rather
+than an experimental overlay.
+
+Delivered attack/runtime families include:
+
+- LLMNR, NBT-NS and mDNS poisoning with NetNTLMv2 capture;
+- SMB relay target selection, automated relay, interactive relay and SOCKS reuse;
+- privilege-dependent SMB consequences including share access, remote execution,
+  LSASS material and native DPAPI credential decryption;
+- MSSQL `xp_dirtree` outbound authentication coercion;
+- PrinterBug / MS-RPRN and PetitPotam / MS-EFSR coercion;
+- mitm6 IPv6/DNS takeover and WPAD;
+- HTTP -> LDAPS read-only relay;
+- RBCD via relay with S4U consequence and exact rollback;
+- Shadow Credentials via relay with PKINIT consequence and exact rollback;
+- ADIDNS secure record injection with exact absent-state restoration;
+- WebDAV / malicious `.lnk` authentication behavior with exact service/DNS reset;
+- permanent Rickon WS01 victim-session lifecycle with release-grade RDP acceptance.
+
+Final acceptance on 2026-09-26:
+
+- Phase 03 final orchestrator: **11 PASS / 0 FAIL**;
+- NORTH segmentation lifecycle: **29 PASS / 0 WARN / 0 FAIL**;
+- final no-residual-state gate: **PASS**;
+- fresh NORTH RDP desktop-logon matrix: **15/15 PASS**;
+- restored permanent Rickon runtime: **5 PASS / 0 FAIL**;
+- final lab mode: `exercise`.
+
+DFSCoerce / MS-DFSNM and ShadowCoerce / MS-FSRVP are deliberately deferred to
+the future-feature backlog and do not block the current Phase 03 baseline.
+
+The remaining Phase 03 work is curriculum production: final GOAD Part 4 parity
+review, screenshot selection and the Notion teaching walkthrough.
 
 ---
 

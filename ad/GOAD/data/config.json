@@ -37,10 +37,9 @@
                     "north\\catelyn.stark",
                     "north\\robb.stark"
                 ],
-                "Remote Desktop Users" : [
-                    "north\\Stark"
-                ]
+                "Remote Desktop Users" : []
             },
+            "exact_local_groups": ["Remote Desktop Users"],
             "scripts" : [
                 "asrep_roasting.ps1",
                 "constrained_delegation_use_any.ps1",
@@ -97,11 +96,10 @@
                     "north\\jeor.mormont"
                 ],
                 "Remote Desktop Users" : [
-                    "north\\Night Watch",
-                    "north\\Mormont",
-                    "north\\Stark"
+                    "north\\robb.stark"
                 ]
             },
+            "exact_local_groups": ["Remote Desktop Users"],
             "scripts" : [],
             "vulns" : ["directory", "disable_firewall", "openshares", "files", "permissions"],
             "vulns_vars" : {
@@ -209,6 +207,7 @@
                     "north\\rickon.stark"
                 ]
             },
+            "exact_local_groups": ["Remote Desktop Users"],
             "scripts" : [],
             "vulns" : [],
             "security" : []

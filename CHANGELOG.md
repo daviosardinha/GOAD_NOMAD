@@ -4,6 +4,18 @@ All notable project changes are documented in this file.
 
 ## [Unreleased] — GOAD Kingdoms
 
+### Added
+- Complete NORTH Phase 03 poisoning-and-relay runtime with deterministic proof and rollback workflows for SMB relay, interactive/SOCKS relay reuse, MSSQL coercion, PrinterBug, PetitPotam, mitm6/WPAD, HTTP-to-LDAPS relay, RBCD, Shadow Credentials, ADIDNS and WebDAV/.lnk behavior.
+- Release-grade NORTH RDP acceptance gate with fourteen authoritative denial proofs, one fresh Rickon -> WS01 interactive allow, non-admin token verification and permanent-session restoration.
+- Deferred Kingdoms future-feature backlog tracking DFSCoerce / MS-DFSNM and ShadowCoerce / MS-FSRVP without blocking the current Phase 03 baseline.
+
+### Validation
+- Phase 03 final regression: **11 PASS / 0 FAIL** with `PHASE03_FINAL_REGRESSION_COMPLETE=True`.
+- NORTH segmentation lifecycle: **29 PASS / 0 WARN / 0 FAIL**, returning the lab to deny-by-default `exercise` mode.
+- Final no-residual-state gate: **PASS**.
+- NORTH RDP release acceptance: **15/15 PASS** with `RDP_RELEASE_ACCEPTANCE_COMPLETE=True`.
+- Permanent Rickon WS01 session restored after release acceptance and revalidated at **5 PASS / 0 FAIL**.
+
 ### Fixed
 - Restore the segmented VMware host-network preflight to the active Kingdoms install override so a missing host-address helper or persistence timer is detected before any VM starts.
 - Track `scripts/setup-vmware-networks.sh` as executable so the documented direct invocation works from a fresh clone.

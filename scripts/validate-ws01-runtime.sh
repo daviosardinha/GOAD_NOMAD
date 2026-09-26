@@ -129,8 +129,8 @@ cat > "${LOG_DIR}/ws01-runtime.yml" <<'YAML'
           if (-not (Test-ComputerSecureChannel)) { throw 'domain secure channel is unhealthy' }
 
           $rdpUsers = @(Get-LocalGroupMember 'Remote Desktop Users' | ForEach-Object Name)
-          if (($rdpUsers | ForEach-Object ToLowerInvariant) -notcontains 'north\rickon.stark') {
-              throw "Rickon missing from RDP group: $($rdpUsers -join ',')"
+          if ($rdpUsers.Count -ne 1 -or ($rdpUsers | ForEach-Object ToLowerInvariant) -notcontains 'north\rickon.stark') {
+              throw "WS01 RDP group must contain only Rickon: $($rdpUsers -join ',')"
           }
 
           $admins = @(Get-LocalGroupMember 'Administrators' | ForEach-Object Name)
@@ -183,6 +183,10 @@ grep -Fq 'WS01_EVAL_READY=PASS' "${LOG_DIR}/ansible.log" || fail 'WS01 Windows e
 grep -Fq 'WS01_FOUNDATION=PASS' "${LOG_DIR}/ansible.log" || fail 'WS01 PowerShell foundation checks did not pass'
 grep -Eq 'failed=0.*unreachable=0|unreachable=0.*failed=0' "${LOG_DIR}/ansible.log" || fail 'WS01 Ansible validation did not finish cleanly'
 pass "WS01 domain, Rickon rights, UAC, Firewall, Defender and evaluation grace"
+
+# Also check effective user rights, nested administrator membership and all
+# five recovered identities; this is policy evidence, not desktop-login proof.
+bash "${ROOT}/scripts/validate-rdp-runtime.sh" --host ws01
 
 printf '\n[READY] GOAD Kingdoms WS01 runtime validation passed.\n'
 printf 'Logs: %s\n' "${LOG_DIR}"

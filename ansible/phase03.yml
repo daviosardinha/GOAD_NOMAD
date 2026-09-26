@@ -1,0 +1,47 @@
+---
+# Kingdoms 03 - Poison the Wells
+# Initial permanent overlay entrypoint.
+# This revision is intentionally guard-only: it makes no lab changes yet.
+- name: Guard the Kingdoms NORTH Phase 03 overlay scope
+  hosts: dc02:srv02:ws01
+  gather_facts: false
+  any_errors_fatal: true
+  vars_files:
+    - ../ad/GOAD/data/config.json
+  pre_tasks:
+    - name: Require explicit Phase 03 opt-in
+      ansible.builtin.assert:
+        that:
+          - phase03_apply | default(false) | bool
+        fail_msg: >-
+          Refusing to run Phase 03 without explicit phase03_apply=true.
+
+    - name: Require exact NORTH machine identity
+      ansible.windows.win_powershell:
+        script: |
+          $Ansible.Changed = $false
+          $expectedName = '{{ lab.hosts[dict_key].hostname }}'
+          $expectedDomain = 'north.sevenkingdoms.local'
+          $cs = Get-CimInstance Win32_ComputerSystem
+          if ($cs.Name -ine $expectedName) {
+              throw "Unexpected host: $($cs.Name); expected $expectedName"
+          }
+          if ($cs.Domain -ine $expectedDomain) {
+              throw "Unexpected domain: $($cs.Domain); expected $expectedDomain"
+          }
+      changed_when: false
+
+    - name: Require exact Phase 03 host set
+      ansible.builtin.assert:
+        that:
+          - inventory_hostname in ['dc02', 'srv02', 'ws01']
+          - lab.hosts[dict_key].domain == 'north.sevenkingdoms.local'
+
+  tasks:
+    - name: Phase 03 overlay checkpoint
+      ansible.builtin.debug:
+        msg: >-
+          Phase 03 permanent overlay entrypoint reached safely on
+          {{ lab.hosts[dict_key].hostname }}. No state-changing Phase 03
+          fixture is implemented in this checkpoint.
+      changed_when: false

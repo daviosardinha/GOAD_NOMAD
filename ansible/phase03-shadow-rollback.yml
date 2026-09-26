@@ -1,0 +1,73 @@
+---
+- name: Restore NORTH Shadow Credentials fixture to the exact captured baseline
+  hosts: dc02
+  gather_facts: false
+  vars:
+    phase03_shadow_baseline_path: "{{ lookup('env','HOME') }}/.config/kingdoms/phase03-shadow-baseline.json"
+    phase03_shadow_baseline: "{{ lookup('ansible.builtin.file', phase03_shadow_baseline_path) | from_json }}"
+  tasks:
+    - name: Restore WS01 KeyCredentialLink exactly
+      ansible.windows.win_powershell:
+        script: |
+          $ErrorActionPreference = 'Stop'
+          Import-Module ActiveDirectory
+          $Ansible.Changed = $false
+          $changed = $false
+
+          $baselineTarget = '{{ phase03_shadow_baseline.Target }}'
+          if ($baselineTarget -ne 'WS01$') { throw "Unexpected Shadow Credentials baseline target: $baselineTarget" }
+
+          $baselinePresent = [System.Convert]::ToBoolean('{{ phase03_shadow_baseline.KCLPresent }}')
+          $baselineValuesJson = @'
+          {{ phase03_shadow_baseline.KCLValues | to_json }}
+          '@
+          $baselineValues = @($baselineValuesJson | ConvertFrom-Json)
+          if (-not $baselinePresent) { $baselineValues = @() }
+
+          $target = Get-ADComputer -Identity 'WS01' -Properties msDS-KeyCredentialLink
+          $currentValues = @()
+          if ($null -ne $target.'msDS-KeyCredentialLink') {
+              foreach ($entry in @($target.'msDS-KeyCredentialLink')) { $currentValues += [string]$entry }
+          }
+
+          $currentSorted = @($currentValues | Sort-Object)
+          $baselineSorted = @($baselineValues | ForEach-Object { [string]$_ } | Sort-Object)
+          $matches = (($currentSorted.Count -eq $baselineSorted.Count) -and
+              ((Compare-Object -ReferenceObject $baselineSorted -DifferenceObject $currentSorted).Count -eq 0))
+
+          if (-not $matches) {
+              if ($baselineValues.Count -eq 0) {
+                  Set-ADComputer -Identity 'WS01' -Clear 'msDS-KeyCredentialLink'
+              } else {
+                  Set-ADComputer -Identity 'WS01' -Replace @{
+                      'msDS-KeyCredentialLink' = [string[]]$baselineValues
+                  }
+              }
+              $changed = $true
+          }
+
+          $after = Get-ADComputer -Identity 'WS01' -Properties msDS-KeyCredentialLink
+          $afterValues = @()
+          if ($null -ne $after.'msDS-KeyCredentialLink') {
+              foreach ($entry in @($after.'msDS-KeyCredentialLink')) { $afterValues += [string]$entry }
+          }
+
+          $afterSorted = @($afterValues | Sort-Object)
+          $restored = (($afterSorted.Count -eq $baselineSorted.Count) -and
+              ((Compare-Object -ReferenceObject $baselineSorted -DifferenceObject $afterSorted).Count -eq 0))
+
+          Write-Output "PHASE03_SHADOW_RESET_BASELINE_COUNT=$($baselineSorted.Count)"
+          Write-Output "PHASE03_SHADOW_RESET_CURRENT_COUNT=$($afterSorted.Count)"
+          Write-Output "PHASE03_SHADOW_RESET_KCL_MATCH=$restored"
+          Write-Output "PHASE03_SHADOW_RESET_CHANGED=$changed"
+
+          if (-not $restored) { throw 'WS01 KeyCredentialLink does not match the captured baseline after rollback' }
+
+          Write-Output 'PHASE03_SHADOW_RESET_COMPLETE=True'
+          $Ansible.Changed = $changed
+      register: shadow_reset
+
+    - name: Emit Shadow Credentials rollback markers
+      ansible.builtin.debug:
+        msg: "{{ shadow_reset.output | default([]) }}"
+      changed_when: false

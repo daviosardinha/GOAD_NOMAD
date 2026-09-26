@@ -1,0 +1,71 @@
+---
+- name: Verify WS01 WPAD network state matches captured baseline
+  hosts: ws01
+  gather_facts: false
+  vars:
+    phase03_wpad_baseline_path: "{{ lookup('env','HOME') }}/.config/kingdoms/phase03-wpad-baseline.json"
+    phase03_wpad_baseline: "{{ lookup('ansible.builtin.file', phase03_wpad_baseline_path) | from_json }}"
+  tasks:
+    - name: Compare current NORTH-facing IPv6 and DNS state with baseline
+      ansible.windows.win_powershell:
+        script: |
+          $ErrorActionPreference = 'Stop'
+          $Ansible.Changed = $false
+
+          $baselineAlias = '{{ phase03_wpad_baseline.InterfaceAlias }}'
+          $baselineIndex = [int]'{{ phase03_wpad_baseline.InterfaceIndex }}'
+
+          $currentIPv6 = @(
+              Get-NetIPAddress -InterfaceIndex $baselineIndex -AddressFamily IPv6 -ErrorAction SilentlyContinue |
+                  Sort-Object IPAddress |
+                  ForEach-Object { [string]$_.IPAddress }
+          )
+
+          $currentDns = @(
+              Get-DnsClientServerAddress -InterfaceIndex $baselineIndex -AddressFamily IPv6 -ErrorAction SilentlyContinue |
+                  ForEach-Object { $_.ServerAddresses } |
+                  Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } |
+                  Sort-Object
+          )
+
+          $baselineIPv6 = @(
+              '{{ phase03_wpad_baseline.IPv6Addresses | map(attribute='Address') | join('|||') }}'.Split('|||') |
+                  Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } |
+                  ForEach-Object { ([string]$_) -replace '%\d+$','' } |
+                  Sort-Object
+          )
+
+          $baselineDns = @(
+              '{{ phase03_wpad_baseline.IPv6DnsServers | join('|||') }}'.Split('|||') |
+                  Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } |
+                  Sort-Object
+          )
+
+          $currentIPv6Normalized = @($currentIPv6 | ForEach-Object { $_ -replace '%\d+$','' } | Sort-Object)
+
+          $ipv6Match = (@(Compare-Object -ReferenceObject $baselineIPv6 -DifferenceObject $currentIPv6Normalized).Count -eq 0)
+          $dnsMatch = (@(Compare-Object -ReferenceObject $baselineDns -DifferenceObject $currentDns).Count -eq 0)
+
+          Write-Output "PHASE03_WPAD_RESET_INTERFACE=$baselineAlias"
+          Write-Output "PHASE03_WPAD_RESET_IPV6_COUNT=$($currentIPv6Normalized.Count)"
+          foreach ($addr in $currentIPv6Normalized) {
+              Write-Output "PHASE03_WPAD_RESET_IPV6=$addr"
+          }
+          Write-Output "PHASE03_WPAD_RESET_DNSV6_COUNT=$($currentDns.Count)"
+          foreach ($server in $currentDns) {
+              Write-Output "PHASE03_WPAD_RESET_DNSV6=$server"
+          }
+          Write-Output "PHASE03_WPAD_RESET_IPV6_MATCH=$ipv6Match"
+          Write-Output "PHASE03_WPAD_RESET_DNSV6_MATCH=$dnsMatch"
+
+          if (-not $ipv6Match -or -not $dnsMatch) {
+              throw 'WS01 IPv6/DNS state does not match the captured WPAD baseline'
+          }
+
+          Write-Output 'PHASE03_WPAD_RESET_COMPLETE=True'
+      register: wpad_reset
+
+    - name: Emit WPAD reset verification markers
+      ansible.builtin.debug:
+        msg: "{{ wpad_reset.output | default([]) }}"
+      changed_when: false

@@ -23,13 +23,19 @@ readonly REQUIRED=(
     goad/provider/vagrant/vmware_kingdoms.py
     playbooks.yml
     ansible/ws01.yml
+    ansible/phase01.yml
     ansible/ws01-lpe-install.yml
+    ansible/kingdoms-health.yml
+    ansible/kingdoms-health-final.yml
+    ansible/roles/kingdoms_health/dc/tasks/main.yml
+    ansible/roles/kingdoms_health/member/tasks/main.yml
     ansible/windows-lpe.yml
     ansible/roles/settings/enable_nat_adapter/tasks/main.yml
     ad/GOAD/data/config.json
     ad/GOAD/data/inventory
     ad/GOAD/providers/vmware/Vagrantfile
     ad/GOAD/providers/vmware/inventory
+    scripts/lab-mode.sh
     scripts/validate-network-segmentation-source.sh
     scripts/validate-ws01-source.sh
     scripts/validate-windows-lpe-framework-source.sh
@@ -94,16 +100,105 @@ expected = [
     'ad-acl.yml',
     'servers.yml',
     'security.yml',
+    'kingdoms-health.yml',
     'vulnerabilities.yml',
+    'phase01.yml',
     'ws01-lpe-install.yml',
+    'kingdoms-health-final.yml',
 ]
 actual = playbooks.get('GOAD')
 if actual != expected:
     fail(f'GOAD clean-install playbook sequence mismatch:\nexpected={expected}\nactual={actual}')
 if actual.index('ws01.yml') <= actual.index('ad-data.yml'):
     fail('ws01.yml must run after ad-data.yml so NORTH\\rickon.stark exists')
-if actual[-1] != 'ws01-lpe-install.yml':
-    fail('WS01 full LPE seeding must be the final GOAD Ansible stage')
+if actual.index('kingdoms-health.yml') <= actual.index('security.yml'):
+    fail('pre-vulnerability Kingdoms health gate must run after security.yml')
+if actual.index('kingdoms-health.yml') >= actual.index('vulnerabilities.yml'):
+    fail('pre-vulnerability Kingdoms health gate must run before vulnerabilities.yml')
+if actual.index('phase01.yml') <= actual.index('vulnerabilities.yml'):
+    fail('phase01.yml must run after vulnerabilities.yml')
+if actual.index('phase01.yml') >= actual.index('ws01-lpe-install.yml'):
+    fail('phase01.yml must run before final WS01 LPE seeding')
+if actual.index('kingdoms-health-final.yml') <= actual.index('ws01-lpe-install.yml'):
+    fail('final Kingdoms health proof must run after WS01 LPE seeding')
+if actual[-1] != 'kingdoms-health-final.yml':
+    fail('final Kingdoms health proof must be the final GOAD Ansible stage')
+
+health = Path('ansible/kingdoms-health.yml').read_text()
+require_tokens(
+    'Kingdoms pre-vulnerability health gate',
+    health,
+    (
+        'hosts: dc',
+        'hosts: server:workstation',
+        'role: kingdoms_health/dc',
+        'role: kingdoms_health/member',
+        'kingdoms_health_domain_controller:',
+        'kingdoms_health_repair: true',
+    ),
+)
+
+final_health = Path('ansible/kingdoms-health-final.yml').read_text()
+require_tokens(
+    'Kingdoms final health proof',
+    final_health,
+    (
+        'hosts: dc',
+        'hosts: server:workstation',
+        'kingdoms_health_domain_controller:',
+        'kingdoms_health_repair: false',
+    ),
+)
+
+member_health = Path('ansible/roles/kingdoms_health/member/tasks/main.yml').read_text()
+require_tokens(
+    'Kingdoms member health contract',
+    member_health,
+    (
+        'Test-ComputerSecureChannel',
+        'Reset-ComputerMachinePassword',
+        'nltest.exe',
+        'Resolve-DnsName',
+        'w32tm.exe',
+        'AllowRepair',
+        'DomainController',
+        'Wait-DomainDiscovery',
+        'Invoke-Nltest',
+        'KINGDOMS_MEMBER_DCLOCATOR_RETRY',
+        '-Server $DomainController',
+    ),
+)
+
+dc_health = Path('ansible/roles/kingdoms_health/dc/tasks/main.yml').read_text()
+require_tokens(
+    'Kingdoms domain controller health contract',
+    dc_health,
+    (
+        "'NTDS', 'DNS', 'ADWS', 'Netlogon', 'Kdc', 'W32Time'",
+        "'SYSVOL', 'NETLOGON'",
+        'Get-ADDomain',
+        'Resolve-DnsName',
+        'nltest.exe',
+    ),
+)
+if 'Reset-ComputerMachinePassword' in dc_health:
+    fail('domain controller health gate must not auto-repair machine trust')
+if 'Assert-DomainDiscovery' in member_health:
+    fail('member health must not hard-fail on a single DC Locator miss before trust evaluation')
+if member_health.index('$discoveryHealthy = Wait-DomainDiscovery') > member_health.index('$trustHealthy = Test-DirectSecureChannel'):
+    fail('member health must record bounded locator state before evaluating trust independently')
+if '-Server $DomainController' not in member_health:
+    fail('member trust validation/repair must pin the known domain controller')
+
+for label, health_script in (
+    ('domain controller health contract', dc_health),
+    ('member health contract', member_health),
+):
+    if '$DomainName:' in health_script:
+        fail(f'{label} contains unsafe PowerShell interpolation before colon')
+
+if '${DomainName}:' not in dc_health:
+    fail('domain controller health contract must delimit DomainName before colon in PowerShell strings')
 
 install_lpe = Path('ansible/ws01-lpe-install.yml').read_text()
 require_tokens(
@@ -140,12 +235,34 @@ inventory = Path('ad/GOAD/data/inventory').read_text()
 if not re.search(r'(?m)^ws01\s*$', inventory):
     fail('GOAD lab inventory does not include ws01')
 
-provider_inventory = Path('ad/GOAD/providers/vmware/inventory').read_text()
-if not re.search(
-    r'(?m)^ws01\s+ansible_host=10\.4\.10\.31\s+dns_domain=dc02\s+dict_key=ws01\s*$',
-    provider_inventory,
-):
-    fail('GOAD VMware provider inventory does not pin ws01 to 10.4.10.31')
+provider_inventory = Path('ad/GOAD/providers/vmware/inventory').read_text().splitlines()
+ws01_lines = [
+    line.strip()
+    for line in provider_inventory
+    if re.match(r'^\s*ws01(?:\s|$)', line)
+]
+if len(ws01_lines) != 1:
+    fail(f'Kingdoms VMware provider inventory must define exactly one ws01 entry: {ws01_lines}')
+
+parts = ws01_lines[0].split()
+ws01_vars = dict(
+    token.split('=', 1)
+    for token in parts[1:]
+    if '=' in token
+)
+
+expected_ws01_vars = {
+    'ansible_host': '10.4.10.31',
+    'dns_domain': 'dc02',
+    'dict_key': 'ws01',
+}
+for key, expected_value in expected_ws01_vars.items():
+    actual_value = ws01_vars.get(key)
+    if actual_value != expected_value:
+        fail(
+            f'Kingdoms VMware ws01 {key} mismatch: '
+            f'expected={expected_value!r} actual={actual_value!r}'
+        )
 
 provider_factory = Path('goad/provider/provider_factory.py').read_text()
 if 'GoadKingdomsVmwareProvider' not in provider_factory:
@@ -183,6 +300,22 @@ if 'VMware Tools WinRM session interrupted for' in vmware_provider:
 
 kingdoms_provider = Path('goad/provider/vagrant/vmware_kingdoms.py').read_text()
 require_tokens(
+    'fresh-install pre-AD provisioning bootstrap',
+    kingdoms_provider,
+    (
+        'def _fresh_install_bootstrap_pending(self):',
+        "profile.get('status') == 'ansible_running'",
+        "self.get_runtime_mode() == 'unknown'",
+        'def prepare_provisioning(self):',
+        "self._apply_router_policy('provisioning')",
+        'self._enable_provisioning_routes()',
+        'self._validate_management_plane()',
+        'fresh install bootstrap before AD exists',
+        'fresh pre-AD management plane ready',
+    ),
+)
+
+require_tokens(
     'GOAD Kingdoms failed Windows bring-up recovery',
     kingdoms_provider,
     (
@@ -191,7 +324,9 @@ require_tokens(
         'def _recover_failed_windows_vagrant_up(self, machine):',
         'def install(self):',
         "first_up = self.command.run_vagrant(['up', machine], self.path)",
-        'if not first_up:',
+        'tools_ready = self._ensure_vmware_tools(machine)',
+        'def _authenticated_guest_recovery_ready(self, machine, timeout=60):',
+        'if not first_up or not tools_ready:',
         'if not self._recover_failed_windows_vagrant_up(machine):',
         'shutdown.exe /s /t 0 /f',
         "['vmrun', '-T', 'ws', 'stop', vmx, 'soft']",
@@ -212,6 +347,55 @@ preflight_call = kingdoms_provider.find('if not self.prepare_install():')
 first_guest_start = kingdoms_provider.find('if not self._bring_up_router():')
 if preflight_call == -1 or first_guest_start == -1 or preflight_call >= first_guest_start:
     fail('Kingdoms install must complete host-network preflight before starting GOAD-ROUTER')
+
+lab_mode = Path('scripts/lab-mode.sh').read_text()
+require_tokens(
+    'AD-aware Kingdoms mode transition',
+    lab_mode,
+    (
+        'DOMAIN_CONTROLLERS',
+        'DOMAIN_MEMBERS',
+        'EXERCISE_DOMAIN_CONTROLLERS',
+        'wait_domain_controller_ready',
+        'wait_domain_member_ready',
+        'preflight_domain_health',
+        'Get-ADRootDSE',
+        'Test-ComputerSecureChannel -Server',
+        'System.Security.Principal.NTAccount',
+        'w32tm.exe /query /source',
+        'configure_windows_nat_provisioning',
+        'configure_windows_nat_exercise',
+        'prove_isolated_guest_ready',
+        'temporarily connecting runtime NAT for authenticated readiness',
+        'authenticated post-reboot readiness proven; runtime NAT disconnected',
+        'member/workstation guests first; domain controllers last',
+        'domain controllers first with AD readiness; members second',
+    ),
+)
+provisioning_transition = lab_mode[
+    lab_mode.index('configure_windows_nat_provisioning()'):
+    lab_mode.index('configure_windows_nat_exercise()')
+]
+if provisioning_transition.index('for vm in "${DOMAIN_CONTROLLERS[@]}"') > provisioning_transition.index('for vm in "${DOMAIN_MEMBERS[@]}"'):
+    fail('provisioning mode must restart/validate domain controllers before dependent members')
+
+exercise_transition = lab_mode[
+    lab_mode.index('configure_windows_nat_exercise()'):
+    lab_mode.index('verify_persistent_state()')
+]
+if exercise_transition.index('for vm in "${DOMAIN_MEMBERS[@]}"') > exercise_transition.index('for vm in "${EXERCISE_DOMAIN_CONTROLLERS[@]}"'):
+    fail('exercise mode must restart members before domain controllers')
+for token in (
+    'ensure_vm_nat_state "${vm}" FALSE disconnect',
+    'prove_isolated_guest_ready "${vm}" member',
+    'prove_isolated_guest_ready "${vm}" dc',
+):
+    if token not in exercise_transition:
+        fail(f'exercise mode missing post-reboot authenticated readiness contract: {token}')
+
+runtime_validator = Path('scripts/validate-network-segmentation-runtime.sh').read_text()
+if '${HOME}/.goad/.venv/bin/ansible-playbook' not in runtime_validator:
+    fail('network runtime validator does not detect the canonical GOAD Ansible virtualenv')
 
 nat_enable = Path('ansible/roles/settings/enable_nat_adapter/tasks/main.yml').read_text()
 require_tokens(
@@ -268,16 +452,69 @@ creation = next((i for i, n in enumerate(guest_loop.body)
                  and any(isinstance(t, ast.Name) and t.id == 'first_up' for t in n.targets)
                  and matches(n.value, "self.command.run_vagrant(['up', machine], self.path)")), -1)
 readiness = next((i for i, n in enumerate(guest_loop.body)
-                  if isinstance(n, ast.If) and matches(n.test, 'not self._ensure_vmware_tools(machine)')), -1)
+                  if isinstance(n, ast.Assign)
+                  and any(isinstance(t, ast.Name) and t.id == 'tools_ready' for t in n.targets)
+                  and matches(n.value, 'self._ensure_vmware_tools(machine)')), -1)
+recovery_probe = next((i for i, n in enumerate(guest_loop.body)
+                       if isinstance(n, ast.If) and matches(n.test, 'not tools_ready')), -1)
 dispatch = next((i for i, n in enumerate(guest_loop.body)
-                 if isinstance(n, ast.If) and matches(n.test, 'not first_up')), -1)
-if not 0 <= creation < readiness < dispatch:
-    fail('failed-up recovery must follow creation and Tools readiness independently')
+                 if isinstance(n, ast.If)
+                 and matches(n.test, 'not first_up or not tools_ready')), -1)
+if not 0 <= creation < readiness < recovery_probe < dispatch:
+    fail(
+        'Windows recovery must evaluate first-up result, strict Kingdoms readiness, '
+        'pre-provision recovery readiness, then recovery dispatch in that order'
+    )
+
+probe_block = guest_loop.body[recovery_probe]
+probe_assignment = next((n for n in probe_block.body
+                         if isinstance(n, ast.Assign)
+                         and any(isinstance(t, ast.Name) and t.id == 'recovery_ready'
+                                 for t in n.targets)
+                         and matches(
+                             n.value,
+                             'self._authenticated_guest_recovery_ready(machine)',
+                         )), None)
+if probe_assignment is None:
+    fail(
+        'missing authenticated pre-provision recovery probe for a guest that '
+        'has not reached strict Kingdoms readiness'
+    )
+probe_fail_closed = next((n for n in probe_block.body
+                          if isinstance(n, ast.If)
+                          and matches(n.test, 'not recovery_ready')), None)
+if probe_fail_closed is None or not any(
+        isinstance(n, ast.Return) and matches(n.value, 'False')
+        for n in probe_fail_closed.body
+):
+    fail('pre-provision recovery readiness must fail closed')
+
 recovery_guard = next((n for n in guest_loop.body[dispatch].body if isinstance(n, ast.If)
                        and matches(n.test, 'not self._recover_failed_windows_vagrant_up(machine)')), None)
 if recovery_guard is None or not any(isinstance(n, ast.Return) and matches(n.value, 'False')
                                      for n in recovery_guard.body):
-    fail('failed Vagrant recovery must stop installation even if Tools are healthy')
+    fail(
+        'failed first-up OR incomplete strict Kingdoms readiness must enter the '
+        'bounded recovery path and fail closed if recovery fails'
+    )
+
+recovery_method = methods.get('_recover_failed_windows_vagrant_up')
+if recovery_method is None:
+    fail('missing failed Windows bring-up recovery method')
+post_recovery_readiness = next((
+    n for n in ast.walk(recovery_method)
+    if isinstance(n, ast.If)
+    and matches(n.test, 'not self._ensure_vmware_tools(machine)')
+), None)
+if post_recovery_readiness is None or not any(
+        isinstance(n, ast.Return) and matches(n.value, 'False')
+        for n in post_recovery_readiness.body
+):
+    fail(
+        'recovery must re-prove strict Kingdoms readiness after --provision '
+        'before installation may continue'
+    )
+
 tools_override = methods.get('_ensure_vmware_tools')
 if tools_override is not None and any(
         isinstance(n, ast.Call) and matches(n, 'self._recover_failed_windows_vagrant_up(machine)')

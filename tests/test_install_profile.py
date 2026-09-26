@@ -241,10 +241,19 @@ class ToolsReportingTests(unittest.TestCase):
         self.assertIsNone(self.provider._tools_reporting_context)
 
     def test_healthy_reporting_does_not_restart_any_service(self):
+        self.provider._authenticated_guest_install_ready = Mock(return_value=True)
+        self.provider._vmx_path = Mock(return_value='/guest.vmx')
         self.provider._poll_guest_ip_bounded = Mock(return_value=True)
         self.provider._restart_tools_reporting = Mock()
-        self.provider.ensure_behavior = lambda: self.provider._wait_guest_ip('/guest.vmx', 1)
+
         self.assertTrue(self.provider._ensure_vmware_tools('GOAD-SRV02'))
+
+        self.provider._authenticated_guest_install_ready.assert_called_once_with(
+            'GOAD-SRV02'
+        )
+        self.provider._poll_guest_ip_bounded.assert_called_once_with(
+            '/guest.vmx', 10
+        )
         self.provider._restart_tools_reporting.assert_not_called()
 
     def test_guest_health_does_not_bypass_failed_vagrant_provisioning(self):
@@ -258,6 +267,134 @@ class ToolsReportingTests(unittest.TestCase):
         self.assertFalse(self.provider.install())
         self.provider._recover_failed_windows_vagrant_up.assert_called_once_with('GOAD-SRV02')
         self.process.run.assert_not_called()
+
+    def test_failed_first_up_can_recover_before_canonical_ip_exists(self):
+        self.provider.prepare_install = Mock(return_value=True)
+        self.provider._sync_goad_nomad_inventories = Mock(return_value=True)
+        self.provider._sync_goad_nomad_vagrantfile_compatibility = Mock(return_value=True)
+        self.provider._bring_up_router = Mock(return_value=True)
+        self.provider.command.run_vagrant = Mock(return_value=False)
+        self.provider._ensure_vmware_tools = Mock(return_value=False)
+        self.provider._authenticated_guest_recovery_ready = Mock(return_value=True)
+        self.provider._recover_failed_windows_vagrant_up = Mock(return_value=False)
+
+        self.assertFalse(self.provider.install())
+
+        self.provider._authenticated_guest_recovery_ready.assert_called_once_with('GOAD-SRV02')
+        self.provider._recover_failed_windows_vagrant_up.assert_called_once_with('GOAD-SRV02')
+
+    def test_failed_first_up_still_fails_closed_without_recovery_readiness(self):
+        self.provider.prepare_install = Mock(return_value=True)
+        self.provider._sync_goad_nomad_inventories = Mock(return_value=True)
+        self.provider._sync_goad_nomad_vagrantfile_compatibility = Mock(return_value=True)
+        self.provider._bring_up_router = Mock(return_value=True)
+        self.provider.command.run_vagrant = Mock(return_value=False)
+        self.provider._ensure_vmware_tools = Mock(return_value=False)
+        self.provider._authenticated_guest_recovery_ready = Mock(return_value=False)
+        self.provider._recover_failed_windows_vagrant_up = Mock()
+
+        self.assertFalse(self.provider.install())
+
+        self.provider._recover_failed_windows_vagrant_up.assert_not_called()
+
+    def test_resumed_partial_guest_recovers_even_when_vagrant_up_returns_success(self):
+        """A running APIPA guest must rerun provisioners instead of being trusted."""
+        self.provider.prepare_install = Mock(return_value=True)
+        self.provider._sync_goad_nomad_inventories = Mock(return_value=True)
+        self.provider._sync_goad_nomad_vagrantfile_compatibility = Mock(return_value=True)
+        self.provider._bring_up_router = Mock(return_value=True)
+        self.provider.command.run_vagrant = Mock(return_value=True)
+        self.provider._ensure_vmware_tools = Mock(return_value=False)
+        self.provider._authenticated_guest_recovery_ready = Mock(return_value=True)
+        self.provider._recover_failed_windows_vagrant_up = Mock(return_value=False)
+
+        self.assertFalse(self.provider.install())
+
+        self.provider._authenticated_guest_recovery_ready.assert_called_once_with(
+            'GOAD-SRV02'
+        )
+        self.provider._recover_failed_windows_vagrant_up.assert_called_once_with(
+            'GOAD-SRV02'
+        )
+
+    def test_preprovision_recovery_contract_matches_srv02_failure_state(self):
+        """Forwarded WinRM + VMware Tools may recover before the lab IP exists."""
+        self.provider._winrm_forwarded_port = Mock(return_value=2207)
+        self.provider._wait_winrm_ready = Mock(return_value=True)
+        self.session.run_ps.return_value = SimpleNamespace(
+            status_code=0,
+            std_out=b'GOAD_KINGDOMS_RECOVERY_READY',
+        )
+
+        self.assertTrue(
+            self.provider._authenticated_guest_recovery_ready('GOAD-SRV02')
+        )
+
+        script = self.session.run_ps.call_args.args[0]
+        self.assertIn('VMTools', script)
+        self.assertIn('vmtoolsd', script)
+        self.assertIn(r'C:\Program Files\VMware\VMware Tools\vmtoolsd.exe', script)
+        self.assertNotIn('Get-NetIPAddress', script)
+        self.assertNotIn('10.4.10.22', script)
+        self.provider._wait_winrm_ready.assert_called_once_with(2207, 60)
+
+    def test_preprovision_recovery_does_not_weaken_final_kingdoms_ip_gate(self):
+        """The temporary recovery state must never count as installed readiness."""
+        self.provider.management_hosts = {'GOAD-SRV02': '10.4.10.22'}
+        self.provider._winrm_forwarded_port = Mock(return_value=2207)
+        self.provider._wait_winrm_ready = Mock(return_value=True)
+
+        self.session.run_ps.side_effect = [
+            SimpleNamespace(
+                status_code=0,
+                std_out=b'GOAD_KINGDOMS_RECOVERY_READY',
+            ),
+            SimpleNamespace(status_code=0, std_out=b''),
+        ]
+
+        self.assertTrue(
+            self.provider._authenticated_guest_recovery_ready('GOAD-SRV02')
+        )
+        self.assertFalse(
+            self.provider._authenticated_guest_install_ready('GOAD-SRV02')
+        )
+
+        recovery_script = self.session.run_ps.call_args_list[0].args[0]
+        final_script = self.session.run_ps.call_args_list[1].args[0]
+        self.assertNotIn('Get-NetIPAddress', recovery_script)
+        self.assertIn('Get-NetIPAddress', final_script)
+        self.assertIn('10.4.10.22', final_script)
+
+    def test_recovery_cycle_must_reach_strict_readiness_after_provision(self):
+        """A successful --provision command alone cannot complete recovery."""
+        self.provider._stop_failed_windows_guest_cleanly = Mock(return_value=True)
+        self.provider._run_vagrant_bounded = Mock(return_value=True)
+        self.provider._ensure_vmware_tools = Mock(return_value=False)
+
+        self.assertFalse(
+            self.provider._recover_failed_windows_vagrant_up('GOAD-SRV02')
+        )
+
+        self.provider._run_vagrant_bounded.assert_called_once_with(
+            ['up', 'GOAD-SRV02', '--provision'],
+            timeout=600,
+        )
+        self.provider._ensure_vmware_tools.assert_called_once_with('GOAD-SRV02')
+
+    def test_recovery_cycle_succeeds_only_after_strict_readiness_returns(self):
+        self.provider._stop_failed_windows_guest_cleanly = Mock(return_value=True)
+        self.provider._run_vagrant_bounded = Mock(return_value=True)
+        self.provider._ensure_vmware_tools = Mock(return_value=True)
+
+        self.assertTrue(
+            self.provider._recover_failed_windows_vagrant_up('GOAD-SRV02')
+        )
+
+        self.provider._run_vagrant_bounded.assert_called_once_with(
+            ['up', 'GOAD-SRV02', '--provision'],
+            timeout=600,
+        )
+        self.provider._ensure_vmware_tools.assert_called_once_with('GOAD-SRV02')
 
     def test_authenticated_guest_state_wins_over_broken_vmrun_reporting(self):
         """Healthy authenticated guest must survive stale VIX telemetry."""
@@ -301,6 +438,21 @@ class ToolsReportingTests(unittest.TestCase):
 
         self.assertFalse(self.provider._ensure_vmware_tools('GOAD-SRV02'))
         self.provider.ensure_behavior.assert_called_once()
+
+    def test_healthy_tools_and_nat_winrm_cannot_bypass_missing_lab_ip(self):
+        """Inherited Tools success is not final Kingdoms readiness."""
+        self.provider.management_hosts = {'GOAD-SRV02': '10.4.10.22'}
+        self.provider._winrm_forwarded_port = Mock(return_value=2207)
+        self.provider._wait_winrm_ready = Mock(return_value=True)
+        self.session.run_ps.return_value = SimpleNamespace(
+            status_code=0,
+            std_out=b'',
+        )
+        self.provider.ensure_behavior = Mock(return_value=True)
+
+        self.assertFalse(self.provider._ensure_vmware_tools('GOAD-SRV02'))
+        self.provider.ensure_behavior.assert_called_once()
+        self.assertEqual(self.session.run_ps.call_count, 2)
 
     def test_non_goad_uses_inherited_readiness_without_repair_context(self):
         self.provider.lab_name = 'GOAD-Light'

@@ -1,0 +1,85 @@
+---
+- name: Read NORTH RBCD prerequisites without changing Active Directory
+  hosts: dc02
+  gather_facts: false
+  tasks:
+    - name: Inspect WS01 RBCD state and SELF write rights
+      ansible.windows.win_powershell:
+        script: |
+          $ErrorActionPreference = 'Stop'
+          $Ansible.Changed = $false
+          Import-Module ActiveDirectory
+
+          $target = Get-ADComputer -Identity 'WS01' -Properties ObjectSid,DistinguishedName,msDS-AllowedToActOnBehalfOfOtherIdentity
+          $root = Get-ADRootDSE
+          $schemaAttr = Get-ADObject -SearchBase $root.schemaNamingContext -LDAPFilter '(lDAPDisplayName=msDS-AllowedToActOnBehalfOfOtherIdentity)' -Properties schemaIDGUID
+          if ($null -eq $schemaAttr) { throw 'RBCD schema attribute not found' }
+
+          $rbcdGuid = New-Object Guid (,$schemaAttr.schemaIDGUID)
+          $acl = Get-Acl -Path ("AD:" + $target.DistinguishedName)
+          $selfSid = 'S-1-5-10'
+          $targetSid = $target.ObjectSid.Value
+
+          $matching = @()
+          foreach ($ace in $acl.Access) {
+              $sid = $null
+              try {
+                  $sid = $ace.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value
+              } catch {
+                  $sid = [string]$ace.IdentityReference
+              }
+
+              if ($sid -notin @($selfSid,$targetSid)) { continue }
+
+              $rights = [string]$ace.ActiveDirectoryRights
+              $objectType = [Guid]$ace.ObjectType
+              $allowsWrite = (
+                  $ace.AccessControlType -eq 'Allow' -and (
+                      $rights -match 'GenericAll' -or
+                      $rights -match 'GenericWrite' -or
+                      (
+                          $rights -match 'WriteProperty' -and
+                          ($objectType -eq [Guid]::Empty -or $objectType -eq $rbcdGuid)
+                      )
+                  )
+              )
+
+              $matching += [pscustomobject]@{
+                  Sid = $sid
+                  Rights = $rights
+                  ObjectType = $objectType
+                  Inherited = $ace.IsInherited
+                  AllowsRBCDWrite = $allowsWrite
+              }
+          }
+
+          $rbcd = $target.'msDS-AllowedToActOnBehalfOfOtherIdentity'
+          $rbcdPresent = $null -ne $rbcd -and $rbcd.Length -gt 0
+          $domain = Get-ADDomain
+          $maq = (Get-ADObject -Identity $domain.DistinguishedName -Properties ms-DS-MachineAccountQuota).'ms-DS-MachineAccountQuota'
+          $candidate = Get-ADComputer -LDAPFilter '(sAMAccountName=PHASE03RBCD$)' -ErrorAction SilentlyContinue
+
+          Write-Output "PHASE03_RBCD_TARGET=WS01$"
+          Write-Output "PHASE03_RBCD_TARGET_DN=$($target.DistinguishedName)"
+          Write-Output "PHASE03_RBCD_TARGET_SID=$targetSid"
+          Write-Output "PHASE03_RBCD_ATTRIBUTE_GUID=$rbcdGuid"
+          Write-Output "PHASE03_RBCD_EXISTING=$([bool]$rbcdPresent)"
+          Write-Output "PHASE03_RBCD_MAQ=$maq"
+          Write-Output "PHASE03_RBCD_CANDIDATE_EXISTS=$([bool]($null -ne $candidate))"
+
+          if ($matching.Count -eq 0) {
+              Write-Output 'PHASE03_RBCD_SELF_ACE=NONE'
+          } else {
+              foreach ($entry in $matching) {
+                  Write-Output ("PHASE03_RBCD_SELF_ACE=SID=$($entry.Sid);RIGHTS=$($entry.Rights);OBJECTTYPE=$($entry.ObjectType);INHERITED=$($entry.Inherited);ALLOWS_RBCD_WRITE=$($entry.AllowsRBCDWrite)")
+              }
+          }
+
+          $canWrite = @($matching | Where-Object { $_.AllowsRBCDWrite }).Count -gt 0
+          Write-Output "PHASE03_RBCD_SELF_CAN_WRITE=$canWrite"
+      register: rbcd_preflight
+
+    - name: Emit RBCD preflight markers
+      ansible.builtin.debug:
+        msg: "{{ rbcd_preflight.output | default([]) }}"
+      changed_when: false

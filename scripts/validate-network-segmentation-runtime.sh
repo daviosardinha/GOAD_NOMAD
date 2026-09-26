@@ -7,6 +7,7 @@ readonly LOG_DIR="${GOAD_NOMAD_VALIDATION_LOG_DIR:-/tmp/goad-nomad-runtime-valid
 readonly INVENTORY_DATA="${ROOT}/ad/GOAD/data/inventory"
 readonly INVENTORY_PROVIDER="${ROOT}/ad/GOAD/providers/vmware/inventory"
 readonly ANSIBLE_CFG="${ROOT}/ansible/ansible.cfg"
+readonly RDP_BOT_MODE="${KINGDOMS_RDP_BOT_MODE:-legacy}"
 
 readonly WINDOWS_VMS=(GOAD-DC01 GOAD-DC02 GOAD-DC03 GOAD-SRV02 GOAD-SRV03 GOAD-WS01)
 
@@ -98,6 +99,7 @@ find_ansible_playbook() {
         "${ROOT}/venv/bin/ansible-playbook"
         "${deploy_root}/.venv/bin/ansible-playbook"
         "${deploy_root}/venv/bin/ansible-playbook"
+        "${HOME}/.goad/.venv/bin/ansible-playbook"
         "${HOME}/.local/bin/ansible-playbook"
     )
 
@@ -226,6 +228,11 @@ mkdir -p "${LOG_DIR}"
 
 section "1. PREREQUISITES / CLEAN-CHECKOUT IDENTITY"
 
+case "${RDP_BOT_MODE}" in
+    legacy|headless) ;;
+    *) fatal "KINGDOMS_RDP_BOT_MODE must be legacy or headless (got: ${RDP_BOT_MODE})" ;;
+esac
+
 [[ -n "${PROVIDER}" ]] || fatal "GOAD_PROVIDER_DIR is not set"
 [[ -d "${PROVIDER}" ]] || fatal "GOAD_PROVIDER_DIR does not exist: ${PROVIDER}"
 [[ -d "${ROOT}/.git" ]] || fatal "run this validator from a Git clone"
@@ -322,8 +329,8 @@ $rdpUsers = @(
     Get-LocalGroupMember -Group 'Remote Desktop Users' |
         ForEach-Object { $_.Name.ToLowerInvariant() }
 )
-if ($rdpUsers -notcontains 'north\rickon.stark') {
-    throw "Rickon missing from Remote Desktop Users: $($rdpUsers -join ',')"
+if ($rdpUsers.Count -ne 1 -or $rdpUsers -notcontains 'north\rickon.stark') {
+    throw "WS01 RDP group must contain only Rickon: $($rdpUsers -join ',')"
 }
 
 $admins = @(
@@ -467,22 +474,82 @@ printf '%s\n' "${out}" | tee "${LOG_DIR}/forest-trust.log"
 printf '%s\n' "${out}" | grep -Fq 'FOREST_TRUST=PASS' || fatal "forest trust validation failed"
 pass "SevenKingdoms/ESSOS forest trust"
 
-out="$(vagrant_ps GOAD-DC02 <<'PS'
+# ntlm_bot and responder_bot remain traffic-generator health requirements in
+# every runtime mode. connect_bot is validated by the RDP contract below
+# because its expected state differs between legacy and headless.
+#
+# A Scheduled Task sampled while it is executing can report State=Running and
+# LastTaskResult=0x00041301 (SCHED_S_TASK_RUNNING). That value is scheduler
+# state, not a completed task failure. Wait for each short-lived bot to settle,
+# then require the completed Ready/0 contract. Always persist probe output so a
+# real task or WinRM failure remains diagnosable.
+if ! out="$(vagrant_ps GOAD-DC02 <<'PS'
 $ErrorActionPreference = 'Stop'
-foreach ($name in 'connect_bot','ntlm_bot','responder_bot') {
-    $task = Get-ScheduledTask -TaskName $name
-    $info = Get-ScheduledTaskInfo -TaskName $name
-    if ($task.State.ToString() -notin @('Ready','Running')) { throw "$name state=$($task.State)" }
-    if ($info.LastTaskResult -ne 0) { throw "$name LastTaskResult=$($info.LastTaskResult)" }
-    Write-Output "$name=PASS"
+
+foreach ($name in 'ntlm_bot','responder_bot') {
+    try {
+        $deadline = (Get-Date).AddSeconds(30)
+
+        while ($true) {
+            $task = Get-ScheduledTask -TaskName $name -ErrorAction Stop
+            $info = Get-ScheduledTaskInfo -TaskName $name -ErrorAction Stop
+            $state = $task.State.ToString()
+            $last = [int64]$info.LastTaskResult
+            $lastHex = '0x{0:X8}' -f ([uint32]$info.LastTaskResult)
+
+            Write-Output (
+                "BOT_SAMPLE|NAME=$name|STATE=$state|LAST=$last|LAST_HEX=$lastHex" +
+                "|LAST_RUN=$($info.LastRunTime.ToString('o'))" +
+                "|NEXT_RUN=$($info.NextRunTime.ToString('o'))"
+            )
+
+            if ($state -eq 'Running') {
+                if ((Get-Date) -ge $deadline) {
+                    Write-Output "$name=FAIL|STATE=$state|LAST=$last|REASON=did-not-settle"
+                    break
+                }
+
+                Start-Sleep -Seconds 2
+                continue
+            }
+
+            if ($state -ne 'Ready') {
+                Write-Output "$name=FAIL|STATE=$state|LAST=$last|REASON=unexpected-state"
+                break
+            }
+
+            if ($last -ne 0) {
+                Write-Output "$name=FAIL|STATE=$state|LAST=$last|REASON=completed-result"
+                break
+            }
+
+            Write-Output "$name=PASS|STATE=Ready|LAST=0"
+            break
+        }
+    }
+    catch {
+        Write-Output "$name=FAIL|REASON=query-error|ERROR=$($_.Exception.Message)"
+    }
 }
 PS
-)"
+)"; then
+    printf '%s\n' "${out}" | tee "${LOG_DIR}/bots.log"
+    fatal "WINTERFELL traffic-generator bot query failed"
+fi
+
 printf '%s\n' "${out}" | tee "${LOG_DIR}/bots.log"
-for bot in connect_bot ntlm_bot responder_bot; do
-    printf '%s\n' "${out}" | grep -Fq "${bot}=PASS" || fatal "${bot} validation failed"
+for bot in ntlm_bot responder_bot; do
+    printf '%s\n' "${out}" | grep -Fq "${bot}=PASS|STATE=Ready|LAST=0" ||
+        fatal "${bot} validation failed; inspect ${LOG_DIR}/bots.log"
 done
-pass "GOAD bot health"
+pass "GOAD traffic-generator bot health"
+
+# Preserve the complete NORTH RDP policy contract. connect_bot has two explicit
+# accepted runtime contracts: legacy requires Ready/Running; headless requires
+# Disabled while preserving the Robb run-as SID for rollback integrity.
+bash "${ROOT}/scripts/validate-rdp-runtime.sh" --bot-mode "${RDP_BOT_MODE}" ||
+    fatal "NORTH RDP/connect_bot contract failed in ${RDP_BOT_MODE} mode"
+pass "NORTH RDP/connect_bot ${RDP_BOT_MODE} contract"
 
 out="$(vagrant_ps GOAD-SRV02 <<'PS'
 $ErrorActionPreference = 'Stop'

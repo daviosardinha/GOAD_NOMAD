@@ -1,0 +1,74 @@
+---
+- name: Deploy one controlled WebDAV shortcut to Rickon Desktop
+  hosts: ws01
+  gather_facts: false
+  tasks:
+    - name: Create reserved phase03-webdav shortcut with a remote WebDAV icon
+      ansible.windows.win_powershell:
+        script: |
+          $ErrorActionPreference = 'Stop'
+
+          $desktop = 'C:\Users\rickon.stark\Desktop'
+          $shortcutPath = Join-Path $desktop 'phase03-webdav.lnk'
+          $iconPath = '\\10.4.10.254@80\DavWWWRoot\kingdoms.ico'
+
+          if (-not (Test-Path -LiteralPath $desktop)) {
+              throw 'Rickon Desktop does not exist'
+          }
+
+          if (Test-Path -LiteralPath $shortcutPath) {
+              throw 'Reserved WebDAV shortcut already exists'
+          }
+
+          $shell = New-Object -ComObject WScript.Shell
+          $shortcut = $null
+
+          try {
+              $shortcut = $shell.CreateShortcut($shortcutPath)
+              $shortcut.TargetPath = "$env:SystemRoot\System32\notepad.exe"
+              $shortcut.WorkingDirectory = $desktop
+              $shortcut.Description = 'Kingdoms Phase 03 WebDAV interaction proof'
+              $shortcut.IconLocation = $iconPath
+              $shortcut.Save()
+          }
+          finally {
+              if ($null -ne $shortcut) {
+                  [void][Runtime.InteropServices.Marshal]::ReleaseComObject($shortcut)
+              }
+
+              if ($null -ne $shell) {
+                  [void][Runtime.InteropServices.Marshal]::ReleaseComObject($shell)
+              }
+          }
+
+          if (-not (Test-Path -LiteralPath $shortcutPath)) {
+              throw 'Shortcut creation did not produce the expected file'
+          }
+
+          Start-Sleep -Seconds 15
+
+          $hash = Get-FileHash -LiteralPath $shortcutPath -Algorithm SHA256
+          $webClient = Get-CimInstance Win32_Service -Filter "Name='WebClient'" -ErrorAction SilentlyContinue
+
+          $mrxState = 'UNKNOWN'
+          foreach ($line in @(& sc.exe query MRxDAV 2>&1)) {
+              if ([string]$line -match 'STATE\s*:\s*\d+\s+(\S+)') {
+                  $mrxState = $Matches[1]
+                  break
+              }
+          }
+
+          Write-Output 'PHASE03_WEBDAV_SHORTCUT_CREATED=True'
+          Write-Output "PHASE03_WEBDAV_SHORTCUT_PATH=$shortcutPath"
+          Write-Output "PHASE03_WEBDAV_SHORTCUT_SHA256=$($hash.Hash.ToLowerInvariant())"
+          Write-Output "PHASE03_WEBDAV_ICON_LOCATION=$iconPath"
+          Write-Output "PHASE03_WEBDAV_WEBCLIENT_AFTER=$($webClient.State)"
+          Write-Output "PHASE03_WEBDAV_MRXDAV_AFTER=$mrxState"
+
+          $Ansible.Changed = $true
+      register: webdav_apply
+
+    - name: Emit WebDAV shortcut mutation markers
+      ansible.builtin.debug:
+        msg: "{{ webdav_apply.output | default([]) }}"
+      changed_when: false

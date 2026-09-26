@@ -1,0 +1,54 @@
+---
+- name: Verify NORTH ADIDNS proof without changing DNS or Active Directory
+  hosts: dc02
+  gather_facts: false
+  tasks:
+    - name: Verify phase03-adidns record and backing dnsNode
+      ansible.windows.win_powershell:
+        script: |
+          $ErrorActionPreference = 'Stop'
+          $Ansible.Changed = $false
+
+          Import-Module ActiveDirectory
+          Import-Module DnsServer
+
+          $zoneName = 'north.sevenkingdoms.local'
+          $recordName = 'phase03-adidns'
+          $expectedIp = '10.4.10.254'
+          $root = Get-ADRootDSE
+
+          $records = @(Get-DnsServerResourceRecord -ZoneName $zoneName -Name $recordName -ErrorAction Stop)
+          $aRecords = @($records | Where-Object { $_.RecordType -eq 'A' })
+          $ips = @($aRecords | ForEach-Object { [string]$_.RecordData.IPv4Address })
+
+          $zoneObject = Get-ADObject -SearchBase "CN=MicrosoftDNS,DC=DomainDnsZones,$($root.defaultNamingContext)" -LDAPFilter "(&(objectClass=dnsZone)(name=$zoneName))" -Properties DistinguishedName
+          $node = Get-ADObject -SearchBase $zoneObject.DistinguishedName -SearchScope OneLevel -LDAPFilter "(&(objectClass=dnsNode)(name=$recordName))" -Properties DistinguishedName,dNSTombstoned -ErrorAction SilentlyContinue
+
+          $ownerSid = $null
+          if ($null -ne $node) {
+              $nodeAcl = Get-Acl -Path ("AD:" + $node.DistinguishedName)
+              try {
+                  $ownerSid = $nodeAcl.Owner.Translate([System.Security.Principal.SecurityIdentifier]).Value
+              } catch {
+                  $ownerSid = [string]$nodeAcl.Owner
+              }
+          }
+
+          Write-Output "PHASE03_ADIDNS_VERIFY_RECORD_COUNT=$($records.Count)"
+          Write-Output "PHASE03_ADIDNS_VERIFY_A_COUNT=$($aRecords.Count)"
+          Write-Output "PHASE03_ADIDNS_VERIFY_IPS=$($ips -join ',')"
+          Write-Output "PHASE03_ADIDNS_VERIFY_NODE_EXISTS=$([bool]($null -ne $node))"
+          Write-Output "PHASE03_ADIDNS_VERIFY_NODE_OWNER=$ownerSid"
+
+          $match = ($ips -contains $expectedIp) -and ($null -ne $node)
+          Write-Output "PHASE03_ADIDNS_VERIFY_MATCH=$match"
+
+          if (-not $match) {
+              throw 'Controlled ADIDNS record/node does not match expected proof state'
+          }
+      register: adidns_verify
+
+    - name: Emit ADIDNS verification markers
+      ansible.builtin.debug:
+        msg: "{{ adidns_verify.output | default([]) }}"
+      changed_when: false

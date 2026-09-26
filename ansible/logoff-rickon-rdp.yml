@@ -1,0 +1,35 @@
+---
+- name: Remove only Rickon's WS01 RDP sessions
+  hosts: ws01
+  gather_facts: false
+
+  tasks:
+    - name: Log off Rickon RDP sessions
+      ansible.windows.win_powershell:
+        script: |
+          $ErrorActionPreference = 'Stop'
+          $Ansible.Changed = $false
+          $lines = @(& quser.exe 2>$null)
+
+          foreach ($line in $lines) {
+              if ($line -notmatch '(?i)rickon\.stark') {
+                  continue
+              }
+
+              if ($line -match '\s+(?<id>\d+)\s+(Active|Disc|Disconnected)\s+') {
+                  $id = [int]$Matches['id']
+                  Write-Output "LOGOFF_RICKON_SESSION_ID=$id"
+                  & logoff.exe $id
+                  if ($LASTEXITCODE -ne 0) {
+                      throw "logoff.exe failed for Rickon session $id"
+                  }
+                  $Ansible.Changed = $true
+              }
+          }
+
+          Write-Output 'RICKON_LOGOFF_COMPLETE=True'
+      register: result
+
+    - name: Emit Rickon logoff evidence
+      ansible.builtin.debug:
+        var: result.output

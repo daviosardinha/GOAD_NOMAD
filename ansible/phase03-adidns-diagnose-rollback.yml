@@ -1,0 +1,94 @@
+---
+- name: Inspect NORTH ADIDNS rollback state without changing DNS or Active Directory
+  hosts: dc02
+  gather_facts: false
+  tasks:
+    - name: Inspect reserved record dnsNode tombstone state and relevant ACL entries
+      ansible.windows.win_powershell:
+        script: |
+          $ErrorActionPreference = 'Stop'
+          $Ansible.Changed = $false
+
+          Import-Module ActiveDirectory
+          Import-Module DnsServer
+
+          $zoneName = 'north.sevenkingdoms.local'
+          $recordName = 'phase03-adidns'
+          $root = Get-ADRootDSE
+
+          $currentIdentity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+          $currentSid = $currentIdentity.User.Value
+          $hodor = Get-ADUser -Identity 'hodor' -Properties ObjectSid
+          $hodorSid = $hodor.ObjectSid.Value
+
+          Write-Output 'PHASE03_ADIDNS_DIAG_BEGIN=True'
+          Write-Output "PHASE03_ADIDNS_DIAG_CURRENT_IDENTITY=$($currentIdentity.Name)"
+          Write-Output "PHASE03_ADIDNS_DIAG_CURRENT_SID=$currentSid"
+          Write-Output "PHASE03_ADIDNS_DIAG_HODOR_SID=$hodorSid"
+
+          $records = @()
+          try {
+              $records = @(Get-DnsServerResourceRecord -ZoneName $zoneName -Name $recordName -ErrorAction Stop)
+          }
+          catch {
+              $records = @()
+          }
+
+          Write-Output "PHASE03_ADIDNS_DIAG_RECORD_COUNT=$($records.Count)"
+
+          foreach ($record in $records) {
+              $data = $null
+              try { $data = [string]$record.RecordData.IPv4Address }
+              catch { $data = [string]$record.RecordData }
+              Write-Output ("PHASE03_ADIDNS_DIAG_RECORD=" + "TYPE=$($record.RecordType);" + "DATA=$data;" + "TIMESTAMP=$($record.Timestamp);" + "TTL=$($record.TimeToLive)")
+          }
+
+          $zoneObject = Get-ADObject -SearchBase "CN=MicrosoftDNS,DC=DomainDnsZones,$($root.defaultNamingContext)" -LDAPFilter "(&(objectClass=dnsZone)(name=$zoneName))" -Properties DistinguishedName
+          if ($null -eq $zoneObject) { throw 'NORTH dnsZone object not found' }
+
+          $node = Get-ADObject -SearchBase $zoneObject.DistinguishedName -SearchScope OneLevel -LDAPFilter "(&(objectClass=dnsNode)(name=$recordName))" -Properties DistinguishedName,dNSTombstoned -ErrorAction SilentlyContinue
+
+          if ($null -eq $node) {
+              Write-Output 'PHASE03_ADIDNS_DIAG_NODE_EXISTS=False'
+              Write-Output 'PHASE03_ADIDNS_DIAG_COMPLETE=True'
+              return
+          }
+
+          Write-Output 'PHASE03_ADIDNS_DIAG_NODE_EXISTS=True'
+          Write-Output "PHASE03_ADIDNS_DIAG_NODE_DN=$($node.DistinguishedName)"
+          Write-Output "PHASE03_ADIDNS_DIAG_NODE_TOMBSTONED=$([bool]$node.dNSTombstoned)"
+
+          $acl = Get-Acl -Path ("AD:" + $node.DistinguishedName)
+          $ownerSid = $null
+          try {
+              $ownerSid = $acl.Owner.Translate([System.Security.Principal.SecurityIdentifier]).Value
+          }
+          catch {
+              $ownerSid = [string]$acl.Owner
+          }
+
+          Write-Output "PHASE03_ADIDNS_DIAG_NODE_OWNER=$($acl.Owner)"
+          Write-Output "PHASE03_ADIDNS_DIAG_NODE_OWNER_SID=$ownerSid"
+          Write-Output "PHASE03_ADIDNS_DIAG_ACL_PROTECTED=$($acl.AreAccessRulesProtected)"
+
+          foreach ($ace in $acl.Access) {
+              $sid = $null
+              try {
+                  $sid = $ace.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value
+              }
+              catch {
+                  $sid = [string]$ace.IdentityReference
+              }
+
+              if ($sid -notin @($hodorSid, $currentSid, 'S-1-5-18', 'S-1-5-32-544')) { continue }
+
+              Write-Output ("PHASE03_ADIDNS_DIAG_ACE=" + "IDENTITY=$($ace.IdentityReference);" + "SID=$sid;" + "TYPE=$($ace.AccessControlType);" + "RIGHTS=$($ace.ActiveDirectoryRights);" + "OBJECTTYPE=$($ace.ObjectType);" + "INHERITED=$($ace.IsInherited)")
+          }
+
+          Write-Output 'PHASE03_ADIDNS_DIAG_COMPLETE=True'
+      register: adidns_diag
+
+    - name: Emit ADIDNS rollback diagnostic markers
+      ansible.builtin.debug:
+        msg: "{{ adidns_diag.output | default([]) }}"
+      changed_when: false

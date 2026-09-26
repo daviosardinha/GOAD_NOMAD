@@ -68,10 +68,16 @@
 #- name: install nuget
 #  win_shell: install-packageprovider -name nuget -force
 
-- name: "Install XactiveDirectory"
+- name: Install ActiveDirectoryDSC from PSGallery
   win_psmodule:
     name: ActiveDirectoryDSC
+    repository: PSGallery
+    required_version: "6.7.1"
     state: present
+  register: active_directory_dsc_install
+  retries: 5
+  delay: 30
+  until: active_directory_dsc_install is succeeded
 
 - name: Ensure Administrator is part of Enterprise Admins
   win_domain_group_membership:

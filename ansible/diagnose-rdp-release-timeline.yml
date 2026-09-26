@@ -1,0 +1,172 @@
+---
+- name: Correlate the last recovered-user network authentication with the RDP event timeline
+  hosts: "{{ rdp_timeline_target }}"
+  gather_facts: false
+
+  tasks:
+    - name: Build read-only RDP event timeline around the last matching authentication
+      ansible.windows.win_powershell:
+        parameters:
+          ExpectedUser: "{{ rdp_timeline_user }}"
+          MinutesBack: "{{ rdp_timeline_minutes | default(60) }}"
+          ExpectedSource: "{{ rdp_timeline_source | default('10.4.10.254') }}"
+        script: |
+          param(
+              [Parameter(Mandatory=$true)][string]$ExpectedUser,
+              [Parameter(Mandatory=$true)][int]$MinutesBack,
+              [Parameter(Mandatory=$true)][string]$ExpectedSource
+          )
+
+          $ErrorActionPreference = 'Stop'
+          $Ansible.Changed = $false
+          $since = (Get-Date).AddMinutes(-1 * [math]::Abs($MinutesBack))
+
+          function Get-EventDataMap {
+              param([System.Diagnostics.Eventing.Reader.EventRecord]$Event)
+              [xml]$xml = $Event.ToXml()
+              $map = @{}
+              foreach ($node in @($xml.Event.EventData.Data)) {
+                  $map[[string]$node.Name] = [string]$node.'#text'
+              }
+              return $map
+          }
+
+          $security = @(
+              Get-WinEvent -FilterHashtable @{
+                  LogName   = 'Security'
+                  Id        = 4624,4625
+                  StartTime = $since
+              } -ErrorAction SilentlyContinue
+          )
+
+          $matching = @()
+          foreach ($event in $security) {
+              $data = Get-EventDataMap $event
+              if ($data.TargetUserName -ine $ExpectedUser) { continue }
+              if ($data.TargetDomainName -ine 'NORTH') { continue }
+              $source = [string]$data.IpAddress
+              if ($source -and $source -notin @('-', $ExpectedSource, "::ffff:$ExpectedSource")) {
+                  continue
+              }
+              $matching += [pscustomobject]@{
+                  Event = $event
+                  Data  = $data
+              }
+          }
+
+          if ($matching.Count -eq 0) {
+              throw "No recent Security 4624/4625 evidence for NORTH\$ExpectedUser from $ExpectedSource"
+          }
+
+          $anchor = ($matching | Sort-Object { $_.Event.TimeCreated } -Descending | Select-Object -First 1).Event.TimeCreated
+          $windowStart = $anchor.AddSeconds(-5)
+          $windowEnd = $anchor.AddSeconds(8)
+
+          Write-Output "RDP_TIMELINE_HOST=$env:COMPUTERNAME"
+          Write-Output "RDP_TIMELINE_USER=NORTH\$ExpectedUser"
+          Write-Output "RDP_TIMELINE_SOURCE=$ExpectedSource"
+          Write-Output "RDP_TIMELINE_ANCHOR=$($anchor.ToString('o'))"
+          Write-Output "RDP_TIMELINE_WINDOW_START=$($windowStart.ToString('o'))"
+          Write-Output "RDP_TIMELINE_WINDOW_END=$($windowEnd.ToString('o'))"
+
+          Write-Output '===== SECURITY DETAIL ====='
+          foreach ($entry in $matching | Where-Object {
+              $_.Event.TimeCreated -ge $windowStart -and $_.Event.TimeCreated -le $windowEnd
+          } | Sort-Object { $_.Event.TimeCreated }) {
+              $event = $entry.Event
+              $data = $entry.Data
+              Write-Output (
+                  'SECURITY|ID={0}|TIME={1:o}|LOGON_TYPE={2}|USER={3}\{4}|SOURCE={5}:{6}|LOGON_PROCESS={7}|AUTH_PACKAGE={8}|PROCESS={9}|STATUS={10}|SUBSTATUS={11}|REASON={12}' -f
+                  $event.Id,
+                  $event.TimeCreated,
+                  $data.LogonType,
+                  $data.TargetDomainName,
+                  $data.TargetUserName,
+                  $data.IpAddress,
+                  $data.IpPort,
+                  $data.LogonProcessName,
+                  $data.AuthenticationPackageName,
+                  $data.ProcessName,
+                  $data.Status,
+                  $data.SubStatus,
+                  $data.FailureReason
+              )
+          }
+
+          Write-Output '===== TERMINAL SERVICES TIMELINE ====='
+          foreach ($logName in @(
+              'Microsoft-Windows-TerminalServices-RemoteConnectionManager/Operational',
+              'Microsoft-Windows-TerminalServices-LocalSessionManager/Operational',
+              'Microsoft-Windows-RemoteDesktopServices-RdpCoreTS/Operational'
+          )) {
+              $short = if ($logName -match 'RemoteConnectionManager') {
+                  'RCM'
+              } elseif ($logName -match 'LocalSessionManager') {
+                  'LSM'
+              } else {
+                  'RDPCORE'
+              }
+
+              try {
+                  $logInfo = Get-WinEvent -ListLog $logName -ErrorAction Stop
+                  Write-Output "TIMELINE_LOG=$short|ENABLED=$($logInfo.IsEnabled)|RECORDS=$($logInfo.RecordCount)"
+
+                  $events = @(
+                      Get-WinEvent -FilterHashtable @{
+                          LogName   = $logName
+                          StartTime = $windowStart
+                          EndTime   = $windowEnd
+                      } -ErrorAction SilentlyContinue
+                  )
+
+                  foreach ($event in $events | Sort-Object TimeCreated) {
+                      $msg = ([string]$event.Message -replace "`r",' ' -replace "`n",' ')
+                      Write-Output (
+                          'TS|LOG={0}|ID={1}|LEVEL={2}|TIME={3:o}|MESSAGE={4}' -f
+                          $short,
+                          $event.Id,
+                          $event.LevelDisplayName,
+                          $event.TimeCreated,
+                          $msg
+                      )
+                  }
+
+                  Write-Output "TIMELINE_LOG=$short|WINDOW_COUNT=$($events.Count)"
+              }
+              catch {
+                  Write-Output "TIMELINE_LOG=$short|ERROR=$($_.Exception.Message)"
+              }
+          }
+
+          Write-Output '===== SYSTEM TIMELINE ====='
+          $systemEvents = @(
+              Get-WinEvent -FilterHashtable @{
+                  LogName   = 'System'
+                  StartTime = $windowStart
+                  EndTime   = $windowEnd
+              } -ErrorAction SilentlyContinue |
+              Where-Object {
+                  $_.ProviderName -match 'Terminal|Remote|TermDD|Schannel|Lsa|Security'
+              }
+          )
+          foreach ($event in $systemEvents | Sort-Object TimeCreated) {
+              $msg = ([string]$event.Message -replace "`r",' ' -replace "`n",' ')
+              Write-Output (
+                  'SYSTEM|PROVIDER={0}|ID={1}|LEVEL={2}|TIME={3:o}|MESSAGE={4}' -f
+                  $event.ProviderName,
+                  $event.Id,
+                  $event.LevelDisplayName,
+                  $event.TimeCreated,
+                  $msg
+              )
+          }
+          Write-Output "SYSTEM_TIMELINE_COUNT=$($systemEvents.Count)"
+
+          Write-Output 'RDP_TIMELINE_DIAGNOSTIC_COMPLETE=True'
+      register: timeline
+      changed_when: false
+
+    - name: Emit correlated RDP timeline
+      ansible.builtin.debug:
+        var: timeline.output
+      changed_when: false

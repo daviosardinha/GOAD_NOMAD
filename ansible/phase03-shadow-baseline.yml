@@ -1,0 +1,56 @@
+---
+- name: Capture exact NORTH Shadow Credentials baseline without changing Active Directory
+  hosts: dc02
+  gather_facts: false
+  tasks:
+    - name: Capture exact WS01 KeyCredentialLink state
+      ansible.windows.win_powershell:
+        script: |
+          $ErrorActionPreference = 'Stop'
+          $Ansible.Changed = $false
+          Import-Module ActiveDirectory
+
+          $target = Get-ADComputer -Identity 'WS01' -Properties DistinguishedName,ObjectSid,msDS-KeyCredentialLink
+          $values = @()
+          if ($null -ne $target.'msDS-KeyCredentialLink') {
+              foreach ($entry in @($target.'msDS-KeyCredentialLink')) {
+                  $values += [string]$entry
+              }
+          }
+
+          $Ansible.Result = [ordered]@{
+              Version = 1
+              Target = 'WS01$'
+              TargetDN = $target.DistinguishedName
+              TargetSID = $target.ObjectSid.Value
+              KCLPresent = [bool]($values.Count -gt 0)
+              KCLCount = $values.Count
+              KCLValues = $values
+              CapturedUTC = [DateTime]::UtcNow.ToString('o')
+          }
+      register: shadow_baseline
+
+    - name: Ensure local Kingdoms config directory exists
+      ansible.builtin.file:
+        path: "{{ lookup('env','HOME') }}/.config/kingdoms"
+        state: directory
+        mode: '0700'
+      delegate_to: localhost
+
+    - name: Save exact Shadow Credentials baseline locally
+      ansible.builtin.copy:
+        dest: "{{ lookup('env','HOME') }}/.config/kingdoms/phase03-shadow-baseline.json"
+        content: "{{ shadow_baseline.result | to_nice_json }}\n"
+        mode: '0600'
+      delegate_to: localhost
+
+    - name: Emit sanitized Shadow Credentials baseline markers
+      ansible.builtin.debug:
+        msg:
+          - "PHASE03_SHADOW_BASELINE_TARGET={{ shadow_baseline.result.Target }}"
+          - "PHASE03_SHADOW_BASELINE_DN={{ shadow_baseline.result.TargetDN }}"
+          - "PHASE03_SHADOW_BASELINE_SID={{ shadow_baseline.result.TargetSID }}"
+          - "PHASE03_SHADOW_BASELINE_KCL_PRESENT={{ shadow_baseline.result.KCLPresent }}"
+          - "PHASE03_SHADOW_BASELINE_KCL_COUNT={{ shadow_baseline.result.KCLCount }}"
+          - "PHASE03_SHADOW_BASELINE_FILE={{ lookup('env','HOME') }}/.config/kingdoms/phase03-shadow-baseline.json"
+      changed_when: false

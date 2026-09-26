@@ -1,0 +1,88 @@
+---
+- name: Probe hostname-backed WebDAV with WebClient explicitly started then restore baseline
+  hosts: ws01
+  gather_facts: false
+  tasks:
+    - name: Run transient WebClient probe and restore stopped baseline
+      ansible.windows.win_powershell:
+        script: |
+          $ErrorActionPreference = 'Stop'
+          $Ansible.Changed = $false
+
+          $webdavPath = '\\phase03-webdav.north.sevenkingdoms.local@80\DavWWWRoot\'
+          $webClientBefore = Get-Service -Name WebClient -ErrorAction Stop
+
+          $mrxBefore = 'UNKNOWN'
+          foreach ($line in @(& sc.exe query MRxDAV 2>&1)) {
+              if ([string]$line -match 'STATE\s*:\s*\d+\s+(\S+)') {
+                  $mrxBefore = $Matches[1]
+                  break
+              }
+          }
+
+          Write-Output "PHASE03_WEBDAV_SERVICE_PROBE_WEBCLIENT_BEFORE=$($webClientBefore.Status)"
+          Write-Output "PHASE03_WEBDAV_SERVICE_PROBE_MRXDAV_BEFORE=$mrxBefore"
+
+          $testPath = $false
+          $probeError = $null
+
+          try {
+              if ($webClientBefore.Status -ne 'Running') {
+                  Start-Service -Name WebClient -ErrorAction Stop
+                  Start-Sleep -Seconds 2
+              }
+
+              $webClientDuring = Get-Service -Name WebClient -ErrorAction Stop
+              Write-Output "PHASE03_WEBDAV_SERVICE_PROBE_WEBCLIENT_DURING=$($webClientDuring.Status)"
+
+              try {
+                  $testPath = Test-Path -LiteralPath $webdavPath -ErrorAction Stop
+              }
+              catch {
+                  $probeError = $_.Exception.Message
+              }
+
+              Write-Output "PHASE03_WEBDAV_SERVICE_PROBE_TESTPATH=$testPath"
+              if ($null -ne $probeError) {
+                  Write-Output "PHASE03_WEBDAV_SERVICE_PROBE_ERROR=$probeError"
+              }
+
+              Start-Sleep -Seconds 5
+          }
+          finally {
+              if ($webClientBefore.Status -eq 'Stopped') {
+                  Stop-Service -Name WebClient -Force -ErrorAction SilentlyContinue
+              }
+
+              if ($mrxBefore -ieq 'STOPPED') {
+                  [void](& sc.exe stop MRxDAV 2>&1)
+              }
+
+              Start-Sleep -Seconds 2
+          }
+
+          $webClientAfter = Get-Service -Name WebClient -ErrorAction Stop
+          $mrxAfter = 'UNKNOWN'
+          foreach ($line in @(& sc.exe query MRxDAV 2>&1)) {
+              if ([string]$line -match 'STATE\s*:\s*\d+\s+(\S+)') {
+                  $mrxAfter = $Matches[1]
+                  break
+              }
+          }
+
+          Write-Output "PHASE03_WEBDAV_SERVICE_PROBE_WEBCLIENT_AFTER=$($webClientAfter.Status)"
+          Write-Output "PHASE03_WEBDAV_SERVICE_PROBE_MRXDAV_AFTER=$mrxAfter"
+
+          $restored = ($webClientAfter.Status -eq $webClientBefore.Status) -and ($mrxAfter -ieq $mrxBefore)
+          Write-Output "PHASE03_WEBDAV_SERVICE_PROBE_BASELINE_RESTORED=$restored"
+          Write-Output 'PHASE03_WEBDAV_SERVICE_PROBE_COMPLETE=True'
+
+          if (-not $restored) {
+              throw 'Transient WebClient probe did not restore the original service state'
+          }
+      register: webdav_service_probe
+
+    - name: Emit transient WebClient probe markers
+      ansible.builtin.debug:
+        msg: "{{ webdav_service_probe.output | default([]) }}"
+      changed_when: false

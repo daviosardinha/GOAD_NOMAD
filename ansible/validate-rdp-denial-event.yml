@@ -1,0 +1,209 @@
+---
+- name: Validate one fresh RDP authorization denial from authoritative Windows events
+  hosts: "{{ rdp_event_target | default('dc02') }}"
+  gather_facts: false
+
+  tasks:
+    - name: Correlate authentication, source connection and RDP access denial
+      ansible.windows.win_powershell:
+        parameters:
+          ExpectedUser: "{{ rdp_event_user | default('hodor') }}"
+          SecurityAfterRecordId: "{{ rdp_security_after_record_id | default(0) }}"
+          RdpCoreAfterRecordId: "{{ rdp_rdpcore_after_record_id | default(0) }}"
+          ExpectedSource: "{{ rdp_event_source | default('10.4.10.254') }}"
+        script: |
+          param(
+              [Parameter(Mandatory=$true)][string]$ExpectedUser,
+              [Parameter(Mandatory=$true)][Int64]$SecurityAfterRecordId,
+              [Parameter(Mandatory=$true)][Int64]$RdpCoreAfterRecordId,
+              [Parameter(Mandatory=$true)][string]$ExpectedSource
+          )
+
+          $ErrorActionPreference = 'Stop'
+          $Ansible.Changed = $false
+
+          function Get-EventDataMap {
+              param([System.Diagnostics.Eventing.Reader.EventRecord]$Event)
+              [xml]$xml = $Event.ToXml()
+              $map = @{}
+              foreach ($node in @($xml.Event.EventData.Data)) {
+                  $map[[string]$node.Name] = [string]$node.'#text'
+              }
+              return $map
+          }
+
+          $deadline = (Get-Date).AddSeconds(20)
+          $securityEvidence = @()
+          $rdpEvidence = @()
+
+          do {
+              $securityEvents = @(
+                  Get-WinEvent -FilterHashtable @{
+                      LogName = 'Security'
+                      Id      = 4624,4625
+                  } -ErrorAction SilentlyContinue |
+                  Where-Object { [Int64]$_.RecordId -gt $SecurityAfterRecordId }
+              )
+
+              $matchingNetworkAuth = @()
+              $matchingInteractiveDenial = @()
+
+              foreach ($event in $securityEvents) {
+                  $data = Get-EventDataMap $event
+
+                  if ($data.TargetUserName -ine $ExpectedUser) { continue }
+                  if ($data.TargetDomainName -ine 'NORTH') { continue }
+
+                  $source = [string]$data.IpAddress
+                  if ($source -notin @($ExpectedSource, "::ffff:$ExpectedSource")) { continue }
+
+                  if ($event.Id -eq 4624 -and $data.LogonType -eq '3') {
+                      $matchingNetworkAuth += [pscustomobject]@{
+                          Event = $event
+                          Data  = $data
+                      }
+                      $securityEvidence += (
+                          'SECURITY=4624|RECORD_ID={0}|TIME={1:o}|USER=NORTH\{2}|LOGON_TYPE=3|SOURCE={3}|AUTH={4}' -f
+                          $event.RecordId,
+                          $event.TimeCreated.ToUniversalTime(),
+                          $ExpectedUser,
+                          $source,
+                          $data.AuthenticationPackageName
+                      )
+                  }
+
+                  if ($event.Id -eq 4625 -and $data.LogonType -eq '10') {
+                      $status = ([string]$data.Status).ToUpperInvariant()
+                      $subStatus = ([string]$data.SubStatus).ToUpperInvariant()
+                      $matchingInteractiveDenial += [pscustomobject]@{
+                          Event     = $event
+                          Status    = $status
+                          SubStatus = $subStatus
+                      }
+                      $securityEvidence += (
+                          'SECURITY=4625|RECORD_ID={0}|TIME={1:o}|USER=NORTH\{2}|LOGON_TYPE=10|SOURCE={3}|STATUS={4}|SUBSTATUS={5}' -f
+                          $event.RecordId,
+                          $event.TimeCreated.ToUniversalTime(),
+                          $ExpectedUser,
+                          $source,
+                          $status,
+                          $subStatus
+                      )
+                  }
+              }
+
+              $explicit4625 = @(
+                  $matchingInteractiveDenial | Where-Object {
+                      $_.Status -eq '0XC000015B' -or $_.SubStatus -eq '0XC000015B'
+                  }
+              ) | Select-Object -First 1
+
+              if ($explicit4625) {
+                  $securityEvidence | Select-Object -Unique | ForEach-Object { Write-Output $_ }
+                  Write-Output "RDP_DENIAL_EVENT=PASS|USER=NORTH\$ExpectedUser|HOST=$env:COMPUTERNAME|EVIDENCE=SECURITY_4625_LOGON_TYPE_NOT_GRANTED"
+                  exit 0
+              }
+
+              $rdpLogName = 'Microsoft-Windows-RemoteDesktopServices-RdpCoreTS/Operational'
+              $rdpEvents = @(
+                  Get-WinEvent -LogName $rdpLogName -ErrorAction SilentlyContinue |
+                  Where-Object { [Int64]$_.RecordId -gt $RdpCoreAfterRecordId }
+              )
+
+              $sourceConnections = @(
+                  $rdpEvents | Where-Object {
+                      $_.Id -eq 65 -and
+                      $_.Message -match ('(?i)new TCP connection from client ' + [regex]::Escape($ExpectedSource) + ':')
+                  }
+              )
+
+              $accessDenials = @(
+                  $rdpEvents | Where-Object {
+                      $_.Id -eq 227 -and
+                      $_.Message -match '(?i)User is not granted access to this connection'
+                  }
+              )
+
+              foreach ($event in $sourceConnections) {
+                  $rdpEvidence += (
+                      'RDPCORE=65|RECORD_ID={0}|TIME={1:o}|SOURCE={2}|MESSAGE={3}' -f
+                      $event.RecordId,
+                      $event.TimeCreated.ToUniversalTime(),
+                      $ExpectedSource,
+                      ([string]$event.Message -replace "`r",' ' -replace "`n",' ')
+                  )
+              }
+              foreach ($event in $accessDenials) {
+                  $rdpEvidence += (
+                      'RDPCORE=227|RECORD_ID={0}|TIME={1:o}|MESSAGE={2}' -f
+                      $event.RecordId,
+                      $event.TimeCreated.ToUniversalTime(),
+                      ([string]$event.Message -replace "`r",' ' -replace "`n",' ')
+                  )
+              }
+
+              foreach ($auth in $matchingNetworkAuth) {
+                  $authTime = $auth.Event.TimeCreated
+
+                  # The Security 4624 record already binds this fresh attempt to
+                  # the exact NORTH identity and attacker source address. RdpCoreTS
+                  # 227 carries the authoritative authorization decision but does
+                  # not include the username. Correlate the first fresh 227 emitted
+                  # immediately after that exact authentication. Event 65 is useful
+                  # supplemental transport evidence when present, but is not
+                  # required because some RDP/NLA failure paths do not emit it.
+                  $denialEvent = @(
+                      $accessDenials | Where-Object {
+                          $_.TimeCreated -ge $authTime -and
+                          $_.TimeCreated -le $authTime.AddSeconds(2)
+                      } | Sort-Object TimeCreated
+                  ) | Select-Object -First 1
+
+                  if ($denialEvent) {
+                      $sourceEvent = @(
+                          $sourceConnections | Where-Object {
+                              $_.TimeCreated -ge $authTime.AddSeconds(-2) -and
+                              $_.TimeCreated -le $authTime.AddSeconds(2)
+                          } | Sort-Object {
+                              [math]::Abs(($_.TimeCreated - $authTime).TotalMilliseconds)
+                          }
+                      ) | Select-Object -First 1
+
+                      $securityEvidence | Select-Object -Unique | ForEach-Object { Write-Output $_ }
+                      $rdpEvidence | Select-Object -Unique | ForEach-Object { Write-Output $_ }
+
+                      if ($sourceEvent) {
+                          Write-Output (
+                              'RDP_SOURCE_CONNECTION|RECORD_ID={0}|TIME={1:o}' -f
+                              $sourceEvent.RecordId,
+                              $sourceEvent.TimeCreated.ToUniversalTime()
+                          )
+                      }
+
+                      Write-Output (
+                          'RDP_DENIAL_CORRELATION|AUTH_RECORD_ID={0}|DENIAL_RECORD_ID={1}|AUTH_TIME={2:o}|DENIAL_TIME={3:o}|DELTA_MS={4:N3}' -f
+                          $auth.Event.RecordId,
+                          $denialEvent.RecordId,
+                          $authTime.ToUniversalTime(),
+                          $denialEvent.TimeCreated.ToUniversalTime(),
+                          ($denialEvent.TimeCreated - $authTime).TotalMilliseconds
+                      )
+                      Write-Output "RDP_DENIAL_EVENT=PASS|USER=NORTH\$ExpectedUser|HOST=$env:COMPUTERNAME|EVIDENCE=RDPCORE_ACCESS_NOT_GRANTED"
+                      exit 0
+                  }
+              }
+
+              Start-Sleep -Seconds 1
+          } while ((Get-Date) -lt $deadline)
+
+          $securityEvidence | Select-Object -Unique | ForEach-Object { Write-Output $_ }
+          $rdpEvidence | Select-Object -Unique | ForEach-Object { Write-Output $_ }
+
+          throw "No authoritative RDP authorization denial could be correlated for NORTH\$ExpectedUser from $ExpectedSource after Security RecordId $SecurityAfterRecordId / RdpCoreTS RecordId $RdpCoreAfterRecordId"
+      register: denial_event
+      changed_when: false
+
+    - name: Emit correlated RDP denial evidence
+      ansible.builtin.debug:
+        var: denial_event.output
+      changed_when: false
