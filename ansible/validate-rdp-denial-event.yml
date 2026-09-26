@@ -8,28 +8,19 @@
       ansible.windows.win_powershell:
         parameters:
           ExpectedUser: "{{ rdp_event_user }}"
-          SinceUtc: "{{ rdp_event_since_utc }}"
+          SecurityAfterRecordId: "{{ rdp_security_after_record_id }}"
+          RdpCoreAfterRecordId: "{{ rdp_rdpcore_after_record_id }}"
           ExpectedSource: "{{ rdp_event_source | default('10.4.10.254') }}"
         script: |
           param(
               [Parameter(Mandatory=$true)][string]$ExpectedUser,
-              [Parameter(Mandatory=$true)][string]$SinceUtc,
+              [Parameter(Mandatory=$true)][Int64]$SecurityAfterRecordId,
+              [Parameter(Mandatory=$true)][Int64]$RdpCoreAfterRecordId,
               [Parameter(Mandatory=$true)][string]$ExpectedSource
           )
 
           $ErrorActionPreference = 'Stop'
           $Ansible.Changed = $false
-
-          try {
-              $since = [DateTimeOffset]::Parse(
-                  $SinceUtc,
-                  [System.Globalization.CultureInfo]::InvariantCulture,
-                  [System.Globalization.DateTimeStyles]::AssumeUniversal
-              ).UtcDateTime
-          }
-          catch {
-              throw "Invalid SinceUtc value '$SinceUtc': $($_.Exception.Message)"
-          }
 
           function Get-EventDataMap {
               param([System.Diagnostics.Eventing.Reader.EventRecord]$Event)
@@ -48,10 +39,10 @@
           do {
               $securityEvents = @(
                   Get-WinEvent -FilterHashtable @{
-                      LogName   = 'Security'
-                      Id        = 4624,4625
-                      StartTime = $since
-                  } -ErrorAction SilentlyContinue
+                      LogName = 'Security'
+                      Id      = 4624,4625
+                  } -ErrorAction SilentlyContinue |
+                  Where-Object { [Int64]$_.RecordId -gt $SecurityAfterRecordId }
               )
 
               $matchingNetworkAuth = @()
@@ -72,7 +63,8 @@
                           Data  = $data
                       }
                       $securityEvidence += (
-                          'SECURITY=4624|TIME={0:o}|USER=NORTH\{1}|LOGON_TYPE=3|SOURCE={2}|AUTH={3}' -f
+                          'SECURITY=4624|RECORD_ID={0}|TIME={1:o}|USER=NORTH\{2}|LOGON_TYPE=3|SOURCE={3}|AUTH={4}' -f
+                          $event.RecordId,
                           $event.TimeCreated.ToUniversalTime(),
                           $ExpectedUser,
                           $source,
@@ -89,7 +81,8 @@
                           SubStatus = $subStatus
                       }
                       $securityEvidence += (
-                          'SECURITY=4625|TIME={0:o}|USER=NORTH\{1}|LOGON_TYPE=10|SOURCE={2}|STATUS={3}|SUBSTATUS={4}' -f
+                          'SECURITY=4625|RECORD_ID={0}|TIME={1:o}|USER=NORTH\{2}|LOGON_TYPE=10|SOURCE={3}|STATUS={4}|SUBSTATUS={5}' -f
+                          $event.RecordId,
                           $event.TimeCreated.ToUniversalTime(),
                           $ExpectedUser,
                           $source,
@@ -113,10 +106,8 @@
 
               $rdpLogName = 'Microsoft-Windows-RemoteDesktopServices-RdpCoreTS/Operational'
               $rdpEvents = @(
-                  Get-WinEvent -FilterHashtable @{
-                      LogName   = $rdpLogName
-                      StartTime = $since
-                  } -ErrorAction SilentlyContinue
+                  Get-WinEvent -LogName $rdpLogName -ErrorAction SilentlyContinue |
+                  Where-Object { [Int64]$_.RecordId -gt $RdpCoreAfterRecordId }
               )
 
               $sourceConnections = @(
@@ -135,7 +126,8 @@
 
               foreach ($event in $sourceConnections) {
                   $rdpEvidence += (
-                      'RDPCORE=65|TIME={0:o}|SOURCE={1}|MESSAGE={2}' -f
+                      'RDPCORE=65|RECORD_ID={0}|TIME={1:o}|SOURCE={2}|MESSAGE={3}' -f
+                      $event.RecordId,
                       $event.TimeCreated.ToUniversalTime(),
                       $ExpectedSource,
                       ([string]$event.Message -replace "`r",' ' -replace "`n",' ')
@@ -143,7 +135,8 @@
               }
               foreach ($event in $accessDenials) {
                   $rdpEvidence += (
-                      'RDPCORE=227|TIME={0:o}|MESSAGE={1}' -f
+                      'RDPCORE=227|RECORD_ID={0}|TIME={1:o}|MESSAGE={2}' -f
+                      $event.RecordId,
                       $event.TimeCreated.ToUniversalTime(),
                       ([string]$event.Message -replace "`r",' ' -replace "`n",' ')
                   )
@@ -171,7 +164,10 @@
                       $securityEvidence | Select-Object -Unique | ForEach-Object { Write-Output $_ }
                       $rdpEvidence | Select-Object -Unique | ForEach-Object { Write-Output $_ }
                       Write-Output (
-                          'RDP_DENIAL_CORRELATION|AUTH_TIME={0:o}|SOURCE_TIME={1:o}|DENIAL_TIME={2:o}' -f
+                          'RDP_DENIAL_CORRELATION|AUTH_RECORD_ID={0}|SOURCE_RECORD_ID={1}|DENIAL_RECORD_ID={2}|AUTH_TIME={3:o}|SOURCE_TIME={4:o}|DENIAL_TIME={5:o}' -f
+                          $auth.Event.RecordId,
+                          $sourceEvent.RecordId,
+                          $denialEvent.RecordId,
                           $authTime.ToUniversalTime(),
                           $sourceEvent.TimeCreated.ToUniversalTime(),
                           $denialEvent.TimeCreated.ToUniversalTime()
@@ -187,7 +183,7 @@
           $securityEvidence | Select-Object -Unique | ForEach-Object { Write-Output $_ }
           $rdpEvidence | Select-Object -Unique | ForEach-Object { Write-Output $_ }
 
-          throw "No authoritative RDP authorization denial could be correlated for NORTH\$ExpectedUser from $ExpectedSource since $SinceUtc"
+          throw "No authoritative RDP authorization denial could be correlated for NORTH\$ExpectedUser from $ExpectedSource after Security RecordId $SecurityAfterRecordId / RdpCoreTS RecordId $RdpCoreAfterRecordId"
       register: denial_event
       changed_when: false
 
