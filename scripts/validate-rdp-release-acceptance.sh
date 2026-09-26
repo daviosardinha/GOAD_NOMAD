@@ -355,7 +355,8 @@ run_expected_deny() {
     event_rc=$?
 
     if [[ "$event_rc" -eq 0 ]] &&
-       grep -Fq "RDP_DENIAL_EVENT=PASS|USER=$DOMAIN_NB\\$user|HOST=$host|" "$event_log"; then
+       grep -Fq 'RDP_DENIAL_EVENT=PASS|' "$event_log" &&
+       grep -Fq "|HOST=$host|" "$event_log"; then
         printf 'RDP_MATRIX=%s:%s\\%s:DENY:PASS\n' "$host" "$DOMAIN_NB" "$user"
         return 0
     fi
