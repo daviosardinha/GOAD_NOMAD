@@ -242,6 +242,13 @@ class RdpAccessContractTests(unittest.TestCase):
         self.assertIn('systemctl --user stop "$RICKON_SERVICE"', text)
         self.assertIn('systemctl --user start "$RICKON_SERVICE"', text)
         self.assertIn('validate-rickon-session.sh', text)
+        self.assertIn('ansible/validate-rdp-fresh-rickon.yml', text)
+        self.assertIn('ansible/logoff-rickon-rdp.yml', text)
+        self.assertIn('RELEASE PLAYBOOK SYNTAX GATE', text)
+        self.assertIn('--resume-latest', text)
+        self.assertIn('verify_denial_evidence_set', text)
+        self.assertNotIn('mktemp /tmp/kingdoms-rdp-release-probe', text)
+        self.assertNotIn("Add-Type -TypeDefinition @'", text)
         self.assertNotIn('xfreerdp3 /p:', text)
 
         script = ROOT / 'scripts/validate-rdp-release-acceptance.sh'
@@ -251,6 +258,20 @@ class RdpAccessContractTests(unittest.TestCase):
             check=True, capture_output=True, text=True)
         self.assertIn('fourteen fresh RDP attempts', result.stdout)
         self.assertIn('one fresh NORTH\\rickon.stark -> WS01 RDP desktop login', result.stdout)
+
+    def test_fresh_rickon_probe_is_committed_outside_yaml(self):
+        playbook = self.text('ansible/validate-rdp-fresh-rickon.yml')
+        probe = self.text('ansible/files/validate-rdp-fresh-rickon.ps1')
+        logoff = self.text('ansible/logoff-rickon-rdp.yml')
+
+        self.assertIn("lookup('ansible.builtin.file'", playbook)
+        self.assertIn('validate-rdp-fresh-rickon.ps1', playbook)
+        self.assertIn("Add-Type -TypeDefinition @'", probe)
+        self.assertIn("RDP_FRESH_SESSION=PASS", probe)
+        self.assertIn("RDP_FRESH_TOKEN_NONADMIN=PASS", probe)
+        self.assertIn("TOKEN_ADMIN_SID_PRESENT=$isAdmin", probe)
+        self.assertIn("RICKON_LOGOFF_COMPLETE=True", logoff)
+        self.assertNotIn('using System;', playbook)
 
     def test_release_denial_baseline_uses_event_record_ids(self):
         baseline = self.text('ansible/capture-rdp-release-event-baseline.yml')
