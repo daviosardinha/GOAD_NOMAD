@@ -1,6 +1,6 @@
 # Kingdoms — Phase 03 NORTH Scope and GOAD Part 4 Parity
 
-Status: runtime-validated working document
+Status: COMPLETE / runtime-validated / frozen for integration
 Branch: `kingdoms/phase03-overlay`
 Reference lab: `cebee3-goad-vmware`
 
@@ -61,13 +61,24 @@ Historical Drop The MIC/NTLMv1 material remains optional/conditional. NORTH has 
 - Raw secret-bearing runtime evidence stays outside Git.
 - Student screenshots must come from NORTH runtime proof, not historical ESSOS captures.
 
-## Next acceptance gate
+## Final acceptance
 
-1. Keep the neutral runtime established after HTTP -> LDAPS acceptance cleanup.
-2. Treat mitm6/WPAD and HTTP -> LDAPS permanentization as closed.
-3. Run the final Phase 03 regression suite.
-4. Run Phase 00–02, NORTH segmentation, RDP contract, MSSQL and traffic-generator regressions.
-5. Verify no residual AD mutations, temporary callback tasks, attack listeners or attack processes remain.
-6. Complete final screenshots and GOAD Part 4 parity review.
-7. Move into final Notion teaching material and Phase 03 handoff.
-8. Keep raw credentials, tickets, private keys and other secret-bearing evidence outside Git.
+The NORTH Phase 03 engineering baseline is closed.
+
+- Final Phase 03 orchestrator: **11 PASS / 0 FAIL**.
+- NORTH segmentation lifecycle: **29 PASS / 0 WARN / 0 FAIL**.
+- Final no-residual-state gate: **PASS**.
+- RDP fresh desktop-logon release matrix: **15/15 PASS**.
+- Permanent Rickon session restoration: **5 PASS / 0 FAIL**.
+- Final lab mode: `exercise`, with protected-zone isolation restored.
+
+The implementation must now remain frozen unless the course walkthrough exposes
+a concrete defect. Final screenshots, GOAD Part 4 parity review and Notion
+course writing are curriculum work, not blockers for the validated runtime
+baseline.
+
+DFSCoerce / MS-DFSNM and ShadowCoerce / MS-FSRVP remain deferred future
+candidates and are tracked in `KINGDOMS_FUTURE_FEATURES.md`.
+
+Raw credentials, tickets, private keys and other secret-bearing evidence remain
+outside Git.
