@@ -319,6 +319,19 @@ class RdpAccessContractTests(unittest.TestCase):
         script = ROOT / 'scripts/diagnose-rdp-release-timeline.sh'
         subprocess.run(['bash', '-n', str(script)], check=True)
 
+    def test_release_evidence_summary_is_read_only(self):
+        text = self.text('scripts/summarize-rdp-release-evidence.sh')
+        self.assertIn('RDP_RELEASE_EVIDENCE_SUMMARY_COMPLETE=True', text)
+        self.assertIn('RDP_DENIAL_EVENT=', text)
+        self.assertIn('RDP_DESKTOP_LOGON_MATRIX=', text)
+        for forbidden in ('xfreerdp', 'Set-AD', 'Add-LocalGroupMember',
+                          'Remove-LocalGroupMember', 'gpupdate', 'logoff.exe',
+                          'systemctl --user stop', 'systemctl --user start'):
+            self.assertNotIn(forbidden, text)
+
+        script = ROOT / 'scripts/summarize-rdp-release-evidence.sh'
+        subprocess.run(['bash', '-n', str(script)], check=True)
+
     def test_invalid_runtime_options_fail_closed(self):
         script = ROOT / 'scripts/validate-rdp-runtime.sh'
         for args in (['--host', 'dc01'], ['--bogus'], ['--source-only', '--phase01']):
