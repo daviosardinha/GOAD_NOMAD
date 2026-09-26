@@ -791,9 +791,13 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         self.assertIn("HTTP -> LDAPS permanentization is therefore closed", runtime)
         self.assertIn("PHASE03_HTTP_LDAPS_PROVEN=True", runtime)
         self.assertIn("PHASE03_HTTP_LDAPS_CALLBACK_CLEAN=True", runtime)
-        self.assertIn("final regression suite and no-residual-state validation", runtime)
+        self.assertIn("Phase 03 infrastructure/configuration acceptance is **COMPLETE**", runtime)
+        self.assertIn("PHASE03_FINAL_REGRESSION_COMPLETE=True", runtime)
+        self.assertIn("RDP_RELEASE_ACCEPTANCE_COMPLETE=True", runtime)
         self.assertIn("PROVEN / PERMANENTIZED", scope)
-        self.assertIn("Treat mitm6/WPAD and HTTP -> LDAPS permanentization as closed", scope)
+        self.assertIn("Status: COMPLETE / runtime-validated / frozen for integration", scope)
+        self.assertIn("Final Phase 03 orchestrator: **11 PASS / 0 FAIL**", scope)
+        self.assertIn("RDP fresh desktop-logon release matrix: **15/15 PASS**", scope)
         self.assertNotIn(
             "Promote proven mitm6/WPAD and HTTP->LDAPS flows",
             runtime,
