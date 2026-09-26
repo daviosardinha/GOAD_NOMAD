@@ -149,11 +149,14 @@ isolated NetExec workspace, then performs the fourteen expected RDP denials and
 one fresh Rickon -> WS01 allow. Before every denied attempt the gate records the
 current Security and RdpCoreTS EventRecordID values on the target. Denials are
 therefore classified only from events created by that specific attempt, avoiding
-clock/time-zone ambiguity and stale evidence. The gate correlates the exact NORTH
-identity/source with fresh Windows Security authentication evidence and the fresh
-target RdpCoreTS access-denied event ("User is not granted access to this
-connection"). A fresh Security 4625 type-10 STATUS_LOGON_TYPE_NOT_GRANTED event
-is also accepted when that host emits it.
+clock/time-zone ambiguity and stale evidence. The gate correlates a fresh Security
+4624 type-3 NTLM authentication for the exact NORTH identity and attacker source
+with the first fresh RdpCoreTS 227 access-denied event ("User is not granted
+access to this connection") emitted within two seconds of that authentication.
+RdpCoreTS Event 65 is retained as supplemental transport evidence when present,
+but it is not mandatory because the observed denied NLA path can omit that event.
+A fresh Security 4625 type-10 STATUS_LOGON_TYPE_NOT_GRANTED event is also accepted
+when that host emits it.
 For the positive case it temporarily stops the permanent Rickon supervisor,
 removes the pre-existing Windows session, opens a new desktop, inspects that
 fresh Explorer token for the Administrators SID, and restores/validates the
