@@ -5,8 +5,21 @@
 set -uo pipefail
 
 ROOT="${ROOT:-$HOME/Documents/GOAD_NOMAD}"
-INSTANCE="${1:-${INSTANCE:-cebee3-goad-vmware}}"
-PROVIDER="${PROVIDER:-$ROOT/workspace/$INSTANCE/provider}"
+INSTANCE="${1:-${INSTANCE:-}}"
+PROVIDER="${PROVIDER:-${GOAD_PROVIDER_DIR:-}}"
+
+if [[ -z "$PROVIDER" ]]; then
+  [[ -n "$INSTANCE" ]] || {
+    echo 'Usage: bash scripts/validate-phase03-final-regression.sh <instance-id>' >&2
+    echo '   or set INSTANCE / PROVIDER / GOAD_PROVIDER_DIR explicitly.' >&2
+    exit 2
+  }
+  PROVIDER="$ROOT/workspace/$INSTANCE/provider"
+fi
+
+if [[ -z "$INSTANCE" ]]; then
+  INSTANCE="$(basename "$(dirname "$PROVIDER")")"
+fi
 EXPECTED_BRANCH="${PHASE03_EXPECTED_BRANCH:-}"
 
 cd "$ROOT" || exit 1
