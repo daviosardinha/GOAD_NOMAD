@@ -2,7 +2,7 @@
 
 All notable project changes are documented in this file.
 
-## [Unreleased] — GOAD Kingdoms
+## [Unreleased] — Kingdoms
 
 ### Added
 - Complete NORTH Phase 03 poisoning-and-relay runtime with deterministic proof and rollback workflows for SMB relay, interactive/SOCKS relay reuse, MSSQL coercion, PrinterBug, PetitPotam, mitm6/WPAD, HTTP-to-LDAPS relay, RBCD, Shadow Credentials, ADIDNS and WebDAV/.lnk behavior.
@@ -24,7 +24,7 @@ All notable project changes are documented in this file.
 ## [v1.1.1] - 2026-09-04
 
 ### Release
-- Released **GOAD Kingdoms v1.1.1 — Lifecycle Reliability**.
+- Released **Kingdoms v1.1.1 — Lifecycle Reliability**.
 - Runtime validation was completed from the origin-synchronized implementation commit `e40f7d2e7fdbcdbe5de342787471ade4b4f54c9c`.
 - This maintenance release changes the segmented VMware start/stop control plane only; the v1.1.0 topology, WS01 foundation and Windows LPE curriculum are unchanged.
 
@@ -47,13 +47,13 @@ All notable project changes are documented in this file.
 ## [v1.1.0] - 2026-09-03
 
 ### Release
-- Released **GOAD Kingdoms v1.1.0 — NORTH Workstation & Windows LPE**.
+- Released **Kingdoms v1.1.0 — NORTH Workstation & Windows LPE**.
 - Final validated source: `6285838af4dca55704092e2a6c0cc6a131be798f`.
 - Complete clean-install runtime acceptance passed from origin-synchronized source and returned the range to deny-by-default `exercise` mode.
 
 ### Changed
-- Renamed the public project identity from **GOAD_NOMAD** to **GOAD Kingdoms** (`GOAD_Kingdoms` in repository/directory contexts).
-- Added a canonical GOAD Kingdoms milestone roadmap for development after v1.0.0.
+- Renamed the public project identity from **GOAD_NOMAD** to **Kingdoms** (`GOAD_Kingdoms` in repository/directory contexts).
+- Added a canonical Kingdoms milestone roadmap for development after v1.0.0.
 - Established Git as the mandatory source of truth for testable project code: changes must be committed and pushed before a test checkout is synchronized and validated.
 - Expanded the segmented Windows lifecycle, WinRM readiness gate, start/stop handling, provisioning-mode control and persistent NAT isolation from five guests to six.
 - GOAD instance inventories are refreshed from committed canonical source during VMware install, and existing M1 instance Vagrantfiles receive the committed WS01 definition automatically.
@@ -82,8 +82,8 @@ All notable project changes are documented in this file.
 - Recover VMware Tools installation on Windows guests when the installer resets WinRM before the controller can issue its normal reboot; the lifecycle now performs one controlled recovery reboot and validates Tools plus guest-IP health.
 - Guarantee restoration of exercise isolation when focused WS01 provider bring-up fails before Ansible provisioning starts.
 - Propagate focused WS01 task failures through the non-interactive CLI exit status so unattended wrappers cannot report a failed deployment as finished successfully.
-- Prevent duplicate segmented GOAD Kingdoms instances from producing VMware `padrConflict` / `can't set PADR` failures that leave apparently configured custom NICs without Layer-2 connectivity.
-- Prevent lifecycle commands from unexpectedly prompting for sudo mid-operation by requiring a non-interactive cached-sudo preflight at the GOAD Kingdoms provider boundary.
+- Prevent duplicate segmented Kingdoms instances from producing VMware `padrConflict` / `can't set PADR` failures that leave apparently configured custom NICs without Layer-2 connectivity.
+- Prevent lifecycle commands from unexpectedly prompting for sudo mid-operation by requiring a non-interactive cached-sudo preflight at the Kingdoms provider boundary.
 - Correct the Windows LPE framework source validator so catalog list parsing is line-bounded and cannot consume comments/profile entries as fake technique IDs.
 
 ### Security
@@ -146,6 +146,6 @@ The validated final runtime state is **exercise mode** with Windows provisioning
 - This release preserves the original GOAD Active Directory scenario while changing the VMware network architecture and lifecycle around it.
 - Non-GOAD labs/providers retain the upstream behavior unless explicitly handled by GOAD_NOMAD.
 
-[v1.1.1]: https://github.com/daviosardinha/GOAD_NOMAD/releases/tag/v1.1.1
-[v1.1.0]: https://github.com/daviosardinha/GOAD_NOMAD/releases/tag/v1.1.0
-[v1.0.0]: https://github.com/daviosardinha/GOAD_NOMAD/releases/tag/v1.0.0
+[v1.1.1]: https://github.com/daviosardinha/Kingdoms/releases/tag/v1.1.1
+[v1.1.0]: https://github.com/daviosardinha/Kingdoms/releases/tag/v1.1.0
+[v1.0.0]: https://github.com/daviosardinha/Kingdoms/releases/tag/v1.0.0
