@@ -73,6 +73,8 @@ The current engineering baseline was also reproduced from a completely fresh ins
 
 ## Milestones achieved
 
+The detailed engineering history is tracked in [**Kingdoms Milestones**](docs/KINGDOMS_MILESTONES.md), while future platform work is tracked in the [**Kingdoms Roadmap**](ROADMAP.md).
+
 ### Segmented Foundation — COMPLETE
 
 Kingdoms introduced a routed four-zone architecture and separated the management plane from the student-facing attack surface.
