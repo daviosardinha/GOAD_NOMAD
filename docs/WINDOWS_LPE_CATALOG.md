@@ -1,4 +1,4 @@
-# GOAD Kingdoms — Windows Local Privilege Escalation Catalog
+# Kingdoms — Windows Local Privilege Escalation Catalog
 
 This document tracks the deterministic Windows local-privilege-escalation curriculum for **GOAD-WS01**.
 
