@@ -2,8 +2,20 @@
 set -uo pipefail
 
 ROOT="${ROOT:-$HOME/Documents/GOAD_NOMAD}"
-INSTANCE="${INSTANCE:-6ebce2-goad-vmware}"
-PROVIDER="${PROVIDER:-$ROOT/workspace/$INSTANCE/provider}"
+INSTANCE="${INSTANCE:-}"
+PROVIDER="${PROVIDER:-${GOAD_PROVIDER_DIR:-}}"
+
+if [[ -z "$PROVIDER" ]]; then
+  if [[ -z "$INSTANCE" ]]; then
+    echo 'FAIL: set INSTANCE, PROVIDER, or GOAD_PROVIDER_DIR explicitly' >&2
+    exit 2
+  fi
+  PROVIDER="$ROOT/workspace/$INSTANCE/provider"
+fi
+
+if [[ -z "$INSTANCE" ]]; then
+  INSTANCE="$(basename "$(dirname "$PROVIDER")")"
+fi
 DOMAIN_FQDN="north.sevenkingdoms.local"
 DOMAIN_NB="NORTH"
 WINTERFELL="10.4.10.11"

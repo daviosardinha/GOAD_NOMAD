@@ -36,6 +36,7 @@ readonly REQUIRED=(
     ad/GOAD/providers/vmware/Vagrantfile
     ad/GOAD/providers/vmware/inventory
     scripts/lab-mode.sh
+    scripts/preflight-goad-kingdoms-fresh-install.sh
     scripts/validate-network-segmentation-source.sh
     scripts/validate-ws01-source.sh
     scripts/validate-windows-lpe-framework-source.sh
@@ -47,6 +48,9 @@ pass 'required GOAD Kingdoms clean-install source files'
 
 bash -n scripts/validate-goad-kingdoms-install-source.sh
 pass 'clean-install gate shell syntax'
+
+bash -n scripts/preflight-goad-kingdoms-fresh-install.sh
+pass 'fresh-install preflight shell syntax'
 
 python3 - <<'PY'
 import ast

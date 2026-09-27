@@ -885,6 +885,20 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         self.assertIn('tee "${LOG_DIR}/bots.log"', segmentation)
         self.assertIn("inspect ${LOG_DIR}/bots.log", segmentation)
 
+    def test_phase03_validators_do_not_default_to_historical_instances(self):
+        scripts = [
+            ROOT / "scripts" / "apply-phase03.sh",
+            ROOT / "scripts" / "validate-phase02-readiness.sh",
+            ROOT / "scripts" / "validate-phase03-readiness.sh",
+            ROOT / "scripts" / "validate-phase03-final-regression.sh",
+        ]
+        for script in scripts:
+            with self.subTest(script=script):
+                text = script.read_text()
+                self.assertNotIn("cebee3-goad-vmware", text)
+                self.assertNotIn("6ebce2-goad-vmware", text)
+                self.assertIn("GOAD_PROVIDER_DIR", text)
+
     def test_phase03_final_regression_orchestrates_closed_contracts(self):
         script = (ROOT / "scripts" / "validate-phase03-final-regression.sh").read_text()
 
