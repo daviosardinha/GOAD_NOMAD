@@ -8,11 +8,11 @@ Current deferred Phase 03 candidates include DFSCoerce / MS-DFSNM and
 ShadowCoerce / MS-FSRVP. They do not block closure of the current Phase 03
 baseline.
 
-# GOAD Kingdoms — Major Project Milestones
+# Kingdoms — Major Project Milestones
 
-This is the canonical engineering milestone tracker for **GOAD Kingdoms**.
+This is the canonical engineering milestone tracker for **Kingdoms**.
 
-The project was named **GOAD_NOMAD** through Milestone 1 and the `v1.0.0 — Segmented Foundation` release. Historical v1.0.0 release notes and the original Milestone 1 record keep that name intentionally. Development after v1.0.0 uses the GOAD Kingdoms identity.
+The project was named **GOAD_NOMAD** through Milestone 1 and the `v1.0.0 — Segmented Foundation` release. Historical v1.0.0 release notes and the original Milestone 1 record keep that name intentionally. Development after v1.0.0 uses the **Kingdoms** identity.
 
 A milestone is COMPLETE only after its implementation exists in committed Git source and its end-to-end validation gates pass from an origin-synchronized checkout. The mandatory development/test workflow is documented in [`DEVELOPMENT_WORKFLOW.md`](./DEVELOPMENT_WORKFLOW.md).
 
@@ -160,7 +160,7 @@ Validated foundation properties:
 
 ### Windows LPE architecture
 
-GOAD Kingdoms implements an Ansible-native, deterministic and resettable Windows LPE role rather than globally weakening the workstation.
+Kingdoms implements an Ansible-native, deterministic and resettable Windows LPE role rather than globally weakening the workstation.
 
 The validated deterministic core contains exactly **20 techniques**:
 
@@ -342,7 +342,7 @@ review, screenshot selection and the Notion teaching walkthrough.
 
 # Student learning path
 
-GOAD Kingdoms preserves the style of Mayfly's GOAD walkthrough while adding learning stages that the original flat/server-focused environment did not provide.
+Kingdoms preserves the style of Mayfly's GOAD walkthrough while adding learning stages that the original flat/server-focused environment did not provide.
 
 The intended curriculum is currently structured as follows:
 
@@ -584,4 +584,4 @@ The conceptual security-scope progression remains:
 Machine -> Domain -> Parent Domain -> Forest -> Foreign Forest
 ```
 
-The core project principle is that GOAD Kingdoms should continue teaching **what** GOAD teaches, while adding more realistic opportunities to learn **where**, **when**, and **why** those techniques are used in a segmented Windows/Active Directory environment.
+The core project principle is that Kingdoms should continue teaching **what** GOAD teaches, while adding more realistic opportunities to learn **where**, **when**, and **why** those techniques are used in a segmented Windows/Active Directory environment.
