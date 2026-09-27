@@ -52,7 +52,7 @@ All notable project changes are documented in this file.
 - Complete clean-install runtime acceptance passed from origin-synchronized source and returned the range to deny-by-default `exercise` mode.
 
 ### Changed
-- Renamed the public project identity from **GOAD_NOMAD** to **Kingdoms** (`GOAD_Kingdoms` in repository/directory contexts).
+- Renamed the public project identity to **Kingdoms**. Historical names remain only where release history or compatibility requires them.
 - Added a canonical Kingdoms milestone roadmap for development after v1.0.0.
 - Established Git as the mandatory source of truth for testable project code: changes must be committed and pushed before a test checkout is synchronized and validated.
 - Expanded the segmented Windows lifecycle, WinRM readiness gate, start/stop handling, provisioning-mode control and persistent NAT isolation from five guests to six.
