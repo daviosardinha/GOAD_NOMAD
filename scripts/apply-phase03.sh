@@ -4,8 +4,20 @@
 set -uo pipefail
 
 ROOT="${ROOT:-$HOME/Documents/GOAD_NOMAD}"
-INSTANCE="${INSTANCE:-cebee3-goad-vmware}"
-PROVIDER="${PROVIDER:-$ROOT/workspace/$INSTANCE/provider}"
+INSTANCE="${INSTANCE:-}"
+PROVIDER="${PROVIDER:-${GOAD_PROVIDER_DIR:-}}"
+
+if [[ -z "$PROVIDER" ]]; then
+  if [[ -z "$INSTANCE" ]]; then
+    echo 'FAIL: set INSTANCE, PROVIDER, or GOAD_PROVIDER_DIR explicitly' >&2
+    exit 2
+  fi
+  PROVIDER="$ROOT/workspace/$INSTANCE/provider"
+fi
+
+if [[ -z "$INSTANCE" ]]; then
+  INSTANCE="$(basename "$(dirname "$PROVIDER")")"
+fi
 PLAYBOOK="$ROOT/ansible/phase03.yml"
 DATA_INVENTORY="$ROOT/ad/GOAD/data/inventory"
 PROVIDER_INVENTORY="${KINGDOMS_PHASE03_INVENTORY:-$ROOT/ad/GOAD/providers/vmware/inventory}"
