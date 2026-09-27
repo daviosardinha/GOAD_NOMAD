@@ -1,6 +1,6 @@
 # Phase 01: unauthenticated enumeration
 
-This is intentionally vulnerable **GOAD Kingdoms lab provisioning**. The GOAD
+This is intentionally vulnerable **Kingdoms lab provisioning**. The upstream
 install sequence runs `phase01.yml` after ACLs, IIS content, security and existing
 vulnerabilities. Other scenarios do not receive this stage. Targeted replay uses
 only `dc02` and `srv02`; it does not gather facts from WS01 or other zones.

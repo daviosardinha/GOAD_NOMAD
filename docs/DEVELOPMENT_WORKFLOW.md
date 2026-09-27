@@ -1,6 +1,6 @@
-# GOAD Kingdoms Development & Test Workflow
+# Kingdoms Development & Test Workflow
 
-GOAD Kingdoms uses **Git as the only source of truth for testable project code**.
+Kingdoms uses **Git as the only source of truth for testable project code**.
 
 This policy exists to prevent a locally repaired lab or test checkout from drifting away from the code that other users will actually clone.
 
@@ -60,7 +60,7 @@ A detached HEAD is accepted only when an expected commit is supplied and matches
 Normal branch test:
 
 ```bash
-cd ~/Documents/GOAD_Kingdoms
+cd <path-to-Kingdoms-repository>
 git fetch origin
 git switch <branch>
 git pull --ff-only
@@ -70,7 +70,7 @@ bash scripts/verify-test-source.sh
 Exact-commit reproducibility test:
 
 ```bash
-cd ~/Documents/GOAD_Kingdoms
+cd <path-to-Kingdoms-repository>
 git fetch origin
 git checkout --detach <commit-sha>
 bash scripts/verify-test-source.sh <commit-sha>
@@ -102,6 +102,6 @@ A milestone cannot be closed from a dirty checkout or from a test machine contai
 
 ## Rename compatibility
 
-The public project name is **GOAD Kingdoms** (`GOAD_Kingdoms` in repository/directory contexts).
+The public project name is **Kingdoms**. Historical/internal compatibility identifiers are not part of the public brand.
 
 Milestone 1 shipped as GOAD_NOMAD v1.0.0. Historical release notes remain unchanged. Some internal Python/module/environment identifiers may temporarily retain `nomad` names for compatibility while they are migrated separately with regression testing.
