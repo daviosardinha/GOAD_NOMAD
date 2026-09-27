@@ -1,6 +1,6 @@
-# GOAD Kingdoms Roadmap
+# Kingdoms Roadmap
 
-This roadmap tracks the work required to make future GOAD Kingdoms installations deterministic, recoverable and portable without destabilizing currently working deployments.
+This roadmap tracks the work required to make future Kingdoms installations deterministic, recoverable and portable without destabilizing currently working deployments.
 
 Baseline audited: `4ca0be89b2552c421942a1f1a1674752e569a903`.
 
@@ -10,7 +10,7 @@ Work must follow this order. A lower-priority platform expansion must not displa
 
 | Priority | Scope | Start condition |
 | --- | --- | --- |
-| **P0** | Current GOAD/VMware correctness and fail-closed isolation | Start immediately |
+| **P0** | Current Kingdoms VMware correctness and fail-closed isolation | Start immediately |
 | **P1** | Fresh-install bootstrap and dependency reliability | After P0 behavior is protected by regression tests |
 | **P2** | Automated validation and release gates | Develop alongside P0/P1; complete before provider expansion |
 | **P3** | Provider-neutral architecture and VirtualBox on Linux | Only after all P0 items and required P1/P2 gates are complete |
@@ -59,7 +59,7 @@ These findings from the full-project audit have priority over every new platform
 - [ ] Pin Python dependencies, Galaxy collections and roles to tested versions.
 - [ ] Produce a reproducible dependency lock and update process.
 - [ ] Move from EOL `ansible-core==2.18.0` to a tested supported release.
-- [ ] Test the selected Ansible release against every GOAD Kingdoms playbook.
+- [ ] Test the selected Ansible release against every Kingdoms playbook.
 - [ ] Define supported controller Python versions and reject unsupported combinations.
 - [ ] Pin and validate the Debian router box.
 - [ ] Monitor availability of all pinned Windows boxes.
@@ -97,7 +97,7 @@ First extract provider-neutral lifecycle contracts for network preparation, runt
 
 ## P5 — Windows host support
 
-Upstream GOAD supports Windows through WSL or native Python with a provisioning VM. GOAD Kingdoms needs an explicit Windows control-plane design rather than a direct port of Linux-only Bash and systemd behavior.
+Upstream GOAD supports Windows through WSL or native Python with a provisioning VM. Kingdoms needs an explicit Windows control-plane design rather than a direct port of Linux-only Bash and systemd behavior.
 
 Implementation starts only after the P0 reliability findings are closed and the relevant provider-neutral lifecycle is proven.
 
