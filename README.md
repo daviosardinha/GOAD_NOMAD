@@ -224,7 +224,7 @@ A successful install and a successful normal start both finish in **exercise mod
 Before creating a new range:
 
 ```bash
-cd "$HOME/Documents/GOAD_NOMAD"
+cd <path-to-kingdoms-repository>
 
 git switch main
 git pull --ff-only
@@ -271,19 +271,11 @@ mode status
 After a fresh build, validate the exact new provider explicitly:
 
 ```bash
-GOAD_PROVIDER_DIR="$HOME/Documents/GOAD_NOMAD/workspace/<INSTANCE_ID>/provider" \
+GOAD_PROVIDER_DIR="$PWD/workspace/<INSTANCE_ID>/provider" \
 bash scripts/validate-goad-kingdoms-clean-install-runtime.sh
 ```
 
-Successful acceptance ends with:
-
-```text
-[READY] GOAD Kingdoms clean-install runtime acceptance gate passed.
-Fresh installation reproduced segmentation + GOAD relationships + WS01 + all 20 LPE scenarios.
-Final state: exercise mode; WS01 full-lpe APPLIED / VULNERABLE.
-```
-
-The strings above are current compatibility/runtime markers emitted by the implementation.
+Successful acceptance confirms the segmented relationships, WS01 foundation, all 20 LPE scenarios and final exercise isolation against the newly created instance.
 
 ---
 
