@@ -260,15 +260,26 @@ class GoadKingdomsVmwareProvider(GoadNomadVmwareProvider):
                 check=False,
                 timeout=45,
             )
-        except (OSError, subprocess.TimeoutExpired) as exc:
+        except subprocess.TimeoutExpired:
+            # vmrun can block waiting for VMware Tools even after Windows has
+            # accepted the shutdown request. Do not turn a slow graceful stop
+            # into an immediate hard power cut: observe VMware power state for
+            # one bounded guest-shutdown grace window first.
+            Log.warning(
+                f'GOAD Kingdoms: VMware soft-stop host command timed out for {machine}; '
+                'the guest may still be shutting down, allowing up to 120s before hard fallback'
+            )
+        except OSError as exc:
             Log.warning(f'GOAD Kingdoms: VMware soft stop failed for {machine}: {exc}')
         else:
             detail = soft.stderr.strip() or soft.stdout.strip()
             if detail:
                 Log.warning(f'GOAD Kingdoms: VMware soft stop for {machine}: {detail}')
 
-        # Even a timed-out vmrun may have delivered the shutdown request.
-        if self._wait_machine_stopped(machine, 60):
+        # Even a timed-out vmrun may already have delivered the shutdown
+        # request. Give Windows enough time to finish service/domain shutdown
+        # before using the last-resort hard power-off.
+        if self._wait_machine_stopped(machine, 120):
             Log.success(f'GOAD Kingdoms: {machine} completed VMware soft shutdown')
             return True
         running = self._running_instance_vms()
