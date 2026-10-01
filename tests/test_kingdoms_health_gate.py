@@ -35,12 +35,15 @@ class KingdomsHealthGateTests(unittest.TestCase):
             "data: 0",
             "NT5DS",
             "w32tm.exe /config /update",
-            "Reload Windows Time configuration after peer rediscovery policy check",
+            "Reload Windows Time configuration when peer rediscovery policy changed",
         ):
             self.assertIn(token, role)
 
-        reload_task = role[role.index("Reload Windows Time configuration after peer rediscovery policy check"):]
-        self.assertNotIn("\n  when:", reload_task)
+        reload_task = role[role.index("Reload Windows Time configuration when peer rediscovery policy changed"):]
+        self.assertIn("\n  retries: 12", reload_task)
+        self.assertIn("\n  delay: 5", reload_task)
+        self.assertIn("\n  until: kingdoms_nt5ds_reload.rc == 0", reload_task)
+        self.assertIn("\n  when:", reload_task)
 
         for forbidden in (
             "Reset-ComputerMachinePassword",
