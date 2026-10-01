@@ -512,56 +512,77 @@ POWERSHELL
 )"
 
     repair_script="$(cat <<POWERSHELL
-\$ErrorActionPreference = 'Stop'
+\$ErrorActionPreference = 'Continue'
 
-\$savedPreference = \$ErrorActionPreference
-try {
-    \$ErrorActionPreference = 'Continue'
-    & w32tm.exe /config /syncfromflags:domhier /update | Out-Null
-    \$configRc = \$LASTEXITCODE
-}
-finally {
-    \$ErrorActionPreference = \$savedPreference
+# The normal readiness probe has already proved DNS, the machine secure
+# channel and domain-account translation. The remaining failure is W32Time
+# being stuck without a discovered NT5DS peer. Prime DC Locator specifically
+# for a TIMESERV-capable DC before resetting the W32Time discovery state.
+\$locator = @(& nltest.exe '/dsgetdc:${domain}' /timeserv /force 2>&1 | ForEach-Object { "\$_" })
+\$locatorRc = \$LASTEXITCODE
+if (\$locatorRc -ne 0) {
+    \$locatorSafe = ((\$locator -join ' ') -replace '[|\r\n]', ' ').Trim()
+    Write-Output "KINGDOMS_MEMBER_TIME_REPAIR_FAILED|stage=timeserv_locator|rc=\$locatorRc|detail=\$locatorSafe"
+    exit 0
 }
 
+& w32tm.exe /config /syncfromflags:domhier /update | Out-Null
+\$configRc = \$LASTEXITCODE
 if (\$configRc -ne 0) {
     Write-Output "KINGDOMS_MEMBER_TIME_REPAIR_FAILED|stage=config|rc=\$configRc"
-    exit 1
+    exit 0
 }
 
-Restart-Service W32Time -Force -ErrorAction Stop
+try {
+    Restart-Service W32Time -Force -ErrorAction Stop
+    \$service = Get-Service W32Time -ErrorAction Stop
+    \$service.WaitForStatus(
+        [System.ServiceProcess.ServiceControllerStatus]::Running,
+        [TimeSpan]::FromSeconds(10)
+    )
+}
+catch {
+    \$detail = ((\$_.Exception.Message -replace '[|\r\n]', ' ').Trim())
+    Write-Output "KINGDOMS_MEMBER_TIME_REPAIR_FAILED|stage=service|detail=\$detail"
+    exit 0
+}
 
+# W32Time can enter its peer-resolution backoff when NT5DS discovery fails
+# during early boot. Give the restarted service a moment, request an immediate
+# rediscovery without blocking the WinRM transport, then poll the authoritative
+# source. Re-issue rediscovery periodically while keeping the whole repair
+# bounded to roughly one minute.
+Start-Sleep -Seconds 2
+
+\$lastResyncRc = -1
+\$source = ''
+\$sourceRc = -1
 for (\$repairAttempt = 1; \$repairAttempt -le 12; \$repairAttempt++) {
-    \$savedPreference = \$ErrorActionPreference
-    try {
-        \$ErrorActionPreference = 'Continue'
-        & w32tm.exe /resync /rediscover | Out-Null
-        \$resyncRc = \$LASTEXITCODE
-        \$source = (& w32tm.exe /query /source 2>\$null | Out-String).Trim()
-        \$sourceRc = \$LASTEXITCODE
+    if (\$repairAttempt -eq 1 -or ((\$repairAttempt - 1) % 3) -eq 0) {
+        & w32tm.exe /resync /rediscover /nowait | Out-Null
+        \$lastResyncRc = \$LASTEXITCODE
     }
-    finally {
-        \$ErrorActionPreference = \$savedPreference
-    }
+
+    Start-Sleep -Seconds 5
+
+    \$source = (& w32tm.exe /query /source 2>\$null | Out-String).Trim()
+    \$sourceRc = \$LASTEXITCODE
 
     if (
-        \$resyncRc -eq 0 -and
         \$sourceRc -eq 0 -and
         \$source -and
         \$source -notmatch 'Local CMOS Clock'
     ) {
         \$sourceSafe = ((\$source -replace '[|\r\n]', ' ').Trim())
-        Write-Output "KINGDOMS_MEMBER_TIME_REPAIRED|source=\$sourceSafe"
+        Write-Output "KINGDOMS_MEMBER_TIME_REPAIRED|source=\$sourceSafe|attempt=\$repairAttempt"
         exit 0
     }
-
-    Start-Sleep -Seconds 5
 }
 
 \$sourceSafe = ((\$source -replace '[|\r\n]', ' ').Trim())
 if (-not \$sourceSafe) { \$sourceSafe = '<none>' }
-Write-Output "KINGDOMS_MEMBER_TIME_REPAIR_FAILED|stage=resync|source=\$sourceSafe"
-exit 1
+Write-Output "KINGDOMS_MEMBER_TIME_REPAIR_FAILED|stage=rediscover|resync_rc=\$lastResyncRc|source_rc=\$sourceRc|source=\$sourceSafe"
+exit 0
 POWERSHELL
 )"
 
