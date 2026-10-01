@@ -260,15 +260,26 @@ class GoadKingdomsVmwareProvider(GoadNomadVmwareProvider):
                 check=False,
                 timeout=45,
             )
-        except (OSError, subprocess.TimeoutExpired) as exc:
+        except subprocess.TimeoutExpired:
+            # vmrun can block waiting for VMware Tools even after Windows has
+            # accepted the shutdown request. Do not turn a slow graceful stop
+            # into an immediate hard power cut: observe VMware power state for
+            # one bounded guest-shutdown grace window first.
+            Log.warning(
+                f'GOAD Kingdoms: VMware soft-stop host command timed out for {machine}; '
+                'the guest may still be shutting down, allowing up to 120s before hard fallback'
+            )
+        except OSError as exc:
             Log.warning(f'GOAD Kingdoms: VMware soft stop failed for {machine}: {exc}')
         else:
             detail = soft.stderr.strip() or soft.stdout.strip()
             if detail:
                 Log.warning(f'GOAD Kingdoms: VMware soft stop for {machine}: {detail}')
 
-        # Even a timed-out vmrun may have delivered the shutdown request.
-        if self._wait_machine_stopped(machine, 60):
+        # Even a timed-out vmrun may already have delivered the shutdown
+        # request. Give Windows enough time to finish service/domain shutdown
+        # before using the last-resort hard power-off.
+        if self._wait_machine_stopped(machine, 120):
             Log.success(f'GOAD Kingdoms: {machine} completed VMware soft shutdown')
             return True
         running = self._running_instance_vms()
@@ -820,12 +831,153 @@ Write-Output 'GOAD_VMTOOLS_RESTARTED'
         )
         return True
 
-    def _start_existing_instance(self, vm_name=None):
-        """Power on an installed range without any Vagrant NAT communicator.
+    def _wait_installed_ad_ready(self, machine, host, timeout=300):
+        """Wait for the AD dependency contract required by a cold start.
 
-        Only temporarily open the existing routed management plane. The caller
-        restores exercise isolation in a finally block, including on failure.
-        Installation/repair remains an explicit, separate Vagrant operation.
+        WinRM alone is not sufficient for Active Directory guests. Domain
+        controllers must be advertising before dependent guests are allowed to
+        boot, and members must establish their secure Netlogon session and
+        authenticated domain-time source before startup is considered complete.
+        This is validation only: no trust, machine-password or W32Time state is
+        rewritten here.
+        """
+        contracts = {
+            'GOAD-DC01': {
+                'kind': 'dc',
+                'domain': 'sevenkingdoms.local',
+                'expected_source': None,
+            },
+            'GOAD-DC02': {
+                'kind': 'dc',
+                'domain': 'north.sevenkingdoms.local',
+                'expected_source': 'kingslanding.sevenkingdoms.local',
+            },
+            'GOAD-DC03': {
+                'kind': 'dc',
+                'domain': 'essos.local',
+                'expected_source': None,
+            },
+            'GOAD-SRV02': {
+                'kind': 'member',
+                'domain': 'north.sevenkingdoms.local',
+                'dc': 'winterfell.north.sevenkingdoms.local',
+            },
+            'GOAD-SRV03': {
+                'kind': 'member',
+                'domain': 'essos.local',
+                'dc': 'meereen.essos.local',
+            },
+            'GOAD-WS01': {
+                'kind': 'member',
+                'domain': 'north.sevenkingdoms.local',
+                'dc': 'winterfell.north.sevenkingdoms.local',
+            },
+        }
+        contract = contracts.get(machine)
+        if contract is None:
+            Log.error(f'GOAD Kingdoms: no installed-start AD contract for {machine}')
+            return False
+
+        if contract['kind'] == 'dc':
+            expected_source = contract.get('expected_source')
+            source_check = ''
+            if expected_source:
+                source_check = f"""
+$source = (& w32tm.exe /query /source 2>$null | Out-String).Trim().TrimEnd('.')
+if ($LASTEXITCODE -ne 0 -or $source -ine '{expected_source}') {{
+    throw "W32Time source is '$source', expected {expected_source}"
+}}
+"""
+            script = f"""
+$ErrorActionPreference = 'Stop'
+$Env:ADPS_LoadDefaultDrive = '0'
+
+foreach ($serviceName in @('NTDS','DNS','ADWS','Netlogon','Kdc','W32Time')) {{
+    $service = Get-Service -Name $serviceName -ErrorAction Stop
+    if ($service.Status -ne 'Running') {{
+        throw "$serviceName is $($service.Status)"
+    }}
+}}
+
+foreach ($shareName in @('SYSVOL','NETLOGON')) {{
+    if (-not (Get-SmbShare -Name $shareName -ErrorAction SilentlyContinue)) {{
+        throw "$shareName share is missing"
+    }}
+}}
+
+$generic = @(& nltest.exe '/dsgetdc:{contract['domain']}' /force 2>&1)
+if ($LASTEXITCODE -ne 0) {{
+    throw "DC Locator is not ready: $($generic -join ' ')"
+}}
+
+$timeserv = @(& nltest.exe '/dsgetdc:{contract['domain']}' /timeserv /force 2>&1)
+if ($LASTEXITCODE -ne 0) {{
+    throw "TIMESERV advertising is not ready: $($timeserv -join ' ')"
+}}
+
+{source_check}
+Write-Output 'KINGDOMS_INSTALLED_AD_READY'
+"""
+        else:
+            script = f"""
+$ErrorActionPreference = 'Stop'
+
+Resolve-DnsName '{contract['dc']}' -ErrorAction Stop | Out-Null
+
+$secure = Test-ComputerSecureChannel -Server '{contract['dc']}' -ErrorAction Stop
+if (-not $secure) {{
+    throw 'machine secure channel is not healthy'
+}}
+
+$sc = @(& nltest.exe '/sc_query:{contract['domain']}' 2>&1)
+if ($LASTEXITCODE -ne 0) {{
+    throw "Netlogon secure session is not ready: $($sc -join ' ')"
+}}
+
+$source = (& w32tm.exe /query /source 2>$null | Out-String).Trim().TrimEnd('.')
+if ($LASTEXITCODE -ne 0 -or $source -ine '{contract['dc']}') {{
+    throw "W32Time source is '$source', expected {contract['dc']}"
+}}
+
+Write-Output 'KINGDOMS_INSTALLED_AD_READY'
+"""
+
+        deadline = time.monotonic() + timeout
+        last_error = None
+        while time.monotonic() < deadline:
+            try:
+                result = self._lab_winrm_session(host).run_ps(script)
+                if (
+                    result.status_code == 0
+                    and b'KINGDOMS_INSTALLED_AD_READY' in result.std_out
+                ):
+                    Log.success(
+                        f'GOAD Kingdoms: {machine} AD dependency readiness proven'
+                    )
+                    return True
+                last_error = (
+                    result.std_err.decode(errors='replace').strip()
+                    or result.std_out.decode(errors='replace').strip()
+                    or f'PowerShell status {result.status_code}'
+                )
+            except Exception as exc:
+                last_error = exc
+            time.sleep(5)
+
+        suffix = f': {last_error}' if last_error else ''
+        Log.error(
+            f'GOAD Kingdoms: {machine} AD dependency readiness did not converge '
+            f'within {timeout}s{suffix}'
+        )
+        return False
+
+    def _start_existing_instance(self, vm_name=None):
+        """Power on an installed range in AD dependency order without Vagrant NAT.
+
+        Cold starts are deliberately serialized across directory dependencies:
+        KINGSLANDING must be ready before WINTERFELL, child/root DC readiness
+        must be proven before members are started, and every member must regain
+        its authenticated domain/time relationship before start succeeds.
         """
         if self.get_runtime_mode() not in ('exercise', 'provisioning'):
             Log.error('GOAD Kingdoms: no recorded installed mode; complete installation before using start')
@@ -833,6 +985,7 @@ Write-Output 'GOAD_VMTOOLS_RESTARTED'
         if vm_name is not None and vm_name not in self.goad_nomad_windows + ['GOAD-ROUTER']:
             Log.error(f'GOAD Kingdoms: unknown instance machine: {vm_name}')
             return False
+
         vmxs = {name: self._vmx_path(name) for name in self.goad_nomad_windows}
         if not all(vmxs.values()) or not self._vmx_path('GOAD-ROUTER'):
             Log.error('GOAD Kingdoms: installed VM files are missing; start will not recreate or provision guests')
@@ -846,48 +999,110 @@ Write-Output 'GOAD_VMTOOLS_RESTARTED'
 
         if vm_name == 'GOAD-ROUTER':
             return True
-        if vm_name is not None:
-            vmxs = {vm_name: vmxs[vm_name]}
 
-        # Use the router's management NIC to establish routes BEFORE checking
-        # protected-zone Windows addresses. Windows NAT settings are untouched.
+        # Explicit dependency closure for cold starts. DC02 depends on the
+        # forest-root PDC for time; NORTH members depend on DC02; SRV03 depends
+        # on the ESSOS DC. A single-guest start includes the same prerequisites.
+        dependencies = {
+            'GOAD-DC01': (),
+            'GOAD-DC02': ('GOAD-DC01',),
+            'GOAD-DC03': (),
+            'GOAD-SRV02': ('GOAD-DC01', 'GOAD-DC02'),
+            'GOAD-SRV03': ('GOAD-DC03',),
+            'GOAD-WS01': ('GOAD-DC01', 'GOAD-DC02'),
+        }
+        canonical_order = [
+            name for name in (
+                'GOAD-DC01',
+                'GOAD-DC02',
+                'GOAD-DC03',
+                'GOAD-SRV02',
+                'GOAD-WS01',
+                'GOAD-SRV03',
+            )
+            if name in vmxs
+        ]
+
+        if vm_name is None:
+            start_order = canonical_order
+        else:
+            required = set(dependencies.get(vm_name, ()))
+            required.add(vm_name)
+            start_order = [name for name in canonical_order if name in required]
+
+        # Use the router's management NIC to establish routes before checking
+        # protected-zone Windows addresses. Windows NAT settings remain untouched.
         if not self._apply_router_policy('provisioning'):
             return False
         if not self._enable_provisioning_routes():
             return False
+
         running = self._running_instance_vms()
         if running is None:
             return False
-        for machine, vmx in vmxs.items():
-            if machine in running:
-                continue
-            Log.info(f'GOAD Kingdoms: powering on {machine} locally (no Vagrant NAT discovery)')
-            try:
-                result = subprocess.run(
-                    ['vmrun', '-T', 'ws', 'start', vmx, 'nogui'],
-                    check=False, timeout=60,
-                )
-            except (OSError, subprocess.TimeoutExpired) as exc:
-                Log.error(f'GOAD Kingdoms: local power-on failed for {machine}: {exc}')
-                return False
-            if result.returncode != 0:
-                Log.error(f'GOAD Kingdoms: local power-on failed for {machine}')
-                return False
+        running = set(running)
 
-        # Reassert .254 after VMware has finished preparing all guest adapters.
-        if not self._enable_provisioning_routes():
-            return False
-        deadline = time.monotonic() + 600
-        for machine in vmxs:
+        # Keep one bounded budget for the complete dependency chain. Individual
+        # WinRM/AD gates are capped so one guest cannot consume the whole start.
+        deadline = time.monotonic() + 900
+
+        for machine in start_order:
+            vmx = vmxs[machine]
+            if machine not in running:
+                Log.info(
+                    f'GOAD Kingdoms: powering on {machine} after its AD dependencies '
+                    'are ready (no Vagrant NAT discovery)'
+                )
+                try:
+                    result = subprocess.run(
+                        ['vmrun', '-T', 'ws', 'start', vmx, 'nogui'],
+                        check=False, timeout=60,
+                    )
+                except (OSError, subprocess.TimeoutExpired) as exc:
+                    Log.error(f'GOAD Kingdoms: local power-on failed for {machine}: {exc}')
+                    return False
+                if result.returncode != 0:
+                    Log.error(f'GOAD Kingdoms: local power-on failed for {machine}')
+                    return False
+                running.add(machine)
+
+                # VMware may re-touch host vmnet interfaces while a guest is
+                # attached. Reassert the routed management plane before every
+                # dependency readiness check.
+                if not self._enable_provisioning_routes():
+                    return False
+
             host = self.management_hosts[machine]
             remaining = int(deadline - time.monotonic())
             if remaining <= 0:
-                Log.error('GOAD Kingdoms: installed range management readiness budget exhausted')
+                Log.error('GOAD Kingdoms: installed range dependency-readiness budget exhausted')
                 return False
+
             Log.info(f'GOAD Kingdoms: verifying {machine} directly at {host}:5986')
-            if not self._wait_lab_winrm_ready(machine, host, timeout=min(300, remaining)):
+            if not self._wait_lab_winrm_ready(
+                machine, host, timeout=min(300, remaining)
+            ):
                 return False
-        Log.success('GOAD Kingdoms: requested installed guests ready over local management; no NAT communicator used')
+
+            remaining = int(deadline - time.monotonic())
+            if remaining <= 0:
+                Log.error('GOAD Kingdoms: installed range AD-readiness budget exhausted')
+                return False
+
+            Log.info(f'GOAD Kingdoms: waiting for {machine} AD dependency readiness')
+            if not self._wait_installed_ad_ready(
+                machine, host, timeout=min(300, remaining)
+            ):
+                return False
+
+        # Final reassertion after the complete requested chain is attached.
+        if not self._enable_provisioning_routes():
+            return False
+
+        Log.success(
+            'GOAD Kingdoms: requested installed guests are ready in AD dependency '
+            'order over local management; no NAT communicator used'
+        )
         return True
 
     def _bring_up_router(self):

@@ -73,6 +73,60 @@ class LabModeAdReadinessTests(unittest.TestCase):
         ):
             self.assertIn(token, text)
 
+    def test_child_dc_time_hierarchy_is_explicit_and_repaired_before_members(self):
+        text = self.text
+
+        for token in (
+            'DC_TIME_PARENT_DOMAIN',
+            '[GOAD-DC02]="sevenkingdoms.local"',
+            'DC_TIME_PARENT_SERVER',
+            '[GOAD-DC02]="kingslanding.sevenkingdoms.local"',
+            'ensure_child_dc_time_ready()',
+            "nltest.exe '/dsgetdc:${parent_domain}' /timeserv /force",
+            "w32tm.exe /stripchart /computer:${parent_server}",
+            "w32tm.exe /config /syncfromflags:domhier /update",
+            "w32tm.exe /resync /rediscover /nowait",
+            "KINGDOMS_DC_TIME_REPAIRED",
+            "KINGDOMS_DC_TIME_REPAIR_FAILED",
+        ):
+            self.assertIn(token, text)
+
+        fn = text[text.index("wait_domain_controller_ready()"):
+                  text.index("wait_domain_member_ready()")]
+        self.assertIn('ensure_child_dc_time_ready "${vm}"', fn)
+
+    def test_recorded_exercise_preflights_child_time_before_member_isolation(self):
+        text = self.text
+        fn = text[text.index("enter_exercise_mode()"):
+                  text.index("enter_provisioning_mode()")]
+
+        self.assertIn("preflight_exercise_time_dependencies", fn)
+        self.assertLess(
+            fn.index("preflight_exercise_time_dependencies"),
+            fn.index("configure_windows_nat_exercise"),
+        )
+
+        dep = text[text.index("preflight_exercise_time_dependencies()"):
+                   text.index("configure_windows_nat_provisioning()")]
+        self.assertIn('prove_isolated_guest_ready "${vm}" dc', dep)
+        self.assertIn('DC_TIME_PARENT_DOMAIN', dep)
+
+    def test_child_dc_time_repair_is_bounded_and_never_rewrites_trust(self):
+        text = self.text
+        fn = text[text.index("ensure_child_dc_time_ready()"):
+                  text.index("wait_domain_controller_ready()")]
+
+        self.assertIn("repair_attempted == 0", fn)
+        self.assertIn("consecutive_source_failures >= 6", fn)
+        self.assertIn("syncAttempt -le 12", fn)
+
+        for forbidden in (
+            "Reset-ComputerMachinePassword",
+            "/sc_reset:",
+            "netdom resetpwd",
+        ):
+            self.assertNotIn(forbidden, fn)
+
     def test_member_readiness_proves_trust_account_lookup_and_domain_time(self):
         text = self.text
 
@@ -81,10 +135,119 @@ class LabModeAdReadinessTests(unittest.TestCase):
             "System.Security.Principal.NTAccount",
             "Translate([System.Security.Principal.SecurityIdentifier])",
             "w32tm.exe /query /source",
-            "Local CMOS Clock",
+            "expected=${dc}",
             "KINGDOMS_MEMBER_RUNTIME_READY",
         ):
             self.assertIn(token, text)
+
+    def test_member_readiness_emits_exact_failure_class(self):
+        text = self.text
+        fn = text[text.index("wait_domain_member_ready()"):
+                  text.index("preflight_domain_health()")]
+
+        for marker in (
+            "KINGDOMS_MEMBER_NOT_READY|reason=dns",
+            "KINGDOMS_MEMBER_NOT_READY|reason=secure_channel",
+            "KINGDOMS_MEMBER_NOT_READY|reason=account_translation",
+            "KINGDOMS_MEMBER_NOT_READY|reason=netlogon_session",
+            "KINGDOMS_MEMBER_NOT_READY|reason=time|source=",
+            "reason=transport",
+        ):
+            self.assertIn(marker, fn)
+
+        self.assertIn(
+            'did not regain domain identity readiness for ${domain} within 300s; ${last_state}',
+            fn,
+        )
+
+    def test_member_lifecycle_uses_one_bounded_time_only_repair(self):
+        text = self.text
+        fn = text[text.index("wait_domain_member_ready()"):
+                  text.index("preflight_domain_health()")]
+
+        for token in (
+            "consecutive_time_failures >= 6",
+            "time_repair_attempted == 0",
+            "w32tm.exe /config /syncfromflags:domhier /update",
+            "nltest.exe '/dsgetdc:${domain}' /timeserv /force",
+            "w32tm.exe /stripchart /computer:${dc}",
+            "nltest.exe '/sc_query:${domain}'",
+            "Restart-Service W32Time -Force",
+            "w32tm.exe /resync /rediscover /nowait",
+            "KINGDOMS_MEMBER_TIME_REPAIRED",
+            "KINGDOMS_MEMBER_TIME_REPAIR_FAILED",
+        ):
+            self.assertIn(token, fn)
+
+        # Normal lifecycle may recover W32Time only. Directory trust repair
+        # remains an explicit maintenance/provisioning operation.
+        for forbidden in (
+            "Reset-ComputerMachinePassword",
+            "/sc_reset:",
+            "netdom resetpwd",
+        ):
+            self.assertNotIn(forbidden, fn)
+
+    def test_time_repair_requires_identity_probe_to_reach_time_stage(self):
+        text = self.text
+        fn = text[text.index("wait_domain_member_ready()"):
+                  text.index("preflight_domain_health()")]
+
+        self.assertLess(
+            fn.index("Resolve-DnsName '${dc}'"),
+            fn.index("Test-ComputerSecureChannel -Server '${dc}'"),
+        )
+        self.assertLess(
+            fn.index("Test-ComputerSecureChannel -Server '${dc}'"),
+            fn.index("System.Security.Principal.NTAccount"),
+        )
+        self.assertLess(
+            fn.index("System.Security.Principal.NTAccount"),
+            fn.index("nltest.exe '/sc_query:${domain}'"),
+        )
+        self.assertLess(
+            fn.index("nltest.exe '/sc_query:${domain}'"),
+            fn.index("w32tm.exe /query /source"),
+        )
+        self.assertIn(
+            'if [[ "${last_state}" == reason=time\\|* ]]; then',
+            fn,
+        )
+
+    def test_member_time_recovery_requires_live_netlogon_session(self):
+        text = self.text
+        fn = text[text.index("wait_domain_member_ready()"):
+                  text.index("preflight_domain_health()")]
+
+        for token in (
+            "KINGDOMS_MEMBER_NOT_READY|reason=netlogon_session",
+            "KINGDOMS_MEMBER_TIME_REPAIR_FAILED|stage=netlogon_session",
+            "KINGDOMS_MEMBER_TIME_REPAIR_FAILED|stage=netlogon_session_lost",
+            "netlogon_session=ready",
+        ):
+            self.assertIn(token, fn)
+
+    def test_time_repair_failure_marker_is_not_hidden(self):
+        text = self.text
+        fn = text[text.index("wait_domain_member_ready()"):
+                  text.index("preflight_domain_health()")]
+
+        self.assertIn(
+            "KINGDOMS_MEMBER_TIME_(REPAIRED|REPAIR_FAILED)",
+            fn,
+        )
+        self.assertIn(
+            'elif [[ "${marker}" == KINGDOMS_MEMBER_TIME_REPAIR_FAILED\\|* ]]; then',
+            fn,
+        )
+        self.assertIn(
+            'bounded domain-time recovery failed: ${marker}',
+            fn,
+        )
+        self.assertNotIn(
+            "time-recovery command returned without a success marker",
+            fn,
+        )
 
 
 if __name__ == "__main__":

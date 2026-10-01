@@ -223,6 +223,68 @@ class TimeoutCleanupTests(unittest.TestCase):
         self.assertEqual(self.table.signals, [])
 
 
+class VMwareShutdownGraceTests(unittest.TestCase):
+    def setUp(self):
+        self.subprocess = SimpleNamespace(
+            run=Mock(),
+            PIPE=subprocess.PIPE,
+            TimeoutExpired=subprocess.TimeoutExpired,
+        )
+        self.log = Mock()
+        cls = provider_class(dict(
+            psutil=Mock(),
+            os=os,
+            time=time,
+            subprocess=self.subprocess,
+            Log=self.log,
+        ))
+        self.provider = cls()
+        self.provider._vmx_path = Mock(return_value='/tmp/GOAD-SRV02.vmx')
+        self.provider._running_instance_vms = Mock(return_value=['GOAD-SRV02'])
+
+    def test_soft_stop_timeout_gets_full_guest_grace_before_hard_fallback(self):
+        self.subprocess.run.side_effect = subprocess.TimeoutExpired(
+            cmd=['vmrun', 'stop'], timeout=45
+        )
+        self.provider._wait_machine_stopped = Mock(return_value=True)
+
+        self.assertTrue(self.provider._stop_machine_via_vmware('GOAD-SRV02'))
+
+        self.provider._wait_machine_stopped.assert_called_once_with(
+            'GOAD-SRV02', 120
+        )
+        self.assertEqual(self.subprocess.run.call_count, 1)
+        self.log.warning.assert_any_call(
+            'GOAD Kingdoms: VMware soft-stop host command timed out for '
+            'GOAD-SRV02; the guest may still be shutting down, allowing up to '
+            '120s before hard fallback'
+        )
+
+    def test_hard_stop_remains_last_resort_after_guest_grace_expires(self):
+        self.subprocess.run.side_effect = [
+            subprocess.TimeoutExpired(cmd=['vmrun', 'stop'], timeout=45),
+            SimpleNamespace(returncode=0, stderr='', stdout=''),
+        ]
+        self.provider._wait_machine_stopped = Mock(side_effect=[False, True])
+
+        self.assertTrue(self.provider._stop_machine_via_vmware('GOAD-SRV02'))
+
+        self.assertEqual(self.subprocess.run.call_count, 2)
+        hard_call = self.subprocess.run.call_args_list[1]
+        self.assertEqual(
+            hard_call.args[0],
+            ['vmrun', '-T', 'ws', 'stop', '/tmp/GOAD-SRV02.vmx', 'hard'],
+        )
+        self.assertEqual(
+            self.provider._wait_machine_stopped.call_args_list[0].args,
+            ('GOAD-SRV02', 120),
+        )
+        self.assertEqual(
+            self.provider._wait_machine_stopped.call_args_list[1].args,
+            ('GOAD-SRV02', 30),
+        )
+
+
 class LiveProcessCleanupTests(unittest.TestCase):
     def test_vm_monitor_in_inherited_group_survives_real_controller_cleanup(self):
         try:

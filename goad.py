@@ -67,8 +67,10 @@ class Goad(cmd.Cmd):
         self.do_create()
 
     def do_start(self, arg=''):
-        if self.lab_manager.get_current_instance_provider():
-            self.lab_manager.get_current_instance_provider().start()
+        provider = self.lab_manager.get_current_instance_provider()
+        if provider:
+            return bool(provider.start())
+        return False
 
     def do_start_vm(self, arg):
         if arg == '':
@@ -78,8 +80,10 @@ class Goad(cmd.Cmd):
             self.lab_manager.get_current_instance_provider().start_vm(arg)
 
     def do_stop(self, arg=''):
-        if self.lab_manager.get_current_instance_provider():
-            self.lab_manager.get_current_instance_provider().stop()
+        provider = self.lab_manager.get_current_instance_provider()
+        if provider:
+            return bool(provider.stop())
+        return False
 
     def do_stop_vm(self, arg):
         if arg == '':
@@ -100,16 +104,20 @@ class Goad(cmd.Cmd):
             self.lab_manager.get_current_instance_provider().destroy_vm(arg)
 
     def do_snapshot(self, arg=''):
-        self.do_stop()
-        if self.lab_manager.get_current_instance_provider():
-            self.lab_manager.get_current_instance_provider().snapshot()
-        self.do_start()
+        if not self.do_stop():
+            return False
+        provider = self.lab_manager.get_current_instance_provider()
+        if not provider or not provider.snapshot():
+            return False
+        return bool(self.do_start())
     
     def do_reset(self, arg=''):
-        self.do_stop()
-        if self.lab_manager.get_current_instance_provider():
-            self.lab_manager.get_current_instance_provider().reset()
-        self.do_start()
+        if not self.do_stop():
+            return False
+        provider = self.lab_manager.get_current_instance_provider()
+        if not provider or not provider.reset():
+            return False
+        return bool(self.do_start())
 
     def do_provide(self, arg=''):
         result = self.lab_manager.get_current_instance_provider().install()
