@@ -114,8 +114,9 @@ class LabModeAdReadinessTests(unittest.TestCase):
             "consecutive_time_failures >= 6",
             "time_repair_attempted == 0",
             "w32tm.exe /config /syncfromflags:domhier /update",
+            "nltest.exe '/dsgetdc:${domain}' /timeserv /force",
             "Restart-Service W32Time -Force",
-            "w32tm.exe /resync /rediscover",
+            "w32tm.exe /resync /rediscover /nowait",
             "KINGDOMS_MEMBER_TIME_REPAIRED",
             "KINGDOMS_MEMBER_TIME_REPAIR_FAILED",
         ):
