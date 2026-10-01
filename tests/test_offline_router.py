@@ -185,28 +185,74 @@ class InstalledWindows(unittest.TestCase):
         self.provider = Mock()
         self.provider.get_runtime_mode.return_value = 'exercise'
         self.provider.goad_nomad_windows = ['GOAD-DC01', 'GOAD-DC02']
-        self.provider.management_hosts = {'GOAD-DC01': '10.4.20.10', 'GOAD-DC02': '10.4.10.11'}
+        self.provider.management_hosts = {
+            'GOAD-DC01': '10.4.20.10',
+            'GOAD-DC02': '10.4.10.11',
+        }
         self.provider._vmx_path.side_effect = lambda name: f'/instance/{name}.vmx'
         self.provider._running_instance_vms.return_value = []
+        self.provider._wait_lab_winrm_ready.return_value = True
+        self.provider._wait_installed_ad_ready.return_value = True
 
-    def test_direct_power_and_inventory_winrm_only(self):
+    def test_direct_power_is_serialized_by_ad_readiness(self):
+        events = []
+
+        def run(command, **kwargs):
+            if command[:4] == ['vmrun', '-T', 'ws', 'start']:
+                events.append(('power', Path(command[4]).stem))
+            return subprocess.CompletedProcess([], 0)
+
+        def winrm(machine, host, timeout):
+            events.append(('winrm', machine))
+            return True
+
+        def ad_ready(machine, host, timeout):
+            events.append(('ad', machine))
+            return True
+
+        self.process.run.side_effect = run
+        self.provider._wait_lab_winrm_ready.side_effect = winrm
+        self.provider._wait_installed_ad_ready.side_effect = ad_ready
+
         self.assertTrue(self.method(self.provider))
-        self.assertEqual(self.process.run.call_count, 2)
-        for call in self.process.run.call_args_list:
-            self.assertEqual(call.args[0][:4], ['vmrun', '-T', 'ws', 'start'])
-        self.provider._wait_lab_winrm_ready.assert_any_call('GOAD-DC01', '10.4.20.10', timeout=300)
-        self.provider._wait_lab_winrm_ready.assert_any_call('GOAD-DC02', '10.4.10.11', timeout=300)
+        self.assertEqual(
+            events,
+            [
+                ('power', 'GOAD-DC01'),
+                ('winrm', 'GOAD-DC01'),
+                ('ad', 'GOAD-DC01'),
+                ('power', 'GOAD-DC02'),
+                ('winrm', 'GOAD-DC02'),
+                ('ad', 'GOAD-DC02'),
+            ],
+        )
         self.provider.command.run_vagrant.assert_not_called()
         self.provider._ensure_vmware_tools.assert_not_called()
-        calls = [c[0] for c in self.provider.mock_calls]
-        self.assertLess(calls.index('_apply_router_policy'), calls.index('_wait_lab_winrm_ready'))
-        self.assertEqual(self.provider._enable_provisioning_routes.call_count, 2)
+        self.assertGreaterEqual(self.provider._enable_provisioning_routes.call_count, 3)
 
-    def test_running_guest_is_skipped(self):
+    def test_parent_ad_failure_prevents_dependent_power_on(self):
+        self.provider._wait_installed_ad_ready.side_effect = [False]
+
+        self.assertFalse(self.method(self.provider))
+        self.assertEqual(self.process.run.call_count, 1)
+        self.assertIn('GOAD-DC01', self.process.run.call_args.args[0][4])
+        self.provider._wait_installed_ad_ready.assert_called_once()
+        self.assertFalse(
+            any('GOAD-DC02' in call.args[0][4] for call in self.process.run.call_args_list)
+        )
+
+    def test_running_dependency_is_still_validated_before_child_start(self):
         self.provider._running_instance_vms.return_value = ['GOAD-DC01']
+
         self.assertTrue(self.method(self.provider))
         self.assertEqual(self.process.run.call_count, 1)
         self.assertIn('GOAD-DC02', self.process.run.call_args.args[0][4])
+        self.provider._wait_lab_winrm_ready.assert_any_call(
+            'GOAD-DC01', '10.4.20.10', timeout=300
+        )
+        self.provider._wait_installed_ad_ready.assert_any_call(
+            'GOAD-DC01', '10.4.20.10', timeout=300
+        )
 
     def test_unknown_mode_cannot_reprovision(self):
         self.provider.get_runtime_mode.return_value = 'unknown'
@@ -230,37 +276,92 @@ class InstalledWindows(unittest.TestCase):
         self.assertFalse(self.method(self.provider))
         self.provider.command.run_vagrant.assert_not_called()
         self.provider._ensure_vmware_tools.assert_not_called()
+        self.provider._wait_installed_ad_ready.assert_not_called()
 
-    def test_total_readiness_budget(self):
-        self.clock.monotonic.side_effect = [0, 200, 601]
+    def test_total_dependency_readiness_budget(self):
+        self.clock.monotonic.side_effect = [0, 901]
         self.assertFalse(self.method(self.provider))
-        self.assertEqual(self.provider._wait_lab_winrm_ready.call_count, 1)
+        self.assertEqual(self.process.run.call_count, 1)
+        self.provider._wait_lab_winrm_ready.assert_not_called()
+        self.provider._wait_installed_ad_ready.assert_not_called()
 
-    def test_each_real_machine_can_be_selected_without_starting_other_windows(self):
+    def test_each_real_machine_start_includes_required_ad_dependencies(self):
         names = class_field('goad/provider/vagrant/vmware.py', 'goad_nomad_windows')
         hosts = class_field('goad/provider/vagrant/vmware_nomad.py', 'management_hosts')
+        expected = {
+            'GOAD-DC01': ['GOAD-DC01'],
+            'GOAD-DC02': ['GOAD-DC01', 'GOAD-DC02'],
+            'GOAD-DC03': ['GOAD-DC03'],
+            'GOAD-SRV02': ['GOAD-DC01', 'GOAD-DC02', 'GOAD-SRV02'],
+            'GOAD-SRV03': ['GOAD-DC03', 'GOAD-SRV03'],
+            'GOAD-WS01': ['GOAD-DC01', 'GOAD-DC02', 'GOAD-WS01'],
+            'GOAD-ROUTER': [],
+        }
+
         self.assertEqual(set(names), set(hosts))
         for selected in names + ['GOAD-ROUTER']:
             with self.subTest(selected=selected):
                 self.setUp()
                 self.provider.goad_nomad_windows = names
                 self.provider.management_hosts = hosts
+
                 self.assertTrue(self.method(self.provider, selected))
                 self.provider._bring_up_router.assert_called_once()
+
+                chain = expected[selected]
                 if selected == 'GOAD-ROUTER':
                     self.process.run.assert_not_called()
                     self.provider._wait_lab_winrm_ready.assert_not_called()
+                    self.provider._wait_installed_ad_ready.assert_not_called()
                     self.provider._apply_router_policy.assert_not_called()
                 else:
-                    self.process.run.assert_called_once()
-                    self.assertEqual(self.process.run.call_args.args[0][4], f'/instance/{selected}.vmx')
-                    self.provider._wait_lab_winrm_ready.assert_called_once_with(selected, hosts[selected], timeout=300)
+                    powered = [
+                        Path(call.args[0][4]).stem
+                        for call in self.process.run.call_args_list
+                    ]
+                    self.assertEqual(powered, chain)
+                    self.assertEqual(
+                        [call.args[0] for call in self.provider._wait_lab_winrm_ready.call_args_list],
+                        chain,
+                    )
+                    self.assertEqual(
+                        [call.args[0] for call in self.provider._wait_installed_ad_ready.call_args_list],
+                        chain,
+                    )
                 self.provider.command.run_vagrant.assert_not_called()
 
     def test_invalid_selection_has_no_side_effects(self):
         self.assertFalse(self.method(self.provider, 'OTHER-VM'))
         self.provider._bring_up_router.assert_not_called()
         self.process.run.assert_not_called()
+
+    def test_installed_ad_gate_is_validation_only(self):
+        text = (
+            ROOT / 'goad/provider/vagrant/vmware_kingdoms.py'
+        ).read_text(encoding='utf-8')
+        fn = text[
+            text.index('    def _wait_installed_ad_ready('):
+            text.index('    def _start_existing_instance(')
+        ]
+
+        for token in (
+            "nltest.exe '/dsgetdc:",
+            "nltest.exe '/sc_query:",
+            'Test-ComputerSecureChannel',
+            'w32tm.exe /query /source',
+            'KINGDOMS_INSTALLED_AD_READY',
+        ):
+            self.assertIn(token, fn)
+
+        for forbidden in (
+            'Reset-ComputerMachinePassword',
+            '/sc_reset:',
+            'netdom resetpwd',
+            'Restart-Service W32Time',
+            'w32tm.exe /config',
+            'Set-ItemProperty',
+        ):
+            self.assertNotIn(forbidden, fn)
 
 
 class StartIsolation(unittest.TestCase):
