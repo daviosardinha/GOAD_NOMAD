@@ -210,9 +210,9 @@ class LabModeAdReadinessTests(unittest.TestCase):
                 fn.index("Set-ItemProperty -Path \\$backoffPath -Name \\$backoffName -Value 1"),
                 fn.index("Restart-Service W32Time -Force"),
             )
-            self.assertLess(
+            self.assertGreater(
+                fn.rindex("Restore-KingdomsPeerBackoff"),
                 fn.index("Restart-Service W32Time -Force"),
-                fn.index("Restore-KingdomsPeerBackoff"),
             )
 
         self.assertIn("w32tm.exe /stripchart /computer:${dc}", member)
