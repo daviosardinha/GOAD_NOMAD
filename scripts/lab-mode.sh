@@ -444,7 +444,7 @@ if (\$parentLocatorRc -ne 0) {
 }
 
 # Prove UDP/123 reaches the expected forest-root PDC before changing W32Time.
-\$strip = @(& w32tm.exe /stripchart /computer:'${parent_server}' /samples:2 /dataonly 2>&1 | ForEach-Object { "\$_" })
+\$strip = @(& w32tm.exe /stripchart /computer:${parent_server} /samples:2 /dataonly 2>&1 | ForEach-Object { "\$_" })
 \$stripRc = \$LASTEXITCODE
 if (\$stripRc -ne 0) {
     \$detail = ((\$strip -join ' ') -replace '[|\r\n]', ' ').Trim()
