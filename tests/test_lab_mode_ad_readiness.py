@@ -73,6 +73,60 @@ class LabModeAdReadinessTests(unittest.TestCase):
         ):
             self.assertIn(token, text)
 
+    def test_child_dc_time_hierarchy_is_explicit_and_repaired_before_members(self):
+        text = self.text
+
+        for token in (
+            'DC_TIME_PARENT_DOMAIN',
+            '[GOAD-DC02]="sevenkingdoms.local"',
+            'DC_TIME_PARENT_SERVER',
+            '[GOAD-DC02]="kingslanding.sevenkingdoms.local"',
+            'ensure_child_dc_time_ready()',
+            "nltest.exe '/dsgetdc:${parent_domain}' /timeserv /force",
+            "w32tm.exe /stripchart /computer:'${parent_server}'",
+            "w32tm.exe /config /syncfromflags:domhier /update",
+            "w32tm.exe /resync /rediscover /nowait",
+            "KINGDOMS_DC_TIME_REPAIRED",
+            "KINGDOMS_DC_TIME_REPAIR_FAILED",
+        ):
+            self.assertIn(token, text)
+
+        fn = text[text.index("wait_domain_controller_ready()"):
+                  text.index("wait_domain_member_ready()")]
+        self.assertIn('ensure_child_dc_time_ready "${vm}"', fn)
+
+    def test_recorded_exercise_preflights_child_time_before_member_isolation(self):
+        text = self.text
+        fn = text[text.index("enter_exercise_mode()"):
+                  text.index("enter_provisioning_mode()")]
+
+        self.assertIn("preflight_exercise_time_dependencies", fn)
+        self.assertLess(
+            fn.index("preflight_exercise_time_dependencies"),
+            fn.index("configure_windows_nat_exercise"),
+        )
+
+        dep = text[text.index("preflight_exercise_time_dependencies()"):
+                   text.index("configure_windows_nat_provisioning()")]
+        self.assertIn('prove_isolated_guest_ready "${vm}" dc', dep)
+        self.assertIn('DC_TIME_PARENT_DOMAIN', dep)
+
+    def test_child_dc_time_repair_is_bounded_and_never_rewrites_trust(self):
+        text = self.text
+        fn = text[text.index("ensure_child_dc_time_ready()"):
+                  text.index("wait_domain_controller_ready()")]
+
+        self.assertIn("repair_attempted == 0", fn)
+        self.assertIn("consecutive_source_failures >= 6", fn)
+        self.assertIn("syncAttempt -le 18", fn)
+
+        for forbidden in (
+            "Reset-ComputerMachinePassword",
+            "/sc_reset:",
+            "netdom resetpwd",
+        ):
+            self.assertNotIn(forbidden, fn)
+
     def test_member_readiness_proves_trust_account_lookup_and_domain_time(self):
         text = self.text
 
