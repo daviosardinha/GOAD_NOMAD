@@ -362,6 +362,24 @@ vagrant_powershell_ready() {
     ) >/dev/null 2>&1
 }
 
+vagrant_powershell_capture() {
+    local vm="$1"
+    local script="$2"
+    local encoded
+
+    encoded="$(
+        printf '%s' "${script}" |
+            iconv -f UTF-8 -t UTF-16LE |
+            base64 -w0
+    )"
+
+    (
+        cd "${PROVIDER}"
+        timeout 90 vagrant winrm "${vm}" -c \
+            "powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encoded}"
+    ) 2>&1
+}
+
 wait_domain_controller_ready() {
     local vm="$1"
     local domain="${DC_DOMAIN[${vm}]}"
@@ -430,20 +448,46 @@ wait_domain_member_ready() {
     local dc="${MEMBER_DC[${vm}]}"
     local netbios="${MEMBER_NETBIOS[${vm}]}"
     local script
+    local repair_script
     local attempt
+    local output=""
+    local marker=""
+    local last_state="reason=transport"
+    local consecutive_time_failures=0
+    local time_repair_attempted=0
 
     script="$(cat <<POWERSHELL
 \$ErrorActionPreference = 'Stop'
 
-Resolve-DnsName '${dc}' -ErrorAction Stop | Out-Null
-
-\$healthy = Test-ComputerSecureChannel -Server '${dc}' -ErrorAction Stop
-if (-not \$healthy) {
-    throw 'computer secure channel is unhealthy'
+try {
+    Resolve-DnsName '${dc}' -ErrorAction Stop | Out-Null
+}
+catch {
+    Write-Output 'KINGDOMS_MEMBER_NOT_READY|reason=dns'
+    exit 0
 }
 
-\$account = New-Object System.Security.Principal.NTAccount('${netbios}', 'administrator')
-\$null = \$account.Translate([System.Security.Principal.SecurityIdentifier])
+try {
+    \$healthy = Test-ComputerSecureChannel -Server '${dc}' -ErrorAction Stop
+}
+catch {
+    Write-Output 'KINGDOMS_MEMBER_NOT_READY|reason=secure_channel'
+    exit 0
+}
+
+if (-not \$healthy) {
+    Write-Output 'KINGDOMS_MEMBER_NOT_READY|reason=secure_channel'
+    exit 0
+}
+
+try {
+    \$account = New-Object System.Security.Principal.NTAccount('${netbios}', 'administrator')
+    \$null = \$account.Translate([System.Security.Principal.SecurityIdentifier])
+}
+catch {
+    Write-Output 'KINGDOMS_MEMBER_NOT_READY|reason=account_translation'
+    exit 0
+}
 
 \$savedPreference = \$ErrorActionPreference
 try {
@@ -456,27 +500,140 @@ finally {
 }
 
 if (\$sourceRc -ne 0 -or -not \$source -or \$source -match 'Local CMOS Clock') {
-    throw "domain time is not ready: \$source"
+    \$sourceSafe = ((\$source -replace '[|\r\n]', ' ').Trim())
+    if (-not \$sourceSafe) { \$sourceSafe = '<none>' }
+    Write-Output "KINGDOMS_MEMBER_NOT_READY|reason=time|source=\$sourceSafe"
+    exit 0
 }
 
-Write-Output 'KINGDOMS_MEMBER_RUNTIME_READY'
+\$sourceSafe = ((\$source -replace '[|\r\n]', ' ').Trim())
+Write-Output "KINGDOMS_MEMBER_RUNTIME_READY|time=\$sourceSafe"
+POWERSHELL
+)"
+
+    repair_script="$(cat <<POWERSHELL
+\$ErrorActionPreference = 'Stop'
+
+\$savedPreference = \$ErrorActionPreference
+try {
+    \$ErrorActionPreference = 'Continue'
+    & w32tm.exe /config /syncfromflags:domhier /update | Out-Null
+    \$configRc = \$LASTEXITCODE
+}
+finally {
+    \$ErrorActionPreference = \$savedPreference
+}
+
+if (\$configRc -ne 0) {
+    Write-Output "KINGDOMS_MEMBER_TIME_REPAIR_FAILED|stage=config|rc=\$configRc"
+    exit 1
+}
+
+Restart-Service W32Time -Force -ErrorAction Stop
+
+for (\$repairAttempt = 1; \$repairAttempt -le 12; \$repairAttempt++) {
+    \$savedPreference = \$ErrorActionPreference
+    try {
+        \$ErrorActionPreference = 'Continue'
+        & w32tm.exe /resync /rediscover | Out-Null
+        \$resyncRc = \$LASTEXITCODE
+        \$source = (& w32tm.exe /query /source 2>\$null | Out-String).Trim()
+        \$sourceRc = \$LASTEXITCODE
+    }
+    finally {
+        \$ErrorActionPreference = \$savedPreference
+    }
+
+    if (
+        \$resyncRc -eq 0 -and
+        \$sourceRc -eq 0 -and
+        \$source -and
+        \$source -notmatch 'Local CMOS Clock'
+    ) {
+        \$sourceSafe = ((\$source -replace '[|\r\n]', ' ').Trim())
+        Write-Output "KINGDOMS_MEMBER_TIME_REPAIRED|source=\$sourceSafe"
+        exit 0
+    }
+
+    Start-Sleep -Seconds 5
+}
+
+\$sourceSafe = ((\$source -replace '[|\r\n]', ' ').Trim())
+if (-not \$sourceSafe) { \$sourceSafe = '<none>' }
+Write-Output "KINGDOMS_MEMBER_TIME_REPAIR_FAILED|stage=resync|source=\$sourceSafe"
+exit 1
 POWERSHELL
 )"
 
     for attempt in {1..60}; do
-        if vagrant_powershell_ready "${vm}" "${script}"; then
+        output=""
+        marker=""
+
+        if output="$(vagrant_powershell_capture "${vm}" "${script}")"; then
+            marker="$(
+                printf '%s\n' "${output}" |
+                    grep -E 'KINGDOMS_MEMBER_(RUNTIME_READY|NOT_READY)\|' |
+                    tail -n 1 || true
+            )"
+        fi
+
+        if [[ "${marker}" == KINGDOMS_MEMBER_RUNTIME_READY\|* ]]; then
             echo "        [+] ${vm} domain runtime ready (${domain})"
             return 0
         fi
 
+        if [[ "${marker}" == KINGDOMS_MEMBER_NOT_READY\|* ]]; then
+            last_state="${marker#KINGDOMS_MEMBER_NOT_READY|}"
+        else
+            last_state="reason=transport"
+        fi
+
+        if [[ "${last_state}" == reason=time\|* ]]; then
+            consecutive_time_failures=$((consecutive_time_failures + 1))
+        else
+            consecutive_time_failures=0
+        fi
+
+        # Only time recovery is automatic. Reaching reason=time proves that
+        # DNS, the secure channel and domain account translation all passed in
+        # this same probe. Never reset a machine password or repair trust here.
+        if (( time_repair_attempted == 0 && consecutive_time_failures >= 6 )); then
+            echo "        [!] ${vm} identity checks are healthy but domain time stayed unsynchronized for 30s"
+            echo "        [*] attempting one bounded W32Time domain-hierarchy rediscovery/resync"
+            time_repair_attempted=1
+
+            output=""
+            if output="$(vagrant_powershell_capture "${vm}" "${repair_script}")"; then
+                marker="$(
+                    printf '%s\n' "${output}" |
+                        grep -E 'KINGDOMS_MEMBER_TIME_REPAIRED\|' |
+                        tail -n 1 || true
+                )"
+                if [[ -n "${marker}" ]]; then
+                    echo "        [+] ${vm} bounded domain-time recovery completed"
+                else
+                    echo "        [!] ${vm} time-recovery command returned without a success marker"
+                fi
+            else
+                marker="$(
+                    printf '%s\n' "${output}" |
+                        grep -E 'KINGDOMS_MEMBER_TIME_REPAIR_FAILED\|' |
+                        tail -n 1 || true
+                )"
+                echo "        [!] ${vm} bounded domain-time recovery did not complete: ${marker:-transport/error}"
+            fi
+
+            consecutive_time_failures=0
+        fi
+
         if (( attempt % 6 == 0 )); then
-            echo "        [*] waiting for ${vm} domain runtime readiness ($((attempt * 5))s)"
+            echo "        [*] waiting for ${vm} domain runtime readiness ($((attempt * 5))s); ${last_state}"
         fi
 
         sleep 5
     done
 
-    fail "${vm} did not regain domain identity readiness for ${domain} within 300s"
+    fail "${vm} did not regain domain identity readiness for ${domain} within 300s; ${last_state}; time_repair_attempted=${time_repair_attempted}"
 }
 
 preflight_domain_health() {
