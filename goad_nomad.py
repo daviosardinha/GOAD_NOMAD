@@ -533,21 +533,27 @@ def _dispatch_task(goad, args):
     elif args.task == 'check':
         goad.do_check()
     elif args.task == 'start':
-        goad.do_start()
+        if not goad.do_start():
+            return 1
     elif args.task == 'stop':
-        goad.do_stop()
+        if not goad.do_stop():
+            return 1
     elif args.task == 'restart':
-        goad.do_stop()
-        goad.do_start()
+        if not goad.do_stop():
+            return 1
+        if not goad.do_start():
+            return 1
     elif args.task == 'destroy':
         if not goad.do_destroy('--non-interactive'):
             return 1
     elif args.task == 'status':
         goad.do_status()
     elif args.task == 'snapshot':
-        goad.do_snapshot()
+        if not goad.do_snapshot():
+            return 1
     elif args.task == 'reset':
-        goad.do_reset()
+        if not goad.do_reset():
+            return 1
     elif args.task == 'validate':
         goad.do_validate()
     elif args.task == 'ws01':
