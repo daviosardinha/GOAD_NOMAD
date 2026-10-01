@@ -3,8 +3,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock
 
-from goad import Goad
-from goad_nomad import _dispatch_task
+from goad_nomad import BaseGoad, _dispatch_task
 
 
 class LifecycleTaskExitCodeTests(unittest.TestCase):
@@ -57,7 +56,7 @@ class LifecycleTaskExitCodeTests(unittest.TestCase):
         self.assertEqual(_dispatch_task(goad, self._args('reset')), 1)
 
     def test_base_start_and_stop_return_provider_results(self):
-        goad = Goad.__new__(Goad)
+        goad = BaseGoad.__new__(BaseGoad)
         provider = Mock()
         manager = Mock()
         manager.get_current_instance_provider.return_value = provider
@@ -70,7 +69,7 @@ class LifecycleTaskExitCodeTests(unittest.TestCase):
         self.assertFalse(goad.do_stop())
 
     def test_snapshot_never_runs_when_stop_fails(self):
-        goad = Goad.__new__(Goad)
+        goad = BaseGoad.__new__(BaseGoad)
         provider = Mock()
         manager = Mock()
         manager.get_current_instance_provider.return_value = provider
@@ -83,7 +82,7 @@ class LifecycleTaskExitCodeTests(unittest.TestCase):
         goad.do_start.assert_not_called()
 
     def test_snapshot_propagates_restart_failure(self):
-        goad = Goad.__new__(Goad)
+        goad = BaseGoad.__new__(BaseGoad)
         provider = Mock()
         manager = Mock()
         manager.get_current_instance_provider.return_value = provider
