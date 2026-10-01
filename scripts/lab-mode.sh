@@ -49,6 +49,17 @@ declare -A DC_FQDN=(
     [GOAD-DC03]="meereen.essos.local"
 )
 
+# Child-domain PDC emulators must follow the AD forest time hierarchy. NORTH's
+# PDC (WINTERFELL) therefore synchronizes from the forest-root PDC
+# (KINGSLANDING). Forest-root PDCs are intentionally not listed here.
+declare -A DC_TIME_PARENT_DOMAIN=(
+    [GOAD-DC02]="sevenkingdoms.local"
+)
+
+declare -A DC_TIME_PARENT_SERVER=(
+    [GOAD-DC02]="kingslanding.sevenkingdoms.local"
+)
+
 declare -A MEMBER_DOMAIN=(
     [GOAD-SRV02]="north.sevenkingdoms.local"
     [GOAD-SRV03]="essos.local"
@@ -380,12 +391,205 @@ vagrant_powershell_capture() {
     ) 2>&1
 }
 
+ensure_child_dc_time_ready() {
+    local vm="$1"
+    local domain="${DC_DOMAIN[${vm}]}"
+    local parent_domain="${DC_TIME_PARENT_DOMAIN[${vm}]:-}"
+    local parent_server="${DC_TIME_PARENT_SERVER[${vm}]:-}"
+    local probe_script
+    local repair_script
+    local output=""
+    local marker=""
+    local last_state="reason=transport"
+    local consecutive_source_failures=0
+    local repair_attempted=0
+    local attempt
+
+    [[ -n "${parent_domain}" && -n "${parent_server}" ]] || return 0
+
+    probe_script="$(cat <<POWERSHELL
+\$ErrorActionPreference = 'Continue'
+
+\$source = (& w32tm.exe /query /source 2>\$null | Out-String).Trim().TrimEnd('.')
+\$sourceRc = \$LASTEXITCODE
+if (\$sourceRc -ne 0 -or -not \$source -or \$source -ine '${parent_server}') {
+    \$sourceSafe = ((\$source -replace '[|\r\n]', ' ').Trim())
+    if (-not \$sourceSafe) { \$sourceSafe = '<none>' }
+    Write-Output "KINGDOMS_DC_TIME_NOT_READY|reason=source|source=\$sourceSafe|expected=${parent_server}"
+    exit 0
+}
+
+\$locator = @(& nltest.exe '/dsgetdc:${domain}' /timeserv /force 2>&1 | ForEach-Object { "\$_" })
+\$locatorRc = \$LASTEXITCODE
+if (\$locatorRc -ne 0) {
+    \$detail = ((\$locator -join ' ') -replace '[|\r\n]', ' ').Trim()
+    Write-Output "KINGDOMS_DC_TIME_NOT_READY|reason=advertising|rc=\$locatorRc|detail=\$detail"
+    exit 0
+}
+
+Write-Output "KINGDOMS_DC_TIME_READY|source=\$source|parent=${parent_server}"
+POWERSHELL
+)"
+
+    repair_script="$(cat <<POWERSHELL
+\$ErrorActionPreference = 'Continue'
+
+# Prove that the authoritative parent-domain time source is discoverable.
+\$parentLocator = @(& nltest.exe '/dsgetdc:${parent_domain}' /timeserv /force 2>&1 | ForEach-Object { "\$_" })
+\$parentLocatorRc = \$LASTEXITCODE
+if (\$parentLocatorRc -ne 0) {
+    \$detail = ((\$parentLocator -join ' ') -replace '[|\r\n]', ' ').Trim()
+    Write-Output "KINGDOMS_DC_TIME_REPAIR_FAILED|stage=parent_timeserv_locator|rc=\$parentLocatorRc|detail=\$detail"
+    exit 0
+}
+
+# Prove UDP/123 reaches the expected forest-root PDC before changing W32Time.
+\$strip = @(& w32tm.exe /stripchart /computer:'${parent_server}' /samples:2 /dataonly 2>&1 | ForEach-Object { "\$_" })
+\$stripRc = \$LASTEXITCODE
+if (\$stripRc -ne 0) {
+    \$detail = ((\$strip -join ' ') -replace '[|\r\n]', ' ').Trim()
+    Write-Output "KINGDOMS_DC_TIME_REPAIR_FAILED|stage=parent_ntp_path|rc=\$stripRc|detail=\$detail"
+    exit 0
+}
+
+& w32tm.exe /config /syncfromflags:domhier /update | Out-Null
+\$configRc = \$LASTEXITCODE
+if (\$configRc -ne 0) {
+    Write-Output "KINGDOMS_DC_TIME_REPAIR_FAILED|stage=config|rc=\$configRc"
+    exit 0
+}
+
+try {
+    Restart-Service W32Time -Force -ErrorAction Stop
+    \$service = Get-Service W32Time -ErrorAction Stop
+    \$service.WaitForStatus(
+        [System.ServiceProcess.ServiceControllerStatus]::Running,
+        [TimeSpan]::FromSeconds(10)
+    )
+}
+catch {
+    \$detail = ((\$_.Exception.Message -replace '[|\r\n]', ' ').Trim())
+    Write-Output "KINGDOMS_DC_TIME_REPAIR_FAILED|stage=service|detail=\$detail"
+    exit 0
+}
+
+Start-Sleep -Seconds 2
+
+\$source = ''
+\$sourceRc = -1
+\$lastResyncRc = -1
+
+for (\$syncAttempt = 1; \$syncAttempt -le 18; \$syncAttempt++) {
+    if (\$syncAttempt -eq 1 -or ((\$syncAttempt - 1) % 3) -eq 0) {
+        # Prime the parent-domain locator immediately before rediscovery. This
+        # avoids waiting for W32Time's default 15-minute peer-resolution backoff.
+        & nltest.exe '/dsgetdc:${parent_domain}' /timeserv /force | Out-Null
+        & w32tm.exe /resync /rediscover /nowait | Out-Null
+        \$lastResyncRc = \$LASTEXITCODE
+    }
+
+    Start-Sleep -Seconds 5
+
+    \$source = (& w32tm.exe /query /source 2>\$null | Out-String).Trim().TrimEnd('.')
+    \$sourceRc = \$LASTEXITCODE
+
+    if (\$sourceRc -eq 0 -and \$source -ieq '${parent_server}') {
+        # Once synchronized, wait until Netlogon exposes this child PDC as a
+        # TIMESERV so local-domain members can discover it deterministically.
+        \$advertise = @(& nltest.exe '/dsgetdc:${domain}' /timeserv /force 2>&1 | ForEach-Object { "\$_" })
+        \$advertiseRc = \$LASTEXITCODE
+        if (\$advertiseRc -eq 0) {
+            Write-Output "KINGDOMS_DC_TIME_REPAIRED|source=\$source|sync_attempt=\$syncAttempt"
+            exit 0
+        }
+    }
+}
+
+\$sourceSafe = ((\$source -replace '[|\r\n]', ' ').Trim())
+if (-not \$sourceSafe) { \$sourceSafe = '<none>' }
+Write-Output "KINGDOMS_DC_TIME_REPAIR_FAILED|stage=sync_or_advertising|resync_rc=\$lastResyncRc|source_rc=\$sourceRc|source=\$sourceSafe|expected=${parent_server}"
+exit 0
+POWERSHELL
+)"
+
+    for attempt in {1..60}; do
+        output=""
+        marker=""
+
+        if output="$(vagrant_powershell_capture "${vm}" "${probe_script}")"; then
+            marker="$(
+                printf '%s\n' "${output}" |
+                    grep -E 'KINGDOMS_DC_TIME_(READY|NOT_READY)\|' |
+                    tail -n 1 || true
+            )"
+        fi
+
+        if [[ "${marker}" == KINGDOMS_DC_TIME_READY\|* ]]; then
+            echo "        [+] ${vm} child-domain time hierarchy ready (${parent_server})"
+            return 0
+        fi
+
+        if [[ "${marker}" == KINGDOMS_DC_TIME_NOT_READY\|* ]]; then
+            last_state="${marker#KINGDOMS_DC_TIME_NOT_READY|}"
+        else
+            last_state="reason=transport"
+        fi
+
+        if [[ "${last_state}" == reason=source\|* ]]; then
+            consecutive_source_failures=$((consecutive_source_failures + 1))
+        else
+            consecutive_source_failures=0
+        fi
+
+        if (( repair_attempted == 0 && consecutive_source_failures >= 6 )); then
+            echo "        [!] ${vm} AD is ready but child-domain time stayed off the parent hierarchy for 30s"
+            echo "        [*] attempting one bounded child-PDC W32Time hierarchy recovery"
+            repair_attempted=1
+
+            output=""
+            if output="$(vagrant_powershell_capture "${vm}" "${repair_script}")"; then
+                marker="$(
+                    printf '%s\n' "${output}" |
+                        grep -E 'KINGDOMS_DC_TIME_(REPAIRED|REPAIR_FAILED)\|' |
+                        tail -n 1 || true
+                )"
+
+                if [[ "${marker}" == KINGDOMS_DC_TIME_REPAIRED\|* ]]; then
+                    echo "        [+] ${vm} child-domain time recovery completed: ${marker}"
+                elif [[ "${marker}" == KINGDOMS_DC_TIME_REPAIR_FAILED\|* ]]; then
+                    fail "${vm} child-domain time recovery failed: ${marker}"
+                else
+                    fail "${vm} child-domain time recovery returned without a terminal marker"
+                fi
+            else
+                marker="$(
+                    printf '%s\n' "${output}" |
+                        grep -E 'KINGDOMS_DC_TIME_(REPAIRED|REPAIR_FAILED)\|' |
+                        tail -n 1 || true
+                )"
+                fail "${vm} child-domain time recovery transport failed: ${marker:-no marker}"
+            fi
+
+            consecutive_source_failures=0
+        fi
+
+        if (( attempt % 6 == 0 )); then
+            echo "        [*] waiting for ${vm} child-domain time readiness ($((attempt * 5))s); ${last_state}"
+        fi
+
+        sleep 5
+    done
+
+    fail "${vm} child-domain time hierarchy did not converge within 300s; ${last_state}; repair_attempted=${repair_attempted}"
+}
+
 wait_domain_controller_ready() {
     local vm="$1"
     local domain="${DC_DOMAIN[${vm}]}"
     local fqdn="${DC_FQDN[${vm}]}"
     local script
     local attempt
+    local basic_ready=0
 
     script="$(cat <<POWERSHELL
 \$ErrorActionPreference = 'Stop'
@@ -428,8 +632,8 @@ POWERSHELL
 
     for attempt in {1..60}; do
         if vagrant_powershell_ready "${vm}" "${script}"; then
-            echo "        [+] ${vm} AD runtime ready (${fqdn})"
-            return 0
+            basic_ready=1
+            break
         fi
 
         if (( attempt % 6 == 0 )); then
@@ -439,7 +643,12 @@ POWERSHELL
         sleep 5
     done
 
-    fail "${vm} did not regain AD/DC Locator readiness for ${domain} within 300s"
+    (( basic_ready == 1 )) ||
+        fail "${vm} did not regain AD/DC Locator readiness for ${domain} within 300s"
+
+    ensure_child_dc_time_ready "${vm}"
+
+    echo "        [+] ${vm} AD runtime ready (${fqdn})"
 }
 
 wait_domain_member_ready() {
@@ -676,6 +885,19 @@ preflight_domain_health() {
     echo "[+] AD identity preflight passed"
 }
 
+preflight_exercise_time_dependencies() {
+    local vm
+
+    echo "[*] Proving child-domain time authorities before member isolation"
+
+    for vm in "${EXERCISE_DOMAIN_CONTROLLERS[@]}"; do
+        [[ -n "${DC_TIME_PARENT_DOMAIN[${vm}]:-}" ]] || continue
+        prove_isolated_guest_ready "${vm}" dc
+    done
+
+    echo "[+] Child-domain time authority preflight passed"
+}
+
 configure_windows_nat_provisioning() {
     local vm
 
@@ -852,10 +1074,14 @@ enter_exercise_mode() {
 
     verify_windows_layout
 
-    # While NAT management is still available, prove every DC and member has a
-    # working domain identity. This fails closed before any isolation restart.
+    # On a provisioning -> exercise transition, prove the full domain contract.
+    # On a cold start of an already-recorded exercise range, persistent NAT is
+    # intentionally still FALSE, so probe only the child-DC time dependency
+    # with temporary runtime NAT before checking members.
     if [[ "$(cat "${PROVIDER}/.goad-nomad-mode" 2>/dev/null || true)" != "exercise" ]]; then
         preflight_domain_health
+    else
+        preflight_exercise_time_dependencies
     fi
 
     #
