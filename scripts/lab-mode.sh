@@ -627,21 +627,24 @@ POWERSHELL
             if output="$(vagrant_powershell_capture "${vm}" "${repair_script}")"; then
                 marker="$(
                     printf '%s\n' "${output}" |
-                        grep -E 'KINGDOMS_MEMBER_TIME_REPAIRED\|' |
+                        grep -E 'KINGDOMS_MEMBER_TIME_(REPAIRED|REPAIR_FAILED)\|' |
                         tail -n 1 || true
                 )"
-                if [[ -n "${marker}" ]]; then
-                    echo "        [+] ${vm} bounded domain-time recovery completed"
+
+                if [[ "${marker}" == KINGDOMS_MEMBER_TIME_REPAIRED\|* ]]; then
+                    echo "        [+] ${vm} bounded domain-time recovery completed: ${marker}"
+                elif [[ "${marker}" == KINGDOMS_MEMBER_TIME_REPAIR_FAILED\|* ]]; then
+                    fail "${vm} bounded domain-time recovery failed: ${marker}"
                 else
-                    echo "        [!] ${vm} time-recovery command returned without a success marker"
+                    fail "${vm} time-recovery command returned without a terminal marker"
                 fi
             else
                 marker="$(
                     printf '%s\n' "${output}" |
-                        grep -E 'KINGDOMS_MEMBER_TIME_REPAIR_FAILED\|' |
+                        grep -E 'KINGDOMS_MEMBER_TIME_(REPAIRED|REPAIR_FAILED)\|' |
                         tail -n 1 || true
                 )"
-                echo "        [!] ${vm} bounded domain-time recovery did not complete: ${marker:-transport/error}"
+                fail "${vm} bounded domain-time recovery transport failed: ${marker:-no marker}"
             fi
 
             consecutive_time_failures=0
