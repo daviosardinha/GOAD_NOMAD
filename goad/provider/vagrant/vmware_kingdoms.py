@@ -860,7 +860,7 @@ $desired = @{
 }
 
 foreach ($entry in $desired.GetEnumerator()) {
-    $current = (Get-ItemProperty $ntpClient -Name $entry.Key -ErrorAction SilentlyContinue).($entry.Key)
+    $current = Get-ItemPropertyValue $ntpClient -Name $entry.Key -ErrorAction SilentlyContinue
     if ($null -eq $current -or [int]$current -ne [int]$entry.Value) {
         New-ItemProperty $ntpClient -Name $entry.Key -Value ([int]$entry.Value) -PropertyType DWord -Force | Out-Null
         $changed = $true
