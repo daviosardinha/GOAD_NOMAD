@@ -153,6 +153,28 @@ class LabModeAdReadinessTests(unittest.TestCase):
             fn,
         )
 
+    def test_time_repair_failure_marker_is_not_hidden(self):
+        text = self.text
+        fn = text[text.index("wait_domain_member_ready()"):
+                  text.index("preflight_domain_health()")]
+
+        self.assertIn(
+            "KINGDOMS_MEMBER_TIME_(REPAIRED|REPAIR_FAILED)",
+            fn,
+        )
+        self.assertIn(
+            'elif [[ "${marker}" == KINGDOMS_MEMBER_TIME_REPAIR_FAILED\\|* ]]; then',
+            fn,
+        )
+        self.assertIn(
+            'bounded domain-time recovery failed: ${marker}',
+            fn,
+        )
+        self.assertNotIn(
+            "time-recovery command returned without a success marker",
+            fn,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
