@@ -831,6 +831,76 @@ Write-Output 'GOAD_VMTOOLS_RESTARTED'
         )
         return True
 
+    def _ensure_installed_member_time_policy(self, machine, host):
+        """Backfill the bounded NT5DS rediscovery policy on installed members.
+
+        Fresh Kingdoms installs receive this policy through Ansible. Existing
+        installed ranges are migrated here after direct WinRM is available so
+        a transient early-boot NT5DS discovery miss cannot leave W32Time in the
+        Windows default 15-minute peer-resolution backoff. This changes only
+        W32Time client retry policy; it never rewrites trust or directory state.
+        """
+        if machine not in ('GOAD-SRV02', 'GOAD-SRV03', 'GOAD-WS01'):
+            return True
+
+        script = r"""
+$ErrorActionPreference = 'Stop'
+$parameters = 'HKLM:\SYSTEM\CurrentControlSet\Services\W32Time\Parameters'
+$ntpClient = 'HKLM:\SYSTEM\CurrentControlSet\Services\W32Time\TimeProviders\NtpClient'
+
+$type = (Get-ItemProperty $parameters -Name Type -ErrorAction Stop).Type
+if ($type -ine 'NT5DS') {
+    throw "W32Time Type is '$type', expected NT5DS"
+}
+
+$changed = $false
+$desired = @{
+    ResolvePeerBackoffMinutes = 1
+    ResolvePeerBackoffMaxTimes = 0
+}
+
+foreach ($entry in $desired.GetEnumerator()) {
+    $current = (Get-ItemProperty $ntpClient -Name $entry.Key -ErrorAction SilentlyContinue).($entry.Key)
+    if ($null -eq $current -or [int]$current -ne [int]$entry.Value) {
+        New-ItemProperty $ntpClient -Name $entry.Key -Value ([int]$entry.Value) -PropertyType DWord -Force | Out-Null
+        $changed = $true
+    }
+}
+
+if ($changed) {
+    Restart-Service W32Time -Force -ErrorAction Stop
+    $service = Get-Service W32Time -ErrorAction Stop
+    $service.WaitForStatus(
+        [System.ServiceProcess.ServiceControllerStatus]::Running,
+        [TimeSpan]::FromSeconds(15)
+    )
+}
+
+Write-Output ("KINGDOMS_NT5DS_BACKOFF_READY|changed={0}|minutes=1|max_times=0" -f $changed.ToString().ToLowerInvariant())
+"""
+
+        try:
+            result = self._lab_winrm_session(host).run_ps(script)
+        except Exception as exc:
+            Log.error(f'GOAD Kingdoms: NT5DS backoff policy failed for {machine}: {exc}')
+            return False
+
+        if (
+            result.status_code == 0
+            and b'KINGDOMS_NT5DS_BACKOFF_READY' in result.std_out
+        ):
+            detail = result.std_out.decode(errors="replace").strip()
+            Log.success(f'GOAD Kingdoms: {machine} NT5DS peer rediscovery policy ready ({detail})')
+            return True
+
+        detail = (
+            result.std_err.decode(errors="replace").strip()
+            or result.std_out.decode(errors="replace").strip()
+            or f'PowerShell status {result.status_code}'
+        )
+        Log.error(f'GOAD Kingdoms: NT5DS backoff policy failed for {machine}: {detail}')
+        return False
+
     def _wait_installed_ad_ready(self, machine, host, timeout=300):
         """Wait for the AD dependency contract required by a cold start.
 
@@ -1083,6 +1153,10 @@ Write-Output 'KINGDOMS_INSTALLED_AD_READY'
                 machine, host, timeout=min(300, remaining)
             ):
                 return False
+
+            if machine in ('GOAD-SRV02', 'GOAD-SRV03', 'GOAD-WS01'):
+                if not self._ensure_installed_member_time_policy(machine, host):
+                    return False
 
             remaining = int(deadline - time.monotonic())
             if remaining <= 0:
