@@ -203,12 +203,29 @@ class LabModeAdReadinessTests(unittest.TestCase):
         )
         self.assertLess(
             fn.index("System.Security.Principal.NTAccount"),
+            fn.index("nltest.exe '/sc_query:${domain}'"),
+        )
+        self.assertLess(
+            fn.index("nltest.exe '/sc_query:${domain}'"),
             fn.index("w32tm.exe /query /source"),
         )
         self.assertIn(
             'if [[ "${last_state}" == reason=time\\|* ]]; then',
             fn,
         )
+
+    def test_member_time_recovery_requires_live_netlogon_session(self):
+        text = self.text
+        fn = text[text.index("wait_domain_member_ready()"):
+                  text.index("preflight_domain_health()")]
+
+        for token in (
+            "KINGDOMS_MEMBER_NOT_READY|reason=netlogon_session",
+            "KINGDOMS_MEMBER_TIME_REPAIR_FAILED|stage=netlogon_session",
+            "KINGDOMS_MEMBER_TIME_REPAIR_FAILED|stage=netlogon_session_lost",
+            "netlogon_session=ready",
+        ):
+            self.assertIn(token, fn)
 
     def test_time_repair_failure_marker_is_not_hidden(self):
         text = self.text
