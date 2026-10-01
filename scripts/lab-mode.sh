@@ -5,6 +5,11 @@ readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly ROUTES="${ROOT}/scripts/provisioning-routes.sh"
 readonly POLICY_DIR="${ROOT}/ad/GOAD/providers/vmware/router/nftables"
 
+readonly AD_READINESS_TIMEOUT_SECONDS=300
+readonly AD_READINESS_PROBE_TIMEOUT_SECONDS=15
+readonly AD_READINESS_RETRY_DELAY_SECONDS=5
+readonly AD_REPAIR_TIMEOUT_SECONDS=90
+
 readonly DOMAIN_CONTROLLERS=(
     GOAD-DC01
     GOAD-DC02
@@ -358,7 +363,10 @@ ensure_vm_nat_state() {
 vagrant_powershell_ready() {
     local vm="$1"
     local script="$2"
+    local timeout_seconds="$3"
     local encoded
+
+    (( timeout_seconds > 0 )) || return 124
 
     encoded="$(
         printf '%s' "${script}" |
@@ -368,7 +376,7 @@ vagrant_powershell_ready() {
 
     (
         cd "${PROVIDER}"
-        timeout 90 vagrant winrm "${vm}" -c \
+        timeout "${timeout_seconds}" vagrant winrm "${vm}" -c \
             "powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encoded}"
     ) >/dev/null 2>&1
 }
@@ -376,7 +384,10 @@ vagrant_powershell_ready() {
 vagrant_powershell_capture() {
     local vm="$1"
     local script="$2"
+    local timeout_seconds="$3"
     local encoded
+
+    (( timeout_seconds > 0 )) || return 124
 
     encoded="$(
         printf '%s' "${script}" |
@@ -386,7 +397,7 @@ vagrant_powershell_capture() {
 
     (
         cd "${PROVIDER}"
-        timeout 90 vagrant winrm "${vm}" -c \
+        timeout "${timeout_seconds}" vagrant winrm "${vm}" -c \
             "powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encoded}"
     ) 2>&1
 }
@@ -403,8 +414,6 @@ ensure_child_dc_time_ready() {
     local last_state="reason=transport"
     local consecutive_source_failures=0
     local repair_attempted=0
-    local attempt
-
     [[ -n "${parent_domain}" && -n "${parent_server}" ]] || return 0
 
     probe_script="$(cat <<POWERSHELL
@@ -512,11 +521,24 @@ exit 0
 POWERSHELL
 )"
 
-    for attempt in {1..60}; do
+    local started="${SECONDS}"
+    local elapsed=0
+    local remaining="${AD_READINESS_TIMEOUT_SECONDS}"
+    local probe_timeout="${AD_READINESS_PROBE_TIMEOUT_SECONDS}"
+    local repair_timeout=0
+    local next_report=30
+
+    while (( SECONDS - started < AD_READINESS_TIMEOUT_SECONDS )); do
+        elapsed=$((SECONDS - started))
+        remaining=$((AD_READINESS_TIMEOUT_SECONDS - elapsed))
+        probe_timeout="${AD_READINESS_PROBE_TIMEOUT_SECONDS}"
+        (( remaining < probe_timeout )) && probe_timeout="${remaining}"
+        (( probe_timeout > 0 )) || break
+
         output=""
         marker=""
 
-        if output="$(vagrant_powershell_capture "${vm}" "${probe_script}")"; then
+        if output="$(vagrant_powershell_capture "${vm}" "${probe_script}" "${probe_timeout}")"; then
             marker="$(
                 printf '%s\n' "${output}" |
                     grep -E 'KINGDOMS_DC_TIME_(READY|NOT_READY)\|' |
@@ -542,12 +564,18 @@ POWERSHELL
         fi
 
         if (( repair_attempted == 0 && consecutive_source_failures >= 6 )); then
-            echo "        [!] ${vm} AD is ready but child-domain time stayed off the parent hierarchy for 30s"
+            echo "        [!] ${vm} AD is ready but child-domain time stayed off the parent hierarchy for ~30s"
             echo "        [*] attempting one bounded child-PDC W32Time hierarchy recovery"
             repair_attempted=1
 
+            elapsed=$((SECONDS - started))
+            remaining=$((AD_READINESS_TIMEOUT_SECONDS - elapsed))
+            (( remaining > 0 )) || break
+            repair_timeout="${AD_REPAIR_TIMEOUT_SECONDS}"
+            (( remaining < repair_timeout )) && repair_timeout="${remaining}"
+
             output=""
-            if output="$(vagrant_powershell_capture "${vm}" "${repair_script}")"; then
+            if output="$(vagrant_powershell_capture "${vm}" "${repair_script}" "${repair_timeout}")"; then
                 marker="$(
                     printf '%s\n' "${output}" |
                         grep -E 'KINGDOMS_DC_TIME_(REPAIRED|REPAIR_FAILED)\|' |
@@ -567,19 +595,27 @@ POWERSHELL
                         grep -E 'KINGDOMS_DC_TIME_(REPAIRED|REPAIR_FAILED)\|' |
                         tail -n 1 || true
                 )"
-                fail "${vm} child-domain time recovery transport failed: ${marker:-no marker}"
+                fail "${vm} child-domain time recovery transport failed within remaining readiness budget: ${marker:-no marker}"
             fi
 
             consecutive_source_failures=0
         fi
 
-        if (( attempt % 6 == 0 )); then
-            echo "        [*] waiting for ${vm} child-domain time readiness ($((attempt * 5))s); ${last_state}"
+        elapsed=$((SECONDS - started))
+        remaining=$((AD_READINESS_TIMEOUT_SECONDS - elapsed))
+        (( remaining < 0 )) && remaining=0
+        if (( elapsed >= next_report )); then
+            echo "        [*] waiting for ${vm} child-domain time readiness (${elapsed}s elapsed, ${remaining}s remaining); ${last_state}"
+            next_report=$((next_report + 30))
         fi
 
-        sleep 5
+        (( remaining > 0 )) || break
+        if (( remaining < AD_READINESS_RETRY_DELAY_SECONDS )); then
+            sleep "${remaining}"
+        else
+            sleep "${AD_READINESS_RETRY_DELAY_SECONDS}"
+        fi
     done
-
     fail "${vm} child-domain time hierarchy did not converge within 300s; ${last_state}; repair_attempted=${repair_attempted}"
 }
 
@@ -588,7 +624,6 @@ wait_domain_controller_ready() {
     local domain="${DC_DOMAIN[${vm}]}"
     local fqdn="${DC_FQDN[${vm}]}"
     local script
-    local attempt
     local basic_ready=0
 
     script="$(cat <<POWERSHELL
@@ -630,19 +665,39 @@ Write-Output 'KINGDOMS_DC_RUNTIME_READY'
 POWERSHELL
 )"
 
-    for attempt in {1..60}; do
-        if vagrant_powershell_ready "${vm}" "${script}"; then
+    local started="${SECONDS}"
+    local elapsed=0
+    local remaining="${AD_READINESS_TIMEOUT_SECONDS}"
+    local probe_timeout="${AD_READINESS_PROBE_TIMEOUT_SECONDS}"
+    local next_report=30
+
+    while (( SECONDS - started < AD_READINESS_TIMEOUT_SECONDS )); do
+        elapsed=$((SECONDS - started))
+        remaining=$((AD_READINESS_TIMEOUT_SECONDS - elapsed))
+        probe_timeout="${AD_READINESS_PROBE_TIMEOUT_SECONDS}"
+        (( remaining < probe_timeout )) && probe_timeout="${remaining}"
+        (( probe_timeout > 0 )) || break
+
+        if vagrant_powershell_ready "${vm}" "${script}" "${probe_timeout}"; then
             basic_ready=1
             break
         fi
 
-        if (( attempt % 6 == 0 )); then
-            echo "        [*] waiting for ${vm} AD runtime readiness ($((attempt * 5))s)"
+        elapsed=$((SECONDS - started))
+        remaining=$((AD_READINESS_TIMEOUT_SECONDS - elapsed))
+        (( remaining < 0 )) && remaining=0
+        if (( elapsed >= next_report )); then
+            echo "        [*] waiting for ${vm} AD runtime readiness (${elapsed}s elapsed, ${remaining}s remaining)"
+            next_report=$((next_report + 30))
         fi
 
-        sleep 5
+        (( remaining > 0 )) || break
+        if (( remaining < AD_READINESS_RETRY_DELAY_SECONDS )); then
+            sleep "${remaining}"
+        else
+            sleep "${AD_READINESS_RETRY_DELAY_SECONDS}"
+        fi
     done
-
     (( basic_ready == 1 )) ||
         fail "${vm} did not regain AD/DC Locator readiness for ${domain} within 300s"
 
@@ -658,7 +713,6 @@ wait_domain_member_ready() {
     local netbios="${MEMBER_NETBIOS[${vm}]}"
     local script
     local repair_script
-    local attempt
     local output=""
     local marker=""
     local last_state="reason=transport"
@@ -842,11 +896,24 @@ exit 0
 POWERSHELL
 )"
 
-    for attempt in {1..60}; do
+    local started="${SECONDS}"
+    local elapsed=0
+    local remaining="${AD_READINESS_TIMEOUT_SECONDS}"
+    local probe_timeout="${AD_READINESS_PROBE_TIMEOUT_SECONDS}"
+    local repair_timeout=0
+    local next_report=30
+
+    while (( SECONDS - started < AD_READINESS_TIMEOUT_SECONDS )); do
+        elapsed=$((SECONDS - started))
+        remaining=$((AD_READINESS_TIMEOUT_SECONDS - elapsed))
+        probe_timeout="${AD_READINESS_PROBE_TIMEOUT_SECONDS}"
+        (( remaining < probe_timeout )) && probe_timeout="${remaining}"
+        (( probe_timeout > 0 )) || break
+
         output=""
         marker=""
 
-        if output="$(vagrant_powershell_capture "${vm}" "${script}")"; then
+        if output="$(vagrant_powershell_capture "${vm}" "${script}" "${probe_timeout}")"; then
             marker="$(
                 printf '%s\n' "${output}" |
                     grep -E 'KINGDOMS_MEMBER_(RUNTIME_READY|NOT_READY)\|' |
@@ -876,12 +943,18 @@ POWERSHELL
         # session all passed in this same probe. Never reset a machine password
         # or repair trust here.
         if (( time_repair_attempted == 0 && consecutive_time_failures >= 6 )); then
-            echo "        [!] ${vm} identity checks are healthy but domain time stayed unsynchronized for 30s"
+            echo "        [!] ${vm} identity checks are healthy but domain time stayed unsynchronized for ~30s"
             echo "        [*] attempting one bounded W32Time domain-hierarchy rediscovery/resync"
             time_repair_attempted=1
 
+            elapsed=$((SECONDS - started))
+            remaining=$((AD_READINESS_TIMEOUT_SECONDS - elapsed))
+            (( remaining > 0 )) || break
+            repair_timeout="${AD_REPAIR_TIMEOUT_SECONDS}"
+            (( remaining < repair_timeout )) && repair_timeout="${remaining}"
+
             output=""
-            if output="$(vagrant_powershell_capture "${vm}" "${repair_script}")"; then
+            if output="$(vagrant_powershell_capture "${vm}" "${repair_script}" "${repair_timeout}")"; then
                 marker="$(
                     printf '%s\n' "${output}" |
                         grep -E 'KINGDOMS_MEMBER_TIME_(REPAIRED|REPAIR_FAILED)\|' |
@@ -901,19 +974,27 @@ POWERSHELL
                         grep -E 'KINGDOMS_MEMBER_TIME_(REPAIRED|REPAIR_FAILED)\|' |
                         tail -n 1 || true
                 )"
-                fail "${vm} bounded domain-time recovery transport failed: ${marker:-no marker}"
+                fail "${vm} bounded domain-time recovery transport failed within remaining readiness budget: ${marker:-no marker}"
             fi
 
             consecutive_time_failures=0
         fi
 
-        if (( attempt % 6 == 0 )); then
-            echo "        [*] waiting for ${vm} domain runtime readiness ($((attempt * 5))s); ${last_state}"
+        elapsed=$((SECONDS - started))
+        remaining=$((AD_READINESS_TIMEOUT_SECONDS - elapsed))
+        (( remaining < 0 )) && remaining=0
+        if (( elapsed >= next_report )); then
+            echo "        [*] waiting for ${vm} domain runtime readiness (${elapsed}s elapsed, ${remaining}s remaining); ${last_state}"
+            next_report=$((next_report + 30))
         fi
 
-        sleep 5
+        (( remaining > 0 )) || break
+        if (( remaining < AD_READINESS_RETRY_DELAY_SECONDS )); then
+            sleep "${remaining}"
+        else
+            sleep "${AD_READINESS_RETRY_DELAY_SECONDS}"
+        fi
     done
-
     fail "${vm} did not regain domain identity readiness for ${domain} within 300s; ${last_state}; time_repair_attempted=${time_repair_attempted}"
 }
 
