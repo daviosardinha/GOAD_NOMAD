@@ -382,7 +382,7 @@ class InstalledWindows(unittest.TestCase):
             'ResolvePeerBackoffMinutes',
             'ResolvePeerBackoffMaxTimes',
             "expected NT5DS",
-            'Restart-Service W32Time',
+            'w32tm.exe /config /update',
             'KINGDOMS_NT5DS_BACKOFF_READY',
         ):
             self.assertIn(token, fn)
@@ -391,7 +391,6 @@ class InstalledWindows(unittest.TestCase):
             'Reset-ComputerMachinePassword',
             '/sc_reset:',
             'netdom resetpwd',
-            'w32tm.exe /config',
             '/manualpeerlist:',
         ):
             self.assertNotIn(forbidden, fn)
