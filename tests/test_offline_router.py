@@ -387,6 +387,9 @@ class InstalledWindows(unittest.TestCase):
         ):
             self.assertIn(token, fn)
 
+        self.assertNotIn('if ($changed)', fn)
+        self.assertIn('reloaded=true', fn)
+
         for forbidden in (
             'Reset-ComputerMachinePassword',
             '/sc_reset:',
