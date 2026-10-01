@@ -387,8 +387,10 @@ class InstalledWindows(unittest.TestCase):
         ):
             self.assertIn(token, fn)
 
-        self.assertNotIn('if ($changed)', fn)
-        self.assertIn('reloaded=true', fn)
+        self.assertIn('if ($changed)', fn)
+        self.assertIn("$reloadState = 'not-required'", fn)
+        self.assertIn("for ($attempt = 1; $attempt -le 12; $attempt++)", fn)
+        self.assertIn("reload={1}", fn)
 
         for forbidden in (
             'Reset-ComputerMachinePassword',
