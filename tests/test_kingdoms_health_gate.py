@@ -12,11 +12,39 @@ class KingdomsHealthGateTests(unittest.TestCase):
         playbooks = yaml.safe_load((ROOT / "playbooks.yml").read_text(encoding="utf-8"))
         sequence = playbooks["GOAD"]
 
+        self.assertLess(sequence.index("ad-members.yml"), sequence.index("kingdoms-time-backoff.yml"))
+        self.assertLess(sequence.index("kingdoms-time-backoff.yml"), sequence.index("ad-trusts.yml"))
         self.assertLess(sequence.index("security.yml"), sequence.index("kingdoms-health.yml"))
         self.assertLess(sequence.index("kingdoms-health.yml"), sequence.index("vulnerabilities.yml"))
         self.assertLess(sequence.index("ws01-lpe-install.yml"), sequence.index("kingdoms-health-final.yml"))
         self.assertEqual("kingdoms-health-final.yml", sequence[-1])
 
+    def test_kingdoms_member_time_policy_bounds_nt5ds_rediscovery(self):
+        playbook = (ROOT / "ansible/kingdoms-time-backoff.yml").read_text(encoding="utf-8")
+        role = (
+            ROOT / "ansible/roles/kingdoms_time/member/tasks/main.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("hosts: server:workstation", playbook)
+        self.assertIn("role: kingdoms_time/member", playbook)
+
+        for token in (
+            "ResolvePeerBackoffMinutes",
+            "data: 1",
+            "ResolvePeerBackoffMaxTimes",
+            "data: 0",
+            "NT5DS",
+            "Restart W32Time only when peer rediscovery policy changed",
+        ):
+            self.assertIn(token, role)
+
+        for forbidden in (
+            "Reset-ComputerMachinePassword",
+            "/sc_reset:",
+            "netdom resetpwd",
+            "/manualpeerlist:",
+        ):
+            self.assertNotIn(forbidden, role)
     def test_member_health_can_repair_but_final_gate_cannot(self):
         pre = (ROOT / "ansible/kingdoms-health.yml").read_text(encoding="utf-8")
         final = (ROOT / "ansible/kingdoms-health-final.yml").read_text(encoding="utf-8")
