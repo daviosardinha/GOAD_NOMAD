@@ -86,6 +86,72 @@ class LabModeAdReadinessTests(unittest.TestCase):
         ):
             self.assertIn(token, text)
 
+    def test_member_readiness_emits_exact_failure_class(self):
+        text = self.text
+        fn = text[text.index("wait_domain_member_ready()"):
+                  text.index("preflight_domain_health()")]
+
+        for marker in (
+            "KINGDOMS_MEMBER_NOT_READY|reason=dns",
+            "KINGDOMS_MEMBER_NOT_READY|reason=secure_channel",
+            "KINGDOMS_MEMBER_NOT_READY|reason=account_translation",
+            "KINGDOMS_MEMBER_NOT_READY|reason=time|source=",
+            "reason=transport",
+        ):
+            self.assertIn(marker, fn)
+
+        self.assertIn(
+            'did not regain domain identity readiness for ${domain} within 300s; ${last_state}',
+            fn,
+        )
+
+    def test_member_lifecycle_uses_one_bounded_time_only_repair(self):
+        text = self.text
+        fn = text[text.index("wait_domain_member_ready()"):
+                  text.index("preflight_domain_health()")]
+
+        for token in (
+            "consecutive_time_failures >= 6",
+            "time_repair_attempted == 0",
+            "w32tm.exe /config /syncfromflags:domhier /update",
+            "Restart-Service W32Time -Force",
+            "w32tm.exe /resync /rediscover",
+            "KINGDOMS_MEMBER_TIME_REPAIRED",
+            "KINGDOMS_MEMBER_TIME_REPAIR_FAILED",
+        ):
+            self.assertIn(token, fn)
+
+        # Normal lifecycle may recover W32Time only. Directory trust repair
+        # remains an explicit maintenance/provisioning operation.
+        for forbidden in (
+            "Reset-ComputerMachinePassword",
+            "/sc_reset:",
+            "netdom resetpwd",
+        ):
+            self.assertNotIn(forbidden, fn)
+
+    def test_time_repair_requires_identity_probe_to_reach_time_stage(self):
+        text = self.text
+        fn = text[text.index("wait_domain_member_ready()"):
+                  text.index("preflight_domain_health()")]
+
+        self.assertLess(
+            fn.index("Resolve-DnsName '${dc}'"),
+            fn.index("Test-ComputerSecureChannel -Server '${dc}'"),
+        )
+        self.assertLess(
+            fn.index("Test-ComputerSecureChannel -Server '${dc}'"),
+            fn.index("System.Security.Principal.NTAccount"),
+        )
+        self.assertLess(
+            fn.index("System.Security.Principal.NTAccount"),
+            fn.index("w32tm.exe /query /source"),
+        )
+        self.assertIn(
+            'if [[ "${last_state}" == reason=time\\|* ]]; then',
+            fn,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
