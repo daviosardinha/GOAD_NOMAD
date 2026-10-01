@@ -84,6 +84,7 @@ GOAD:
   # Waiting 5 minutes for the child domain to be ready
   - wait5m.yml
   - ad-members.yml
+  - kingdoms-time-backoff.yml
   - ad-trusts.yml
   - ad-data.yml
   # Rickon exists after ad-data; now establish the validated WS01 foothold
