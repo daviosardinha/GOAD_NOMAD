@@ -60,6 +60,81 @@ class LabModeAdReadinessTests(unittest.TestCase):
         )
         self.assertIn("trap cleanup_runtime_nat EXIT", fn)
 
+    def test_winrm_helpers_use_explicit_nested_timeout(self):
+        text = self.text
+        helpers = text[text.index("vagrant_powershell_ready()"):
+                       text.index("ensure_child_dc_time_ready()")]
+
+        self.assertIn('local timeout_seconds="$3"', helpers)
+        self.assertEqual(helpers.count('timeout "${timeout_seconds}" vagrant winrm'), 2)
+        self.assertNotIn("timeout 90 vagrant winrm", helpers)
+
+    def test_readiness_deadlines_cap_nested_winrm_to_remaining_budget(self):
+        text = self.text
+
+        for token in (
+            "readonly AD_READINESS_TIMEOUT_SECONDS=300",
+            "readonly AD_READINESS_PROBE_TIMEOUT_SECONDS=15",
+            "readonly AD_READINESS_RETRY_DELAY_SECONDS=5",
+            "readonly AD_REPAIR_TIMEOUT_SECONDS=90",
+        ):
+            self.assertIn(token, text)
+
+        child = text[text.index("ensure_child_dc_time_ready()"):
+                     text.index("wait_domain_controller_ready()")]
+        dc = text[text.index("wait_domain_controller_ready()"):
+                  text.index("wait_domain_member_ready()")]
+        member = text[text.index("wait_domain_member_ready()"):
+                      text.index("preflight_domain_health()")]
+
+        for fn in (child, dc, member):
+            self.assertIn('local started="${SECONDS}"', fn)
+            self.assertIn(
+                "while (( SECONDS - started < AD_READINESS_TIMEOUT_SECONDS )); do",
+                fn,
+            )
+            self.assertIn("remaining=$((AD_READINESS_TIMEOUT_SECONDS - elapsed))", fn)
+            self.assertIn(
+                '(( remaining < probe_timeout )) && probe_timeout="${remaining}"',
+                fn,
+            )
+            self.assertNotIn("for attempt in {1..60}", fn)
+
+        self.assertIn(
+            'vagrant_powershell_capture "${vm}" "${probe_script}" "${probe_timeout}"',
+            child,
+        )
+        self.assertIn(
+            'vagrant_powershell_ready "${vm}" "${script}" "${probe_timeout}"',
+            dc,
+        )
+        self.assertIn(
+            'vagrant_powershell_capture "${vm}" "${script}" "${probe_timeout}"',
+            member,
+        )
+
+        # A repair is allowed a larger inner timeout, but never more than the
+        # parent readiness window still has left.
+        for fn in (child, member):
+            self.assertIn('repair_timeout="${AD_REPAIR_TIMEOUT_SECONDS}"', fn)
+            self.assertIn(
+                '(( remaining < repair_timeout )) && repair_timeout="${remaining}"',
+                fn,
+            )
+            self.assertIn('"${repair_script}" "${repair_timeout}"', fn)
+
+    def test_declared_300s_readiness_budget_is_not_attempt_math(self):
+        text = self.text
+        relevant = text[text.index("ensure_child_dc_time_ready()"):
+                        text.index("preflight_domain_health()")]
+
+        self.assertNotIn("$((attempt * 5))", relevant)
+        self.assertNotIn("for attempt in {1..60}", relevant)
+        self.assertGreaterEqual(
+            relevant.count("AD_READINESS_TIMEOUT_SECONDS - elapsed"),
+            3,
+        )
+
     def test_dc_readiness_is_ad_aware_not_merely_winrm(self):
         text = self.text
 
