@@ -23,6 +23,8 @@
 - import_playbook: ad-parent_domain.yml
 - import_playbook: ad-child_domain.yml
 - import_playbook: ad-members.yml
+- import_playbook: kingdoms-time-backoff.yml
+  when: domain_name == 'GOAD'
 # create the trust relationships
 - import_playbook: ad-trusts.yml
 # import the ad datas : users/groups...

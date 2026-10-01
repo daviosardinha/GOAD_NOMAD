@@ -1,0 +1,11 @@
+---
+# Kingdoms-specific member time policy.
+#
+# Domain members stay on the native NT5DS hierarchy. Only the peer-discovery
+# retry window is shortened so an early-boot discovery miss cannot strand
+# W32Time behind the Windows default 15-minute backoff.
+- name: Configure deterministic NT5DS peer rediscovery on Kingdoms members
+  hosts: server:workstation
+  gather_facts: false
+  roles:
+    - role: kingdoms_time/member

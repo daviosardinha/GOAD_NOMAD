@@ -330,6 +330,75 @@ class InstalledWindows(unittest.TestCase):
                     )
                 self.provider.command.run_vagrant.assert_not_called()
 
+    def test_installed_members_receive_time_policy_before_ad_readiness(self):
+        self.provider.goad_nomad_windows = ['GOAD-DC01', 'GOAD-DC02', 'GOAD-SRV02']
+        self.provider.management_hosts = {
+            'GOAD-DC01': '10.4.20.10',
+            'GOAD-DC02': '10.4.10.11',
+            'GOAD-SRV02': '10.4.10.22',
+        }
+        events = []
+
+        def winrm(machine, host, timeout):
+            events.append(('winrm', machine))
+            return True
+
+        def time_policy(machine, host):
+            events.append(('time-policy', machine))
+            return True
+
+        def ad_ready(machine, host, timeout):
+            events.append(('ad', machine))
+            return True
+
+        self.provider._wait_lab_winrm_ready.side_effect = winrm
+        self.provider._ensure_installed_member_time_policy.side_effect = time_policy
+        self.provider._wait_installed_ad_ready.side_effect = ad_ready
+
+        self.assertTrue(self.method(self.provider, 'GOAD-SRV02'))
+        self.assertIn(('time-policy', 'GOAD-SRV02'), events)
+        self.assertLess(
+            events.index(('winrm', 'GOAD-SRV02')),
+            events.index(('time-policy', 'GOAD-SRV02')),
+        )
+        self.assertLess(
+            events.index(('time-policy', 'GOAD-SRV02')),
+            events.index(('ad', 'GOAD-SRV02')),
+        )
+        self.assertFalse(
+            any(event[0] == 'time-policy' and event[1].startswith('GOAD-DC') for event in events)
+        )
+
+    def test_installed_member_time_policy_is_retry_only_not_trust_repair(self):
+        text = (
+            ROOT / 'goad/provider/vagrant/vmware_kingdoms.py'
+        ).read_text(encoding='utf-8')
+        fn = text[
+            text.index('    def _ensure_installed_member_time_policy('):
+            text.index('    def _wait_installed_ad_ready(')
+        ]
+
+        for token in (
+            'ResolvePeerBackoffMinutes',
+            'ResolvePeerBackoffMaxTimes',
+            "expected NT5DS",
+            'w32tm.exe /config /update',
+            'KINGDOMS_NT5DS_BACKOFF_READY',
+        ):
+            self.assertIn(token, fn)
+
+        self.assertIn('if ($changed)', fn)
+        self.assertIn("$reloadState = 'not-required'", fn)
+        self.assertIn("for ($attempt = 1; $attempt -le 12; $attempt++)", fn)
+        self.assertIn("reload={1}", fn)
+
+        for forbidden in (
+            'Reset-ComputerMachinePassword',
+            '/sc_reset:',
+            'netdom resetpwd',
+            '/manualpeerlist:',
+        ):
+            self.assertNotIn(forbidden, fn)
     def test_invalid_selection_has_no_side_effects(self):
         self.assertFalse(self.method(self.provider, 'OTHER-VM'))
         self.provider._bring_up_router.assert_not_called()
