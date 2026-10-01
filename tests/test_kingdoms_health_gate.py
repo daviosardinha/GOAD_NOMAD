@@ -34,7 +34,8 @@ class KingdomsHealthGateTests(unittest.TestCase):
             "ResolvePeerBackoffMaxTimes",
             "data: 0",
             "NT5DS",
-            "Restart W32Time only when peer rediscovery policy changed",
+            "w32tm.exe /config /update",
+            "Reload Windows Time configuration when peer rediscovery policy changed",
         ):
             self.assertIn(token, role)
 
