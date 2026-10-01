@@ -867,15 +867,32 @@ foreach ($entry in $desired.GetEnumerator()) {
     }
 }
 
-# Always reload W32Time configuration. This is intentionally not conditional
-# on $changed: an interrupted earlier migration may have persisted the registry
-# values without successfully reloading them into the running service.
-& w32tm.exe /config /update | Out-Null
-if ($LASTEXITCODE -ne 0) {
-    throw "w32tm /config /update failed with exit code $LASTEXITCODE"
+$reloadState = 'not-required'
+if ($changed) {
+    # W32Time may still be START_PENDING during a cold boot. Error 1061
+    # (0x425) means the service cannot accept the configuration-control
+    # notification yet, so retry within a small bounded window instead of
+    # failing the entire installed-range start.
+    $reloadState = 'failed'
+    for ($attempt = 1; $attempt -le 12; $attempt++) {
+        & w32tm.exe /config /update | Out-Null
+        $updateRc = $LASTEXITCODE
+        if ($updateRc -eq 0) {
+            $reloadState = 'applied'
+            break
+        }
+
+        if ($attempt -lt 12) {
+            Start-Sleep -Seconds 5
+        }
+    }
+
+    if ($reloadState -ne 'applied') {
+        throw "w32tm /config /update did not become available within 60s; last exit code $updateRc"
+    }
 }
 
-Write-Output ("KINGDOMS_NT5DS_BACKOFF_READY|changed={0}|reloaded=true|minutes=1|max_times=0" -f $changed.ToString().ToLowerInvariant())
+Write-Output ("KINGDOMS_NT5DS_BACKOFF_READY|changed={0}|reload={1}|minutes=1|max_times=0" -f $changed.ToString().ToLowerInvariant(),$reloadState)
 """
 
         try:
