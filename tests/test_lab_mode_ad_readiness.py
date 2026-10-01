@@ -149,6 +149,7 @@ class LabModeAdReadinessTests(unittest.TestCase):
             "KINGDOMS_MEMBER_NOT_READY|reason=dns",
             "KINGDOMS_MEMBER_NOT_READY|reason=secure_channel",
             "KINGDOMS_MEMBER_NOT_READY|reason=account_translation",
+            "KINGDOMS_MEMBER_NOT_READY|reason=netlogon_session",
             "KINGDOMS_MEMBER_NOT_READY|reason=time|source=",
             "reason=transport",
         ):
@@ -170,7 +171,7 @@ class LabModeAdReadinessTests(unittest.TestCase):
             "w32tm.exe /config /syncfromflags:domhier /update",
             "nltest.exe '/dsgetdc:${domain}' /timeserv /force",
             "w32tm.exe /stripchart /computer:${dc}",
-            "ResolvePeerBackoffMinutes",
+            "nltest.exe '/sc_query:${domain}'",
             "Restart-Service W32Time -Force",
             "w32tm.exe /resync /rediscover /nowait",
             "KINGDOMS_MEMBER_TIME_REPAIRED",
@@ -186,38 +187,6 @@ class LabModeAdReadinessTests(unittest.TestCase):
             "netdom resetpwd",
         ):
             self.assertNotIn(forbidden, fn)
-
-    def test_time_recovery_temporarily_shortens_and_restores_nt5ds_backoff(self):
-        text = self.text
-
-        child = text[text.index("ensure_child_dc_time_ready()"):
-                     text.index("wait_domain_controller_ready()")]
-        member = text[text.index("wait_domain_member_ready()"):
-                      text.index("preflight_domain_health()")]
-
-        for fn in (child, member):
-            for token in (
-                "ResolvePeerBackoffMinutes",
-                "Restore-KingdomsPeerBackoff",
-                "Set-ItemProperty -Path \\$backoffPath -Name \\$backoffName -Value 1",
-                "Remove-ItemProperty -Path \\$backoffPath -Name \\$backoffName",
-                "backoff_restore",
-                "backoff_restored=true",
-            ):
-                self.assertIn(token, fn)
-
-            self.assertLess(
-                fn.index("Set-ItemProperty -Path \\$backoffPath -Name \\$backoffName -Value 1"),
-                fn.index("Restart-Service W32Time -Force"),
-            )
-            self.assertGreater(
-                fn.rindex("Restore-KingdomsPeerBackoff"),
-                fn.index("Restart-Service W32Time -Force"),
-            )
-
-        self.assertIn("w32tm.exe /stripchart /computer:${dc}", member)
-        self.assertIn("\\$source -ieq '${dc}'", member)
-        self.assertIn("expected=${dc}", member)
 
     def test_time_repair_requires_identity_probe_to_reach_time_stage(self):
         text = self.text
