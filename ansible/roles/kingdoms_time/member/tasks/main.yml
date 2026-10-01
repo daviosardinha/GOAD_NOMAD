@@ -28,10 +28,14 @@
     type: dword
   register: kingdoms_nt5ds_backoff_max
 
-- name: Reload Windows Time configuration after peer rediscovery policy check
+- name: Reload Windows Time configuration when peer rediscovery policy changed
   ansible.windows.win_shell: |
     w32tm.exe /config /update | Out-Null
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-  # Always execute the reload. A previous interrupted migration may already
-  # have written the registry values without applying them to the live service.
-  changed_when: kingdoms_nt5ds_backoff_minutes.changed or kingdoms_nt5ds_backoff_max.changed
+  register: kingdoms_nt5ds_reload
+  retries: 12
+  delay: 5
+  until: kingdoms_nt5ds_reload.rc == 0
+  changed_when: true
+  when:
+    - kingdoms_nt5ds_backoff_minutes.changed or kingdoms_nt5ds_backoff_max.changed
