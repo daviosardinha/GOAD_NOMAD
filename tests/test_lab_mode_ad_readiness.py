@@ -83,7 +83,7 @@ class LabModeAdReadinessTests(unittest.TestCase):
             '[GOAD-DC02]="kingslanding.sevenkingdoms.local"',
             'ensure_child_dc_time_ready()',
             "nltest.exe '/dsgetdc:${parent_domain}' /timeserv /force",
-            "w32tm.exe /stripchart /computer:'${parent_server}'",
+            "w32tm.exe /stripchart /computer:${parent_server}",
             "w32tm.exe /config /syncfromflags:domhier /update",
             "w32tm.exe /resync /rediscover /nowait",
             "KINGDOMS_DC_TIME_REPAIRED",
@@ -118,7 +118,7 @@ class LabModeAdReadinessTests(unittest.TestCase):
 
         self.assertIn("repair_attempted == 0", fn)
         self.assertIn("consecutive_source_failures >= 6", fn)
-        self.assertIn("syncAttempt -le 18", fn)
+        self.assertIn("syncAttempt -le 12", fn)
 
         for forbidden in (
             "Reset-ComputerMachinePassword",
