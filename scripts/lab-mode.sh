@@ -479,7 +479,7 @@ Start-Sleep -Seconds 2
 \$sourceRc = -1
 \$lastResyncRc = -1
 
-for (\$syncAttempt = 1; \$syncAttempt -le 18; \$syncAttempt++) {
+for (\$syncAttempt = 1; \$syncAttempt -le 12; \$syncAttempt++) {
     if (\$syncAttempt -eq 1 -or ((\$syncAttempt - 1) % 3) -eq 0) {
         # Prime the parent-domain locator immediately before rediscovery. This
         # avoids waiting for W32Time's default 15-minute peer-resolution backoff.
