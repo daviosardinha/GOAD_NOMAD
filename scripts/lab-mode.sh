@@ -452,10 +452,84 @@ if (\$stripRc -ne 0) {
     exit 0
 }
 
+# A failed NT5DS peer lookup enters W32Time's long ResolvePeerBackoff window.
+# Shorten that value only for this bounded lifecycle recovery, then restore the
+# exact pre-existing registry state before returning on every terminal path.
+\$backoffPath = 'HKLM:\SYSTEM\CurrentControlSet\Services\W32Time\TimeProviders\NtpClient'
+\$backoffName = 'ResolvePeerBackoffMinutes'
+\$backoffWasPresent = \$false
+\$originalBackoff = \$null
+\$backoffChanged = \$false
+\$script:kingdomsBackoffRestoreDetail = ''
+
+function Restore-KingdomsPeerBackoff {
+    if (-not \$backoffChanged) {
+        return \$true
+    }
+
+    try {
+        if (\$backoffWasPresent) {
+            Set-ItemProperty -Path \$backoffPath -Name \$backoffName -Value \$originalBackoff -ErrorAction Stop
+        }
+        else {
+            Remove-ItemProperty -Path \$backoffPath -Name \$backoffName -ErrorAction SilentlyContinue
+        }
+
+        & w32tm.exe /config /update | Out-Null
+        \$restoreUpdateRc = \$LASTEXITCODE
+        if (\$restoreUpdateRc -ne 0) {
+            throw "w32tm /config /update rc=\$restoreUpdateRc"
+        }
+
+        return \$true
+    }
+    catch {
+        \$script:kingdomsBackoffRestoreDetail = ((\$_.Exception.Message -replace '[|\r\n]', ' ').Trim())
+        return \$false
+    }
+}
+
+try {
+    \$backoffItem = Get-ItemProperty -Path \$backoffPath -ErrorAction Stop
+    \$backoffProperty = \$backoffItem.PSObject.Properties[\$backoffName]
+
+    if (\$null -ne \$backoffProperty) {
+        \$backoffWasPresent = \$true
+        \$originalBackoff = [int]\$backoffProperty.Value
+        Set-ItemProperty -Path \$backoffPath -Name \$backoffName -Value 1 -ErrorAction Stop
+    }
+    else {
+        New-ItemProperty -Path \$backoffPath -Name \$backoffName -Value 1 -PropertyType DWord -Force -ErrorAction Stop | Out-Null
+    }
+
+    \$backoffChanged = \$true
+
+    & w32tm.exe /config /update | Out-Null
+    \$backoffUpdateRc = \$LASTEXITCODE
+    if (\$backoffUpdateRc -ne 0) {
+        throw "w32tm /config /update rc=\$backoffUpdateRc"
+    }
+}
+catch {
+    \$detail = ((\$_.Exception.Message -replace '[|\r\n]', ' ').Trim())
+    if (-not (Restore-KingdomsPeerBackoff)) {
+        Write-Output "KINGDOMS_DC_TIME_REPAIR_FAILED|stage=backoff_restore|detail=\$script:kingdomsBackoffRestoreDetail"
+    }
+    else {
+        Write-Output "KINGDOMS_DC_TIME_REPAIR_FAILED|stage=backoff_apply|detail=\$detail"
+    }
+    exit 0
+}
+
 & w32tm.exe /config /syncfromflags:domhier /update | Out-Null
 \$configRc = \$LASTEXITCODE
 if (\$configRc -ne 0) {
-    Write-Output "KINGDOMS_DC_TIME_REPAIR_FAILED|stage=config|rc=\$configRc"
+    if (-not (Restore-KingdomsPeerBackoff)) {
+        Write-Output "KINGDOMS_DC_TIME_REPAIR_FAILED|stage=backoff_restore|detail=\$script:kingdomsBackoffRestoreDetail"
+    }
+    else {
+        Write-Output "KINGDOMS_DC_TIME_REPAIR_FAILED|stage=config|rc=\$configRc"
+    }
     exit 0
 }
 
@@ -469,7 +543,12 @@ try {
 }
 catch {
     \$detail = ((\$_.Exception.Message -replace '[|\r\n]', ' ').Trim())
-    Write-Output "KINGDOMS_DC_TIME_REPAIR_FAILED|stage=service|detail=\$detail"
+    if (-not (Restore-KingdomsPeerBackoff)) {
+        Write-Output "KINGDOMS_DC_TIME_REPAIR_FAILED|stage=backoff_restore|detail=\$script:kingdomsBackoffRestoreDetail"
+    }
+    else {
+        Write-Output "KINGDOMS_DC_TIME_REPAIR_FAILED|stage=service|detail=\$detail"
+    }
     exit 0
 }
 
@@ -478,11 +557,12 @@ Start-Sleep -Seconds 2
 \$source = ''
 \$sourceRc = -1
 \$lastResyncRc = -1
+\$repairedAttempt = 0
 
 for (\$syncAttempt = 1; \$syncAttempt -le 12; \$syncAttempt++) {
     if (\$syncAttempt -eq 1 -or ((\$syncAttempt - 1) % 3) -eq 0) {
-        # Prime the parent-domain locator immediately before rediscovery. This
-        # avoids waiting for W32Time's default 15-minute peer-resolution backoff.
+        # Prime the parent-domain locator immediately before rediscovery while
+        # the temporary one-minute retry window is active.
         & nltest.exe '/dsgetdc:${parent_domain}' /timeserv /force | Out-Null
         & w32tm.exe /resync /rediscover /nowait | Out-Null
         \$lastResyncRc = \$LASTEXITCODE
@@ -494,20 +574,28 @@ for (\$syncAttempt = 1; \$syncAttempt -le 12; \$syncAttempt++) {
     \$sourceRc = \$LASTEXITCODE
 
     if (\$sourceRc -eq 0 -and \$source -ieq '${parent_server}') {
-        # Once synchronized, wait until Netlogon exposes this child PDC as a
-        # TIMESERV so local-domain members can discover it deterministically.
         \$advertise = @(& nltest.exe '/dsgetdc:${domain}' /timeserv /force 2>&1 | ForEach-Object { "\$_" })
         \$advertiseRc = \$LASTEXITCODE
         if (\$advertiseRc -eq 0) {
-            Write-Output "KINGDOMS_DC_TIME_REPAIRED|source=\$source|sync_attempt=\$syncAttempt"
-            exit 0
+            \$repairedAttempt = \$syncAttempt
+            break
         }
     }
 }
 
+if (-not (Restore-KingdomsPeerBackoff)) {
+    Write-Output "KINGDOMS_DC_TIME_REPAIR_FAILED|stage=backoff_restore|detail=\$script:kingdomsBackoffRestoreDetail"
+    exit 0
+}
+
+if (\$repairedAttempt -gt 0) {
+    Write-Output "KINGDOMS_DC_TIME_REPAIRED|source=\$source|sync_attempt=\$repairedAttempt|backoff_restored=true"
+    exit 0
+}
+
 \$sourceSafe = ((\$source -replace '[|\r\n]', ' ').Trim())
 if (-not \$sourceSafe) { \$sourceSafe = '<none>' }
-Write-Output "KINGDOMS_DC_TIME_REPAIR_FAILED|stage=sync_or_advertising|resync_rc=\$lastResyncRc|source_rc=\$sourceRc|source=\$sourceSafe|expected=${parent_server}"
+Write-Output "KINGDOMS_DC_TIME_REPAIR_FAILED|stage=sync_or_advertising|resync_rc=\$lastResyncRc|source_rc=\$sourceRc|source=\$sourceSafe|expected=${parent_server}|backoff_restored=true"
 exit 0
 POWERSHELL
 )"
@@ -708,15 +796,16 @@ finally {
     \$ErrorActionPreference = \$savedPreference
 }
 
-if (\$sourceRc -ne 0 -or -not \$source -or \$source -match 'Local CMOS Clock') {
+\$source = \$source.Trim().TrimEnd('.')
+if (\$sourceRc -ne 0 -or -not \$source -or \$source -ine '${dc}') {
     \$sourceSafe = ((\$source -replace '[|\r\n]', ' ').Trim())
     if (-not \$sourceSafe) { \$sourceSafe = '<none>' }
-    Write-Output "KINGDOMS_MEMBER_NOT_READY|reason=time|source=\$sourceSafe"
+    Write-Output "KINGDOMS_MEMBER_NOT_READY|reason=time|source=\$sourceSafe|expected=${dc}"
     exit 0
 }
 
 \$sourceSafe = ((\$source -replace '[|\r\n]', ' ').Trim())
-Write-Output "KINGDOMS_MEMBER_RUNTIME_READY|time=\$sourceSafe"
+Write-Output "KINGDOMS_MEMBER_RUNTIME_READY|time=\$sourceSafe|expected=${dc}"
 POWERSHELL
 )"
 
@@ -725,8 +814,7 @@ POWERSHELL
 
 # The normal readiness probe has already proved DNS, the machine secure
 # channel and domain-account translation. The remaining failure is W32Time
-# being stuck without a discovered NT5DS peer. Prime DC Locator specifically
-# for a TIMESERV-capable DC before resetting the W32Time discovery state.
+# being stuck without a discovered NT5DS peer.
 \$locator = @(& nltest.exe '/dsgetdc:${domain}' /timeserv /force 2>&1 | ForEach-Object { "\$_" })
 \$locatorRc = \$LASTEXITCODE
 if (\$locatorRc -ne 0) {
@@ -735,10 +823,95 @@ if (\$locatorRc -ne 0) {
     exit 0
 }
 
+# A successful locator is not enough: prove the selected DC is actually
+# reachable over NTP before modifying the local W32Time recovery state.
+\$strip = @(& w32tm.exe /stripchart /computer:${dc} /samples:2 /dataonly 2>&1 | ForEach-Object { "\$_" })
+\$stripRc = \$LASTEXITCODE
+if (\$stripRc -ne 0) {
+    \$detail = ((\$strip -join ' ') -replace '[|\r\n]', ' ').Trim()
+    Write-Output "KINGDOMS_MEMBER_TIME_REPAIR_FAILED|stage=ntp_path|rc=\$stripRc|detail=\$detail"
+    exit 0
+}
+
+# Event 129 proves NT5DS can enter a long peer-resolution backoff even after
+# AD identity and the NTP path are healthy. Shorten that retry window only for
+# this bounded lifecycle recovery and restore the exact previous value before
+# returning, whether recovery succeeds or fails.
+\$backoffPath = 'HKLM:\SYSTEM\CurrentControlSet\Services\W32Time\TimeProviders\NtpClient'
+\$backoffName = 'ResolvePeerBackoffMinutes'
+\$backoffWasPresent = \$false
+\$originalBackoff = \$null
+\$backoffChanged = \$false
+\$script:kingdomsBackoffRestoreDetail = ''
+
+function Restore-KingdomsPeerBackoff {
+    if (-not \$backoffChanged) {
+        return \$true
+    }
+
+    try {
+        if (\$backoffWasPresent) {
+            Set-ItemProperty -Path \$backoffPath -Name \$backoffName -Value \$originalBackoff -ErrorAction Stop
+        }
+        else {
+            Remove-ItemProperty -Path \$backoffPath -Name \$backoffName -ErrorAction SilentlyContinue
+        }
+
+        & w32tm.exe /config /update | Out-Null
+        \$restoreUpdateRc = \$LASTEXITCODE
+        if (\$restoreUpdateRc -ne 0) {
+            throw "w32tm /config /update rc=\$restoreUpdateRc"
+        }
+
+        return \$true
+    }
+    catch {
+        \$script:kingdomsBackoffRestoreDetail = ((\$_.Exception.Message -replace '[|\r\n]', ' ').Trim())
+        return \$false
+    }
+}
+
+try {
+    \$backoffItem = Get-ItemProperty -Path \$backoffPath -ErrorAction Stop
+    \$backoffProperty = \$backoffItem.PSObject.Properties[\$backoffName]
+
+    if (\$null -ne \$backoffProperty) {
+        \$backoffWasPresent = \$true
+        \$originalBackoff = [int]\$backoffProperty.Value
+        Set-ItemProperty -Path \$backoffPath -Name \$backoffName -Value 1 -ErrorAction Stop
+    }
+    else {
+        New-ItemProperty -Path \$backoffPath -Name \$backoffName -Value 1 -PropertyType DWord -Force -ErrorAction Stop | Out-Null
+    }
+
+    \$backoffChanged = \$true
+
+    & w32tm.exe /config /update | Out-Null
+    \$backoffUpdateRc = \$LASTEXITCODE
+    if (\$backoffUpdateRc -ne 0) {
+        throw "w32tm /config /update rc=\$backoffUpdateRc"
+    }
+}
+catch {
+    \$detail = ((\$_.Exception.Message -replace '[|\r\n]', ' ').Trim())
+    if (-not (Restore-KingdomsPeerBackoff)) {
+        Write-Output "KINGDOMS_MEMBER_TIME_REPAIR_FAILED|stage=backoff_restore|detail=\$script:kingdomsBackoffRestoreDetail"
+    }
+    else {
+        Write-Output "KINGDOMS_MEMBER_TIME_REPAIR_FAILED|stage=backoff_apply|detail=\$detail"
+    }
+    exit 0
+}
+
 & w32tm.exe /config /syncfromflags:domhier /update | Out-Null
 \$configRc = \$LASTEXITCODE
 if (\$configRc -ne 0) {
-    Write-Output "KINGDOMS_MEMBER_TIME_REPAIR_FAILED|stage=config|rc=\$configRc"
+    if (-not (Restore-KingdomsPeerBackoff)) {
+        Write-Output "KINGDOMS_MEMBER_TIME_REPAIR_FAILED|stage=backoff_restore|detail=\$script:kingdomsBackoffRestoreDetail"
+    }
+    else {
+        Write-Output "KINGDOMS_MEMBER_TIME_REPAIR_FAILED|stage=config|rc=\$configRc"
+    }
     exit 0
 }
 
@@ -752,45 +925,57 @@ try {
 }
 catch {
     \$detail = ((\$_.Exception.Message -replace '[|\r\n]', ' ').Trim())
-    Write-Output "KINGDOMS_MEMBER_TIME_REPAIR_FAILED|stage=service|detail=\$detail"
+    if (-not (Restore-KingdomsPeerBackoff)) {
+        Write-Output "KINGDOMS_MEMBER_TIME_REPAIR_FAILED|stage=backoff_restore|detail=\$script:kingdomsBackoffRestoreDetail"
+    }
+    else {
+        Write-Output "KINGDOMS_MEMBER_TIME_REPAIR_FAILED|stage=service|detail=\$detail"
+    }
     exit 0
 }
 
-# W32Time can enter its peer-resolution backoff when NT5DS discovery fails
-# during early boot. Give the restarted service a moment, request an immediate
-# rediscovery without blocking the WinRM transport, then poll the authoritative
-# source. Re-issue rediscovery periodically while keeping the whole repair
-# bounded to roughly one minute.
 Start-Sleep -Seconds 2
 
 \$lastResyncRc = -1
 \$source = ''
 \$sourceRc = -1
+\$repairedAttempt = 0
+
 for (\$repairAttempt = 1; \$repairAttempt -le 12; \$repairAttempt++) {
     if (\$repairAttempt -eq 1 -or ((\$repairAttempt - 1) % 3) -eq 0) {
+        & nltest.exe '/dsgetdc:${domain}' /timeserv /force | Out-Null
         & w32tm.exe /resync /rediscover /nowait | Out-Null
         \$lastResyncRc = \$LASTEXITCODE
     }
 
     Start-Sleep -Seconds 5
 
-    \$source = (& w32tm.exe /query /source 2>\$null | Out-String).Trim()
+    \$source = (& w32tm.exe /query /source 2>\$null | Out-String).Trim().TrimEnd('.')
     \$sourceRc = \$LASTEXITCODE
 
     if (
         \$sourceRc -eq 0 -and
         \$source -and
-        \$source -notmatch 'Local CMOS Clock'
+        \$source -ieq '${dc}'
     ) {
-        \$sourceSafe = ((\$source -replace '[|\r\n]', ' ').Trim())
-        Write-Output "KINGDOMS_MEMBER_TIME_REPAIRED|source=\$sourceSafe|attempt=\$repairAttempt"
-        exit 0
+        \$repairedAttempt = \$repairAttempt
+        break
     }
+}
+
+if (-not (Restore-KingdomsPeerBackoff)) {
+    Write-Output "KINGDOMS_MEMBER_TIME_REPAIR_FAILED|stage=backoff_restore|detail=\$script:kingdomsBackoffRestoreDetail"
+    exit 0
+}
+
+if (\$repairedAttempt -gt 0) {
+    Write-Output "KINGDOMS_MEMBER_TIME_REPAIRED|source=\$source|attempt=\$repairedAttempt|backoff_restored=true"
+    exit 0
 }
 
 \$sourceSafe = ((\$source -replace '[|\r\n]', ' ').Trim())
 if (-not \$sourceSafe) { \$sourceSafe = '<none>' }
-Write-Output "KINGDOMS_MEMBER_TIME_REPAIR_FAILED|stage=rediscover|resync_rc=\$lastResyncRc|source_rc=\$sourceRc|source=\$sourceSafe"
+Write-Output "KINGDOMS_MEMBER_TIME_REPAIR_FAILED|stage=rediscover|resync_rc=\$lastResyncRc|source_rc=\$sourceRc|source=\$sourceSafe|expected=${dc}|backoff_restored=true"
 exit 0
 POWERSHELL
 )"
