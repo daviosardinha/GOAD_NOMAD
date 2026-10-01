@@ -867,14 +867,15 @@ foreach ($entry in $desired.GetEnumerator()) {
     }
 }
 
-if ($changed) {
-    & w32tm.exe /config /update | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        throw "w32tm /config /update failed with exit code $LASTEXITCODE"
-    }
+# Always reload W32Time configuration. This is intentionally not conditional
+# on $changed: an interrupted earlier migration may have persisted the registry
+# values without successfully reloading them into the running service.
+& w32tm.exe /config /update | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    throw "w32tm /config /update failed with exit code $LASTEXITCODE"
 }
 
-Write-Output ("KINGDOMS_NT5DS_BACKOFF_READY|changed={0}|minutes=1|max_times=0" -f $changed.ToString().ToLowerInvariant())
+Write-Output ("KINGDOMS_NT5DS_BACKOFF_READY|changed={0}|reloaded=true|minutes=1|max_times=0" -f $changed.ToString().ToLowerInvariant())
 """
 
         try:
