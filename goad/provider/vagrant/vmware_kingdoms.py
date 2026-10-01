@@ -905,12 +905,12 @@ foreach ($shareName in @('SYSVOL','NETLOGON')) {{
     }}
 }}
 
-$generic = @(& nltest.exe '/dsgetdc:{contract["domain"]}' /force 2>&1)
+$generic = @(& nltest.exe '/dsgetdc:{contract['domain']}' /force 2>&1)
 if ($LASTEXITCODE -ne 0) {{
     throw "DC Locator is not ready: $($generic -join ' ')"
 }}
 
-$timeserv = @(& nltest.exe '/dsgetdc:{contract["domain"]}' /timeserv /force 2>&1)
+$timeserv = @(& nltest.exe '/dsgetdc:{contract['domain']}' /timeserv /force 2>&1)
 if ($LASTEXITCODE -ne 0) {{
     throw "TIMESERV advertising is not ready: $($timeserv -join ' ')"
 }}
@@ -922,21 +922,21 @@ Write-Output 'KINGDOMS_INSTALLED_AD_READY'
             script = f"""
 $ErrorActionPreference = 'Stop'
 
-Resolve-DnsName '{contract["dc"]}' -ErrorAction Stop | Out-Null
+Resolve-DnsName '{contract['dc']}' -ErrorAction Stop | Out-Null
 
-$secure = Test-ComputerSecureChannel -Server '{contract["dc"]}' -ErrorAction Stop
+$secure = Test-ComputerSecureChannel -Server '{contract['dc']}' -ErrorAction Stop
 if (-not $secure) {{
     throw 'machine secure channel is not healthy'
 }}
 
-$sc = @(& nltest.exe '/sc_query:{contract["domain"]}' 2>&1)
+$sc = @(& nltest.exe '/sc_query:{contract['domain']}' 2>&1)
 if ($LASTEXITCODE -ne 0) {{
     throw "Netlogon secure session is not ready: $($sc -join ' ')"
 }}
 
 $source = (& w32tm.exe /query /source 2>$null | Out-String).Trim().TrimEnd('.')
-if ($LASTEXITCODE -ne 0 -or $source -ine '{contract["dc"]}') {{
-    throw "W32Time source is '$source', expected {contract["dc"]}"
+if ($LASTEXITCODE -ne 0 -or $source -ine '{contract['dc']}') {{
+    throw "W32Time source is '$source', expected {contract['dc']}"
 }}
 
 Write-Output 'KINGDOMS_INSTALLED_AD_READY'
