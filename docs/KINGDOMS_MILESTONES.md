@@ -285,12 +285,15 @@ These items were identified while stabilizing the current fresh-install/runtime 
 - [ ] Improve non-interactive destroy behavior. `./goad.sh -t destroy -i <instance>` currently reaches interactive `vagrant destroy`; scripted use should confirm once at the Kingdoms controller boundary and then destroy non-interactively.
 - [ ] Keep the current fail-closed AD readiness and exercise-isolation contracts intact while making the maintenance changes above.
 
-### Fresh-install performance
+### Install / startup performance
 
+- [ ] Shorten the full Kingdoms lab `start` lifecycle from the current validated baseline of roughly **10–11 minutes on an already-running host** and **15–17 minutes after a full host reboot**, without weakening any readiness or isolation guarantee.
+- [ ] Profile startup by phase before changing behavior so the actual cost of router/network preparation, guest boot, WinRM, AD dependency gates, NT5DS convergence and exercise-mode restoration is measurable.
 - [ ] Reduce VMware Tools / VIX guest-IP telemetry recovery overhead when authenticated WinRM and guest-side VMware Tools health are already authoritative.
 - [ ] Profile and shorten the slowest fresh-build recovery cycles, especially WS01 and member-server first boot, without weakening readiness checks.
 - [ ] Cache/pin PowerShell Gallery dependencies such as ActiveDirectoryDSC to reduce download latency and transient external failures.
-- [ ] Evaluate safe dependency-aware parallelism for independent topology branches instead of serializing every machine.
+- [ ] Evaluate safe dependency-aware parallelism for independent topology branches instead of serializing every machine. Preserve the dependency contract: DC01 and DC03 may proceed independently; DC02 waits for DC01; SRV02 and WS01 wait for DC02; SRV03 waits for DC03.
+- [ ] Preserve NT5DS validation, bounded WinRM readiness, secure-channel / Netlogon checks, authenticated exercise-mode readiness proof, persistent NAT-off state, provisioning-route cleanup and fail-closed router isolation while optimizing startup.
 - [ ] Add a faster development path that can reuse cached artifacts/base state, while keeping the true zero-state build as the release acceptance path.
 - [ ] Consider explicit install/validation modes such as fast, full, and release after the current lifecycle is frozen.
 
