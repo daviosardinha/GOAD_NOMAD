@@ -471,6 +471,8 @@ ensure_child_dc_time_ready() {
     local last_state="reason=transport"
     local consecutive_source_failures=0
     local repair_attempted=0
+    local repair_deferred=0
+    local repair_invocations=0
     [[ -n "${parent_domain}" && -n "${parent_server}" ]] || return 0
 
     probe_script="$(cat <<POWERSHELL
@@ -622,8 +624,8 @@ POWERSHELL
 
         if (( repair_attempted == 0 && consecutive_source_failures >= 6 )); then
             echo "        [!] ${vm} AD is ready but child-domain time stayed off the parent hierarchy for ~30s"
-            echo "        [*] attempting one bounded child-PDC W32Time hierarchy recovery"
-            repair_attempted=1
+            echo "        [*] checking parent time prerequisites before bounded W32Time recovery"
+            repair_invocations=$((repair_invocations + 1))
 
             elapsed=$((SECONDS - started))
             remaining=$((AD_READINESS_TIMEOUT_SECONDS - elapsed))
@@ -635,21 +637,28 @@ POWERSHELL
             if output="$(vagrant_powershell_capture "${vm}" "${repair_script}" "${repair_timeout}")"; then
                 marker="$(
                     printf '%s\n' "${output}" |
-                        grep -E 'KINGDOMS_DC_TIME_(REPAIRED|REPAIR_FAILED)\|' |
+                        grep -E 'KINGDOMS_DC_TIME_(REPAIRED|REPAIR_DEFERRED|REPAIR_FAILED)\|' |
                         tail -n 1 || true
                 )"
 
                 if [[ "${marker}" == KINGDOMS_DC_TIME_REPAIRED\|* ]]; then
+                    repair_attempted=1
                     echo "        [+] ${vm} child-domain time recovery completed: ${marker}"
+                elif [[ "${marker}" == KINGDOMS_DC_TIME_REPAIR_DEFERRED\|* ]]; then
+                    repair_deferred=$((repair_deferred + 1))
+                    last_state="reason=repair_deferred|${marker#KINGDOMS_DC_TIME_REPAIR_DEFERRED|}"
+                    echo "        [*] ${vm} child-domain time repair deferred; parent prerequisite is not ready yet"
+                    echo "            ${marker}"
                 elif [[ "${marker}" == KINGDOMS_DC_TIME_REPAIR_FAILED\|* ]]; then
-                    fail "${vm} child-domain time recovery failed: ${marker}"
+                    repair_attempted=1
+                    fail "${vm} child-domain time recovery failed after prerequisites were proven: ${marker}"
                 else
                     fail "${vm} child-domain time recovery returned without a terminal marker"
                 fi
             else
                 marker="$(
                     printf '%s\n' "${output}" |
-                        grep -E 'KINGDOMS_DC_TIME_(REPAIRED|REPAIR_FAILED)\|' |
+                        grep -E 'KINGDOMS_DC_TIME_(REPAIRED|REPAIR_DEFERRED|REPAIR_FAILED)\|' |
                         tail -n 1 || true
                 )"
                 fail "${vm} child-domain time recovery transport failed within remaining readiness budget: ${marker:-no marker}"
@@ -673,7 +682,7 @@ POWERSHELL
             sleep "${AD_READINESS_RETRY_DELAY_SECONDS}"
         fi
     done
-    fail "${vm} child-domain time hierarchy did not converge within 300s; ${last_state}; repair_attempted=${repair_attempted}"
+    fail "${vm} child-domain time hierarchy did not converge within 300s; ${last_state}; repair_attempted=${repair_attempted}; repair_deferred=${repair_deferred}; repair_invocations=${repair_invocations}"
 }
 
 wait_domain_controller_ready() {
