@@ -73,6 +73,12 @@ if ss -H -nt state established 2>/dev/null | grep -Eq "[[:space:]]$TARGET_IP:338
   exit 0
 fi
 
+if systemctl --user is-active --quiet "$SERVICE" && [[ "${RICKON_DIAG_ALLOW_ACTIVE_AUTH:-0}" != "1" ]]; then
+  echo
+  echo 'INFO: Rickon service is still active; skipping parallel auth-only probe'
+  exit 0
+fi
+
 echo
 echo '===== FREERDP AUTH-ONLY PROBE ====='
 set +e
