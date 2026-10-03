@@ -283,6 +283,13 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         self.assertIn("kingdoms-mitm6.log", shell)
         self.assertIn("WPAD HTTP observer log missing", shell)
         self.assertIn("WPAD packet capture is not running", shell)
+        self.assertIn("WPAD_WAIT_SECONDS:-360", shell)
+        self.assertIn("WPAD_POLL_SECONDS:-10", shell)
+        self.assertIn("still waiting for Windows WPAD discovery", shell)
+        self.assertIn("PHASE03_WPAD_AUTODISCOVERY_OBSERVED=True", shell)
+        self.assertIn('dns.qry.name contains \\"wpad\\"', shell)
+        self.assertIn('http.request.uri == \\"/wpad.dat\\"', shell)
+        self.assertNotIn("Waiting 8 seconds", shell)
         self.assertNotIn("validate-rickon-session.sh", shell)
 
     def test_wpad_chain_validator_requires_same_capture_sequence(self):
