@@ -9,6 +9,8 @@ DATA_INVENTORY="$ROOT/ad/GOAD/data/inventory"
 PROVIDER_INVENTORY="$ROOT/ad/GOAD/providers/vmware/inventory"
 MITM6_LOG="${MITM6_LOG:-/tmp/kingdoms-mitm6.log}"
 HTTP_LOG="${HTTP_LOG:-/tmp/kingdoms-wpad-http.log}"
+IFACE="${IFACE:-vmnet10}"
+PCAP="${PCAP:-/tmp/kingdoms-wpad.pcap}"
 
 find_ansible_playbook() {
   local c
@@ -53,7 +55,7 @@ sudo ss -H -lntp 2>/dev/null | grep -Eq ':80[[:space:]]' || {
   exit 1
 }
 
-pgrep -af 'tcpdump[ ].*-i[ ]+vmnet10[ ].*-w[ ]+/tmp/kingdoms-wpad[.]pcap' >/dev/null || {
+pgrep -af "tcpdump[ ].*-i[ ]+${IFACE}[ ].*-w[ ]+${PCAP//./[.]}" >/dev/null || {
   echo 'FAIL: WPAD packet capture is not running' >&2
   exit 1
 }
