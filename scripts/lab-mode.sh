@@ -565,6 +565,21 @@ guestops_credential_value() {
     printf '%s\n' "${value}"
 }
 
+guestops_error() {
+    local stage="$1" rc="$2" detail="${3:-No diagnostic returned by VMware Tools}"
+    local guest_user="${4:-}" guest_password="${5:-}"
+
+    # vmrun diagnostics can repeat arguments. Never include credentials in the
+    # captured readiness output, including passwords containing glob syntax.
+    [[ -z "${guest_password}" ]] || detail="${detail//"${guest_password}"/[REDACTED]}"
+    [[ -z "${guest_user}" ]] || detail="${detail//"${guest_user}"/[REDACTED]}"
+    detail="${detail//$'\r'/ }"
+    detail="${detail//$'\n'/ }"
+    detail="${detail//|/ }"
+    printf 'KINGDOMS_GUESTOPS_ERROR|stage=%s|rc=%s|detail=%s\n' \
+        "${stage}" "${rc}" "${detail:0:1500}"
+}
+
 vmware_guest_powershell_capture() {
     local vm="$1"
     local script="$2"
@@ -572,19 +587,27 @@ vmware_guest_powershell_capture() {
     local vmx guest_user guest_password encoded
     local guest_output host_output command_line
     local run_rc=0 copy_rc=1 attempt
+    local list_output="" list_rc=0 run_detail="" copy_detail=""
     local started="${SECONDS}" remaining="${timeout_seconds}"
 
     (( timeout_seconds > 0 )) || return 124
 
-    vmx="$(vmx_for "${vm}")"
-    if ! timeout --kill-after=1 "${remaining}" vmrun -T ws list 2>/dev/null |
-        tail -n +2 | grep -Fxq "${vmx}"; then
+    vmx="$(vmx_for "${vm}")" || return
+    if list_output="$(timeout --kill-after=1 "${remaining}" vmrun -T ws list 2>&1)"; then
+        :
+    else
+        list_rc=$?
+        guestops_error list "${list_rc}" "${list_output}"
         (( SECONDS - started < timeout_seconds )) || return 124
+        return "${list_rc}"
+    fi
+    if ! tail -n +2 <<<"${list_output}" | grep -Fxq "${vmx}"; then
+        guestops_error state 125 "${vm} is not listed as running"
         return 125
     fi
 
-    guest_user="$(guestops_credential_value "${vm}" ansible_user)"
-    guest_password="$(guestops_credential_value "${vm}" ansible_password)"
+    guest_user="$(guestops_credential_value "${vm}" ansible_user)" || return
+    guest_password="$(guestops_credential_value "${vm}" ansible_password)" || return
 
     encoded="$(
         printf '%s' "${script}" |
@@ -604,16 +627,17 @@ vmware_guest_powershell_capture() {
     remaining=$((timeout_seconds - (SECONDS - started)))
     if (( remaining <= 0 )); then
         rm -f "${host_output}"
+        guestops_error prepare 124 "Probe deadline expired before guest execution"
         return 124
     fi
 
-    if timeout --kill-after=1 "${remaining}" vmrun -T ws \
+    if run_detail="$(timeout --kill-after=1 "${remaining}" vmrun -T ws \
         -gu "${guest_user}" \
         -gp "${guest_password}" \
         runProgramInGuest \
         "${vmx}" \
         'C:\Windows\System32\cmd.exe' \
-        /d /s /c "${command_line}" >/dev/null 2>&1; then
+        /d /s /c "${command_line}" 2>&1)"; then
         run_rc=0
     else
         run_rc=$?
@@ -623,16 +647,21 @@ vmware_guest_powershell_capture() {
         remaining=$((timeout_seconds - (SECONDS - started)))
         (( remaining > 0 )) || break
 
-        if timeout --kill-after=1 "${remaining}" vmrun -T ws \
+        if copy_detail="$(timeout --kill-after=1 "${remaining}" vmrun -T ws \
             -gu "${guest_user}" \
             -gp "${guest_password}" \
             copyFileFromGuestToHost \
             "${vmx}" \
             "${guest_output}" \
-            "${host_output}" >/dev/null 2>&1; then
+            "${host_output}" 2>&1)"; then
             copy_rc=0
             break
+        else
+            copy_rc=$?
         fi
+
+        # Preserve a failed launch after one result-copy attempt.
+        (( run_rc == 0 )) || break
 
         remaining=$((timeout_seconds - (SECONDS - started)))
         (( remaining > 0 )) || break
@@ -656,12 +685,42 @@ vmware_guest_powershell_capture() {
     fi
     rm -f "${host_output}"
 
+    if (( run_rc != 0 )); then
+        guestops_error run "${run_rc}" "${run_detail}" "${guest_user}" "${guest_password}"
+        (( SECONDS - started < timeout_seconds )) || return 124
+        return "${run_rc}"
+    fi
     if (( copy_rc != 0 )); then
+        guestops_error copy "${copy_rc}" "${copy_detail}" "${guest_user}" "${guest_password}"
         (( SECONDS - started < timeout_seconds )) || return 124
         return 126
     fi
     return "${run_rc}"
 }
+
+guestops_check() (
+    local vm="${1:-GOAD-DC02}" vmx output rc
+    [[ -n "${GUESTOPS_INVENTORY_ALIAS[${vm}]:-}" ]] ||
+        fail "No Guest Operations inventory alias is defined for ${vm}"
+    vmx="$(vmx_for "${vm}")" || exit
+    [[ "$(get_start_connected "${vmx}")" == "FALSE" ]] ||
+        fail "${vm}: GuestOps check requires persistent NAT to remain FALSE"
+
+    echo "[*] ${vm}: one GuestOps output-capture probe (15s budget)"
+    READINESS_TRANSPORT=guestops
+    if output="$(powershell_capture "${vm}" \
+        "Write-Output 'KINGDOMS_GUESTOPS_CAPTURE=PASS'" \
+        "${AD_READINESS_PROBE_TIMEOUT_SECONDS}")"; then
+        printf '%s\n' "${output}"
+        grep -Fq 'KINGDOMS_GUESTOPS_CAPTURE=PASS' <<<"${output}" ||
+            fail "${vm}: guest execution returned without the output-capture marker"
+        echo "[+] ${vm} GuestOps execution and output capture passed"
+    else
+        rc=$?
+        printf '%s\n' "${output}" >&2
+        fail "${vm}: GuestOps output-capture probe failed (rc=${rc})"
+    fi
+)
 
 powershell_capture() {
     local vm="$1"
@@ -1743,8 +1802,12 @@ main() {
             show_status
             ;;
 
+        guestops-check)
+            guestops_check "${2:-GOAD-DC02}"
+            ;;
+
         *)
-            echo "Usage: $0 {exercise|exercise-failsafe|provisioning|status}" >&2
+            echo "Usage: $0 {exercise|exercise-failsafe|provisioning|status|guestops-check [VM]}" >&2
             exit 2
             ;;
     esac

@@ -551,7 +551,8 @@ class LabModeAdReadinessTests(unittest.TestCase):
 
 
 class GuestOpsDeadlineTests(unittest.TestCase):
-    def run_fixture(self, stall="", run_delay=0, run_rc=0, budget=2):
+    def run_fixture(self, stall="", run_delay=0, run_rc=0, budget=2,
+                    failure="", check=False, credential_failure=False):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             bindir = root / "bin"
@@ -579,12 +580,16 @@ printf '%s\n' "$operation" >> "$TEST_CALLS"
 if [[ "$TEST_STALL" == "$operation" ]]; then
     exec sleep 30
 fi
+if [[ "$TEST_FAILURE" == "$operation" ]]; then
+    printf 'Error: rejected %s / %s\n' "$TEST_USER" "$TEST_PASSWORD" >&2
+    exit 7
+fi
 case "$operation" in
     list)
         printf 'Total running VMs: 1\n%s\n' "$TEST_VMX" ;;
     runProgramInGuest)
         sleep "$TEST_RUN_DELAY"
-        printf 'fixture guest output\n' > "$TEST_GUEST_RESULT"
+        printf '%s\n' "$TEST_OUTPUT" > "$TEST_GUEST_RESULT"
         exit "$TEST_RUN_RC" ;;
     copyFileFromGuestToHost)
         cp "$TEST_GUEST_RESULT" "${@: -1}" ;;
@@ -604,14 +609,34 @@ esac
                 "TEST_STALL": stall,
                 "TEST_RUN_DELAY": str(run_delay),
                 "TEST_RUN_RC": str(run_rc),
+                "TEST_FAILURE": failure,
+                "TEST_USER": "NORTH\\fixture-admin",
+                "TEST_PASSWORD": "fixture*[a]\\secret&",
+                "TEST_OUTPUT": "KINGDOMS_GUESTOPS_CAPTURE=PASS" if check else "fixture guest output",
+                "TEST_CHECK": "1" if check else "0",
+                "TEST_CREDENTIAL_FAILURE": "1" if credential_failure else "0",
             }
             harness = '''
 source "$1"
 vmx_for() { printf '%s\n' "$TEST_VMX"; }
-guestops_credential_value() { printf '%s\n' fixture; }
+guestops_credential_value() {
+    if [[ "$TEST_CREDENTIAL_FAILURE" == 1 ]]; then
+        printf 'Fixture inventory unavailable\n' >&2
+        return 1
+    fi
+    case "$2" in
+        ansible_user) printf '%s\n' "$TEST_USER" ;;
+        ansible_password) printf '%s\n' "$TEST_PASSWORD" ;;
+    esac
+}
 mktemp() { command mktemp "$TEST_HOST_DIR/kingdoms-guestops.XXXXXX"; }
 READINESS_TRANSPORT=guestops
-powershell_capture GOAD-DC02 "Write-Output 'fixture'" "$2"
+if [[ "$TEST_CHECK" == 1 ]]; then
+    get_start_connected() { printf 'FALSE\n'; }
+    guestops_check GOAD-DC02
+else
+    powershell_capture GOAD-DC02 "Write-Output 'fixture'" "$2"
+fi
 '''
             started = time.monotonic()
             result = subprocess.run(
@@ -628,7 +653,11 @@ powershell_capture GOAD-DC02 "Write-Output 'fixture'" "$2"
             with self.subTest(run_rc=run_rc):
                 result, _, calls, guest_result_exists = self.run_fixture(run_rc=run_rc)
                 self.assertEqual(result.returncode, run_rc, result.stderr)
-                self.assertEqual(result.stdout, "fixture guest output\n")
+                self.assertTrue(result.stdout.startswith("fixture guest output\n"))
+                if run_rc:
+                    self.assertIn(f"KINGDOMS_GUESTOPS_ERROR|stage=run|rc={run_rc}|", result.stdout)
+                else:
+                    self.assertEqual(result.stdout, "fixture guest output\n")
                 self.assertEqual(calls, [
                     "list", "runProgramInGuest", "copyFileFromGuestToHost",
                     "deleteFileInGuest",
@@ -639,8 +668,10 @@ powershell_capture GOAD-DC02 "Write-Output 'fixture'" "$2"
         for stall, run_delay, budget, expected_rc in (
             ("list", 0, 1, 124),
             ("runProgramInGuest", 0, 1, 124),
-            ("copyFileFromGuestToHost", 1, 2, 124),
-            ("deleteFileInGuest", 1, 2, 0),
+            # Leave headroom for Bash's integer SECONDS clock so the delayed
+            # launch reliably reaches the operation this case intends to stall.
+            ("copyFileFromGuestToHost", 1, 3, 124),
+            ("deleteFileInGuest", 1, 3, 0),
         ):
             with self.subTest(stall=stall):
                 result, elapsed, calls, _ = self.run_fixture(
@@ -651,6 +682,40 @@ powershell_capture GOAD-DC02 "Write-Output 'fixture'" "$2"
                 self.assertEqual(calls[-1], stall)
                 if stall == "deleteFileInGuest":
                     self.assertEqual(result.stdout, "fixture guest output\n")
+                else:
+                    expected_stage = {
+                        "list": "list", "runProgramInGuest": "run",
+                        "copyFileFromGuestToHost": "copy",
+                    }[stall]
+                    self.assertIn(f"KINGDOMS_GUESTOPS_ERROR|stage={expected_stage}|", result.stdout)
+
+    def test_guestops_errors_identify_failed_stage_and_redact_credentials(self):
+        for operation, stage in (("runProgramInGuest", "run"),
+                                 ("copyFileFromGuestToHost", "copy")):
+            with self.subTest(operation=operation):
+                result, elapsed, calls, _ = self.run_fixture(failure=operation, budget=1)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(f"KINGDOMS_GUESTOPS_ERROR|stage={stage}|rc=7|", result.stdout)
+                self.assertIn("Error: rejected [REDACTED] / [REDACTED]", result.stdout)
+                self.assertNotIn("NORTH\\fixture-admin", result.stdout + result.stderr)
+                self.assertNotIn("fixture*[a]\\secret&", result.stdout + result.stderr)
+                self.assertLess(elapsed, 2.5)
+                if stage == "run":
+                    self.assertEqual(calls.count("copyFileFromGuestToHost"), 1)
+
+    def test_missing_credentials_stop_before_guest_execution(self):
+        result, _, calls, _ = self.run_fixture(credential_failure=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Fixture inventory unavailable", result.stderr)
+        self.assertEqual(calls, ["list"])
+
+    def test_guestops_check_runs_one_capture_without_readiness_loop(self):
+        result, _, calls, _ = self.run_fixture(check=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("GuestOps execution and output capture passed", result.stdout)
+        self.assertEqual(calls, [
+            "list", "runProgramInGuest", "copyFileFromGuestToHost", "deleteFileInGuest",
+        ])
 
 
 if __name__ == "__main__":
