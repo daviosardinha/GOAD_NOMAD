@@ -18,9 +18,11 @@ grep -Fxq '10.4.99.254/24' <<<"${addresses}" || {
 }
 
 declare -a candidate_keys=()
+stable_key="${KINGDOMS_ROUTER_MANAGEMENT_KEY:-${XDG_CONFIG_HOME:-${HOME}/.config}/kingdoms/router-management-ed25519}"
 instance_key="${state}/private_key"
 fallback_key="${VAGRANT_HOME:-${HOME}/.vagrant.d}/insecure_private_key"
 
+[[ -s "${stable_key}" ]] && candidate_keys+=("${stable_key}")
 [[ -s "${instance_key}" ]] && candidate_keys+=("${instance_key}")
 if [[ -s "${fallback_key}" && "${fallback_key}" != "${instance_key}" ]]; then
     candidate_keys+=("${fallback_key}")
@@ -63,8 +65,12 @@ if [[ -z "${selected_key}" ]]; then
     exit 1
 fi
 
-if [[ "${selected_key}" != "${instance_key}" ]]; then
+if [[ "${selected_key}" == "${stable_key}" ]]; then
+    :
+elif [[ "${selected_key}" != "${instance_key}" ]]; then
     echo "INFO: router management recovered with fallback Vagrant key: ${selected_key}" >&2
+else
+    echo "INFO: router management is still using Vagrant machine-state key; bootstrap the stable Kingdoms management key." >&2
 fi
 
 exec ssh -i "${selected_key}" "${ssh_common[@]}" vagrant@10.4.99.1 "$@"
