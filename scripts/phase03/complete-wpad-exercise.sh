@@ -7,6 +7,7 @@ set -uo pipefail
 ROOT="${ROOT:-$HOME/Documents/GOAD_NOMAD}"
 VALIDATOR="$ROOT/scripts/phase03/validate-wpad-chain.sh"
 ROLLBACK="$ROOT/scripts/phase03/rollback-wpad-runtime.sh"
+VICTIM_CLEANUP="$ROOT/scripts/phase03/diagnostics/cleanup-wpad-rickon-session.sh"
 
 cd "$ROOT" || exit 1
 
@@ -22,6 +23,7 @@ cd "$ROOT" || exit 1
 
 cleanup_attempted=0
 cleanup_rc=0
+victim_cleanup_rc=0
 
 cleanup() {
   local original_rc=$?
@@ -33,11 +35,21 @@ cleanup() {
     echo '===== AUTOMATIC WPAD NETWORK ROLLBACK ====='
     bash "$ROLLBACK"
     cleanup_rc=$?
+
+    echo
+    echo '===== AUTOMATIC WPAD VICTIM-SESSION CLEANUP ====='
+    bash "$VICTIM_CLEANUP"
+    victim_cleanup_rc=$?
   fi
 
   if (( cleanup_rc != 0 )); then
     echo 'FAIL: automatic WPAD rollback did not return WS01 to the captured baseline' >&2
     exit "$cleanup_rc"
+  fi
+
+  if (( victim_cleanup_rc != 0 )); then
+    echo 'FAIL: automatic WPAD victim-session cleanup failed' >&2
+    exit "$victim_cleanup_rc"
   fi
 
   if (( original_rc != 0 )); then
