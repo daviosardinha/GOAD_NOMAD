@@ -442,6 +442,30 @@ class LabModeAdReadinessTests(unittest.TestCase):
         self.assertIn('prove_isolated_guest_ready "${vm}" dc', dep)
         self.assertIn('DC_TIME_PARENT_DOMAIN', dep)
 
+    def test_child_time_preserves_guest_marker_and_bounds_guestops_transport_failure(self):
+        text = self.text
+        fn = text[text.index("ensure_child_dc_time_ready()"):
+                  text.index("wait_domain_controller_ready()")]
+
+        for token in (
+            'local capture_rc=0',
+            'local consecutive_transport_failures=0',
+            'capture_rc=$?',
+            'KINGDOMS_GUESTOPS_ERROR\\|',
+            'reason=no_time_marker|capture_rc=0',
+            'consecutive_transport_failures >= 3',
+            'child-domain time probe transport failed 3 consecutive times after AD readiness',
+        ):
+            self.assertIn(token, fn)
+
+        # Marker extraction must not be nested only inside a successful
+        # transport return; current guest output remains useful evidence.
+        probe_capture = fn.index('if output="$(powershell_capture "${vm}" "${probe_script}" "${probe_timeout}")"')
+        marker_extract = fn.index("grep -E 'KINGDOMS_DC_TIME_(READY|NOT_READY)\\\\|'", probe_capture)
+        ready_check = fn.index('if [[ "${marker}" == KINGDOMS_DC_TIME_READY\\|* ]]' , marker_extract)
+        self.assertLess(probe_capture, marker_extract)
+        self.assertLess(marker_extract, ready_check)
+
     def test_child_dc_time_repair_defers_until_parent_timeserv_is_ready(self):
         text = self.text
         fn = text[text.index("ensure_child_dc_time_ready()"):
