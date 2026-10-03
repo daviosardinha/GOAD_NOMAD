@@ -37,8 +37,12 @@ cd "$ROOT"
   exit 1
 }
 
-echo '===== STOP TEMPORARY MITM6 / WPAD RUNTIME ====='
-bash scripts/phase03/diagnostics/stop-wpad-runtime.sh
+if [[ "${WPAD_SKIP_LOCAL_STOP:-0}" != "1" ]]; then
+  echo '===== STOP TEMPORARY MITM6 / WPAD RUNTIME ====='
+  bash scripts/phase03/diagnostics/stop-wpad-runtime.sh
+else
+  echo '===== LOCAL WPAD RUNTIME CLEANUP ALREADY PERFORMED ====='
+fi
 
 if pgrep -af '(^|[ /])mitm6([ ]|$)' >/dev/null; then
   echo 'FAIL: mitm6 is still active. Refusing to restore DHCPv6 state while the rogue server is running.' >&2
