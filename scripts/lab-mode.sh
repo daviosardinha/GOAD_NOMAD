@@ -307,8 +307,12 @@ vmrun_named_device_action() {
     esac
 
     for ((attempt=1; attempt<=attempts; attempt++)); do
-        output="$(vmrun -T ws "${command}" "${vmx}" ethernet0 2>&1)"
-        rc=$?
+        output=""
+        if output="$(vmrun -T ws "${command}" "${vmx}" ethernet0 2>&1)"; then
+            rc=0
+        else
+            rc=$?
+        fi
 
         if (( rc == 0 )); then
             echo "        [+] ${vm} ethernet0 runtime ${action} request accepted (attempt ${attempt})"
