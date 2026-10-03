@@ -290,8 +290,9 @@ class LabModeAdReadinessTests(unittest.TestCase):
 
     def test_guestops_time_check_runs_exact_child_time_probe_once(self):
         text = self.text
-        fn = text[text.index("guestops_time_check()"):
-                  text.index("powershell_capture()")]
+        start = text.index("\nguestops_time_check() (") + 1
+        end = text.index("\npowershell_capture() {", start)
+        fn = text[start:end]
 
         for token in (
             'w32tm.exe /query /source',
