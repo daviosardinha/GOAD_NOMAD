@@ -44,8 +44,8 @@ class LabModeAdReadinessTests(unittest.TestCase):
         for token in (
             "prove_isolated_guest_ready()",
             'temporarily connecting runtime NAT for authenticated readiness',
-            'vmrun -T ws connectNamedDevice',
-            'vmrun -T ws disconnectNamedDevice',
+            'vmrun_named_device_action "${vm}" connect 15 2',
+            'vmrun_named_device_action "${vm}" disconnect 15 2 || true',
             'authenticated post-reboot readiness proven; runtime NAT disconnected',
             'prove_isolated_guest_ready "${vm}" member',
             'prove_isolated_guest_ready "${vm}" dc',
@@ -59,6 +59,17 @@ class LabModeAdReadinessTests(unittest.TestCase):
             fn,
         )
         self.assertIn("trap cleanup_runtime_nat EXIT", fn)
+
+        connect = fn.index('vmrun_named_device_action "${vm}" connect 15 2')
+        readiness = fn.index('case "${kind}" in')
+        cleanup = fn.index('cleanup_runtime_nat')
+        final_proof = fn.index(
+            'authenticated post-reboot readiness proven; runtime NAT disconnected'
+        )
+
+        self.assertLess(connect, readiness)
+        self.assertLess(readiness, final_proof)
+        self.assertLess(cleanup, final_proof)
 
     def test_vmware_named_device_actions_are_retried_and_not_silently_ignored(self):
         text = self.text
