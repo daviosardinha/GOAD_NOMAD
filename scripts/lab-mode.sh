@@ -1203,6 +1203,9 @@ show_status() {
     echo "GOAD_NOMAD LAB MODE"
     echo "============================================================"
 
+    local router_status=0
+    local router_output=''
+
     echo
     printf 'Provider: %s\n' "${PROVIDER}"
 
@@ -1220,12 +1223,17 @@ show_status() {
     echo
     echo "=== ROUTER FORWARD POLICY ==="
 
-    (
+    if router_output="$(
         cd "${PROVIDER}"
-
         GOAD_PROVIDER_DIR="${PROVIDER}" bash "${ROOT}/scripts/router-ssh.sh" \
-            'sudo nft list chain inet goad_nomad forward'
-    )
+            'sudo nft list chain inet goad_nomad forward' 2>&1
+    )"; then
+        printf '%s\n' "${router_output}"
+    else
+        echo "[UNAVAILABLE] router management/policy query failed"
+        printf '%s\n' "${router_output}"
+        router_status=1
+    fi
 
     echo
     echo "=== WINDOWS VM NETWORK STATE ==="
@@ -1250,6 +1258,8 @@ show_status() {
             '^ethernet(0|1)\.(connectionType|vnet|present)' \
             "${vmx}" || true
     done
+
+    return "${router_status}"
 }
 
 enter_exercise_mode() {
@@ -1305,10 +1315,12 @@ enter_exercise_failsafe() {
     sudo -v
     verify_windows_layout
 
-    # Containment first. Do not wait for AD health before closing routes.
-    apply_router_policy exercise
+    # Mark the deployment degraded before touching state. Only a fully verified
+    # router + host isolation contract may promote this marker back to exercise.
+    set_state recovery-required
 
     echo
+    echo "[*] Removing host provisioning routes first"
     sudo bash "${ROUTES}" disable
 
     echo
@@ -1316,6 +1328,7 @@ enter_exercise_failsafe() {
 
     local vm
     local failed=0
+    local router_output=''
 
     for vm in "${DOMAIN_MEMBERS[@]}" "${EXERCISE_DOMAIN_CONTROLLERS[@]}"; do
         if ! ( ensure_vm_nat_state "${vm}" FALSE disconnect ); then
@@ -1329,13 +1342,34 @@ enter_exercise_failsafe() {
     fi
 
     if (( failed != 0 )); then
-        fail "Fail-closed exercise recovery could not prove every Windows NAT adapter isolated."
+        fail "Fail-closed recovery could not prove host routes/NAT isolation; mode remains recovery-required."
     fi
+
+    echo
+    echo "[+] Host-side provisioning paths are isolated."
+    echo "[*] Applying and verifying router exercise policy"
+
+    if ! apply_router_policy exercise; then
+        echo "[!] Router exercise policy could not be applied." >&2
+        fail "Host isolation is proven, but router policy is unverified; mode remains recovery-required."
+    fi
+
+    if ! router_output="$(
+        cd "${PROVIDER}"
+        GOAD_PROVIDER_DIR="${PROVIDER}" bash "${ROOT}/scripts/router-ssh.sh" \
+            'sudo nft list chain inet goad_nomad forward' 2>&1
+    )"; then
+        printf '%s\n' "${router_output}" >&2
+        fail "Host isolation is proven, but router policy verification failed; mode remains recovery-required."
+    fi
+
+    printf '%s\n' "${router_output}" | grep -Fq 'policy drop;' ||
+        fail "Router is reachable but deny-by-default policy is not active; mode remains recovery-required."
 
     set_state exercise
 
     echo
-    echo "[+] FAIL-CLOSED network isolation restored."
+    echo "[+] FAIL-CLOSED network isolation restored and router policy verified."
     echo "    IMPORTANT: this path does not claim AD/domain readiness."
     echo "    Run the normal exercise lifecycle/readiness validation before continuing the lab."
 }
