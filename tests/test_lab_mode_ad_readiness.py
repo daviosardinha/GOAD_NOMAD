@@ -97,6 +97,58 @@ class LabModeAdReadinessTests(unittest.TestCase):
             provisioning.index('wait_domain_member_ready "${vm}"'),
         )
 
+    def test_vmware_uuid_is_pinned_before_direct_lifecycle_power_on(self):
+        text = self.text
+
+        self.assertIn("pin_vmware_uuid_identity()", text)
+        helper = text[text.index("pin_vmware_uuid_identity()"):
+                      text.index("get_start_connected()")]
+
+        for token in (
+            'uuid.action = "keep"',
+            "uuid.bios",
+            "ethernet0\\.generatedAddress",
+            "KINGDOMS_VMWARE_UUID_PINNED",
+            "refusing to pin VMware UUID identity while VM is running",
+        ):
+            self.assertIn(token, helper)
+
+        for forbidden in (
+            "uuid.bios =",
+            "uuid.location =",
+            "ethernet0.address =",
+            "ethernet0.addressType =",
+        ):
+            self.assertNotIn(forbidden, helper)
+
+        ensure = text[text.index("ensure_vm_nat_state()"):
+                      text.index("vagrant_powershell_ready()")]
+
+        self.assertGreaterEqual(
+            ensure.count('pin_vmware_uuid_identity "${vmx}"'),
+            2,
+        )
+
+        stop_wait = ensure.index('wait_stopped "${vmx}"')
+        first_pin = ensure.index('pin_vmware_uuid_identity "${vmx}"')
+        persist = ensure.index('set_start_connected "${vmx}" "${desired}"')
+        self.assertLess(stop_wait, first_pin)
+        self.assertLess(first_pin, persist)
+
+        powered_off = ensure.index(
+            'VM is powered off; starting it for provisioning readiness'
+        )
+        second_pin = ensure.index(
+            'pin_vmware_uuid_identity "${vmx}"',
+            first_pin + 1,
+        )
+        direct_start = ensure.index(
+            'vmrun -T ws start "${vmx}" nogui',
+            powered_off,
+        )
+        self.assertLess(powered_off, second_pin)
+        self.assertLess(second_pin, direct_start)
+
     def test_isolated_readiness_fails_fast_if_guest_is_powered_off(self):
         text = self.text
         fn = text[text.index("prove_isolated_guest_ready()"):
