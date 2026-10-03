@@ -11,6 +11,10 @@ WS01='10.4.10.31'
 
 cd "$ROOT"
 
+# Refresh the local pin from two agreeing observations before we inspect or
+# start the headless session. This is local trust-state maintenance only.
+bash scripts/phase03/sync-ws01-rdp-pin.sh
+
 wait_for_healthy_session() {
   local attempt output
   for attempt in $(seq 1 12); do
@@ -43,7 +47,6 @@ systemctl --user cat "$SERVICE" >/dev/null 2>&1 || {
   exit 1
 }
 
-bash scripts/phase03/sync-ws01-rdp-pin.sh
 bash scripts/phase03/check-rickon-prereqs.sh
 
 rm -f -- "$MARKER"
