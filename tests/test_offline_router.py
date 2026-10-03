@@ -125,7 +125,13 @@ HOSTADDR_SERVICE=service
             bindir = root / 'bin'
             bindir.mkdir()
             (bindir / 'ip').write_text('#!/bin/bash\necho "1: vmnet99 inet ${TEST_ADDRESS}/24"\n')
-            (bindir / 'ssh').write_text('#!/bin/bash\nprintf "%s\\n" "$@"\ncat\n')
+            (bindir / 'ssh').write_text(
+                '#!/bin/bash\n'
+                'args="$*"\n'
+                'if [[ -n "${TEST_REJECT_KEY:-}" && "$args" == *"${TEST_REJECT_KEY}"* ]]; then exit 255; fi\n'
+                'printf "%s\\n" "$@"\n'
+                'if [[ " $args " != *" -n "* ]]; then cat; fi\n'
+            )
             for file in bindir.iterdir():
                 file.chmod(0o755)
             env = {**os.environ, 'GOAD_PROVIDER_DIR': str(root / 'provider'),
@@ -148,6 +154,22 @@ HOSTADDR_SERVICE=service
             result = subprocess.run(command, env=env, input='', capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn(str(fallback), result.stdout)
+
+            # A stale per-instance key must not make management unrecoverable
+            # when the router still accepts the standard Vagrant identity.
+            (state / 'private_key').write_text('stale instance key')
+            env['TEST_REJECT_KEY'] = str(state / 'private_key')
+            result = subprocess.run(
+                command,
+                env=env,
+                input='stdin preserved',
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn(str(fallback), result.stdout)
+            self.assertIn('recovered with fallback Vagrant key', result.stderr)
+            self.assertIn('stdin preserved', result.stdout)
 
 
 class Compatibility(unittest.TestCase):
