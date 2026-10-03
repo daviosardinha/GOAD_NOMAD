@@ -67,6 +67,7 @@ class LabModeAdReadinessTests(unittest.TestCase):
             'authenticated post-reboot readiness proven through VMware Guest Operations'
         )
         self.assertLess(readiness, final_proof)
+
     def test_provisioning_powers_on_cleanly_stopped_guests_before_readiness(self):
         text = self.text
         ensure = text[text.index("ensure_vm_nat_state()"):
@@ -147,6 +148,7 @@ class LabModeAdReadinessTests(unittest.TestCase):
         )
         self.assertLess(powered_off, second_pin)
         self.assertLess(second_pin, direct_start)
+
     def test_isolated_readiness_fails_fast_if_guest_is_powered_off(self):
         text = self.text
         fn = text[text.index("prove_isolated_guest_ready()"):
@@ -160,6 +162,7 @@ class LabModeAdReadinessTests(unittest.TestCase):
             fn.index('is_running "${vmx}"'),
             fn.index('READINESS_TRANSPORT=guestops'),
         )
+
     def test_vmware_named_device_actions_remain_provisioning_only(self):
         text = self.text
         helper = text[text.index("vmrun_named_device_action()"):
@@ -173,7 +176,7 @@ class LabModeAdReadinessTests(unittest.TestCase):
         self.assertIn("already.*disconnected", helper)
 
         ensure = text[text.index("ensure_vm_nat_state()"):
-                      text.index("guestops_credentials_for_vm()")]
+                      text.index("guestops_credential_value()")]
         self.assertIn('vmrun_named_device_action "${vm}" "${action}" 15 2', ensure)
         self.assertNotIn("connectNamedDevice", ensure)
         self.assertNotIn("disconnectNamedDevice", ensure)
@@ -206,6 +209,7 @@ class LabModeAdReadinessTests(unittest.TestCase):
         self.assertIn('powershell_capture()', helper)
         self.assertIn('guestops)', helper)
         self.assertIn('vmware_guest_powershell_capture', helper)
+
     def test_dc_readiness_uses_selected_transport_and_limits_nat_self_heal_to_vagrant(self):
         text = self.text
         dc = text[text.index("wait_domain_controller_ready()"):
@@ -218,7 +222,7 @@ class LabModeAdReadinessTests(unittest.TestCase):
         self.assertIn("bounded VMware transport self-heal", dc)
         self.assertIn('[[ "${READINESS_TRANSPORT:-vagrant}" == "vagrant" ]]', dc)
         self.assertIn('vmrun_named_device_action "${vm}" connect 3 2 || true', dc)
-        self.assertIn("last Vagrant/PowerShell readiness output follows", dc)
+        self.assertIn("last PowerShell readiness output follows", dc)
         self.assertIn('tail -80', dc)
 
     def test_failed_lifecycle_has_fail_closed_network_isolation_path(self):
