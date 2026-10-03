@@ -11,6 +11,11 @@ MITM6_LOG="${MITM6_LOG:-/tmp/kingdoms-mitm6.log}"
 HTTP_LOG="${HTTP_LOG:-/tmp/kingdoms-wpad-http.log}"
 IFACE="${IFACE:-vmnet10}"
 PCAP="${PCAP:-/tmp/kingdoms-wpad.pcap}"
+WS01_V4="${WS01_V4:-10.4.10.31}"
+WS01_MAC="${WS01_MAC:-00:50:56:20:10:31}"
+ATTACKER_V6="${ATTACKER_V6:-fe80::250:56ff:fec0:a}"
+WPAD_WAIT_SECONDS="${WPAD_WAIT_SECONDS:-360}"
+WPAD_POLL_SECONDS="${WPAD_POLL_SECONDS:-10}"
 
 find_ansible_playbook() {
   local c
@@ -81,8 +86,43 @@ ANSIBLE_CONFIG="$ROOT/ansible/ansible.cfg" \
   "$PLAYBOOK" || exit 1
 
 echo
-echo 'Waiting 8 seconds for mitm6 / WPAD activity...'
-sleep 8
+echo "===== WAIT FOR AUTOMATIC WPAD DISCOVERY ====="
+echo "INFO: Windows WPAD discovery is asynchronous."
+echo "INFO: polling every ${WPAD_POLL_SECONDS}s for up to ${WPAD_WAIT_SECONDS}s; the 15-minute safety watchdog remains authoritative."
+
+elapsed=0
+wpad_seen=0
+http_seen=0
+
+while (( elapsed <= WPAD_WAIT_SECONDS )); do
+  if [[ -r "$PCAP" ]]; then
+    if (( wpad_seen == 0 )) && tshark -r "$PCAP"       -Y "eth.src == $WS01_MAC && ipv6.dst == $ATTACKER_V6 && dns.qry.name contains \"wpad\""       -T fields -e frame.number 2>/dev/null | grep -q .; then
+      wpad_seen=1
+      echo "[+] WPAD DNS query observed after ${elapsed}s"
+    fi
+
+    if (( http_seen == 0 )) && tshark -r "$PCAP"       -Y "ip.src == $WS01_V4 && http.request.method == \"GET\" && http.request.uri == \"/wpad.dat\""       -T fields -e frame.number 2>/dev/null | grep -q .; then
+      http_seen=1
+      echo "[+] GET /wpad.dat observed after ${elapsed}s"
+    fi
+  fi
+
+  if (( wpad_seen == 1 && http_seen == 1 )); then
+    echo "PHASE03_WPAD_AUTODISCOVERY_OBSERVED=True"
+    break
+  fi
+
+  if (( elapsed >= WPAD_WAIT_SECONDS )); then
+    break
+  fi
+
+  if (( elapsed == 0 || elapsed % 30 == 0 )); then
+    echo "INFO: still waiting for Windows WPAD discovery... elapsed=${elapsed}s"
+  fi
+
+  sleep "$WPAD_POLL_SECONDS"
+  elapsed=$((elapsed + WPAD_POLL_SECONDS))
+done
 
 echo
 echo '===== NEW MITM6 OUTPUT ====='
@@ -91,4 +131,11 @@ tail -n "+$((mitm6_before + 1))" "$MITM6_LOG" 2>/dev/null || true
 echo
 echo '===== NEW HTTP OUTPUT ====='
 tail -n "+$((http_before + 1))" "$HTTP_LOG" 2>/dev/null || true
+
+if (( wpad_seen == 0 || http_seen == 0 )); then
+  echo "WARN: automatic WPAD DNS/PAC evidence was not complete within ${WPAD_WAIT_SECONDS}s." >&2
+  echo 'WARN: leave the exercise armed only if you are still observing it; complete-wpad-exercise.sh remains the final validator and rollback gate.' >&2
+else
+  echo "PASS: automatic WPAD DNS and PAC retrieval observed in the live capture"
+fi
 
