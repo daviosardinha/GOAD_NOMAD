@@ -522,11 +522,12 @@ ensure_vm_nat_state() {
         "${action}"
 }
 
-guestops_credentials_for_vm() {
+guestops_credential_value() {
     local vm="$1"
+    local key="$2"
     local alias="${GUESTOPS_INVENTORY_ALIAS[${vm}]:-}"
     local inventory="${ROOT}/ad/GOAD/data/inventory_disable_vagrant"
-    local line user password
+    local line value
 
     [[ -n "${alias}" ]] ||
         fail "No VMware Guest Operations inventory alias is defined for ${vm}"
@@ -542,24 +543,33 @@ guestops_credentials_for_vm() {
     [[ -n "${line}" ]] ||
         fail "No post-Vagrant credential entry found for ${vm} (${alias})"
 
-    user="$(
-        sed -nE 's/.*[[:space:]]ansible_user=([^[:space:]]+).*/\1/p' <<<"${line}"
-    )"
-    password="$(
-        sed -nE 's/.*[[:space:]]ansible_password=([^[:space:]]+).*/\1/p' <<<"${line}"
-    )"
+    case "${key}" in
+        ansible_user)
+            value="$(
+                sed -nE 's/.*[[:space:]]ansible_user=([^[:space:]]+).*/\1/p' <<<"${line}"
+            )"
+            ;;
+        ansible_password)
+            value="$(
+                sed -nE 's/.*[[:space:]]ansible_password=([^[:space:]]+).*/\1/p' <<<"${line}"
+            )"
+            ;;
+        *)
+            fail "Unsupported Guest Operations credential key: ${key}"
+            ;;
+    esac
 
-    [[ -n "${user}" && -n "${password}" ]] ||
-        fail "Incomplete post-Vagrant credentials for ${vm} (${alias})"
+    [[ -n "${value}" ]] ||
+        fail "Missing ${key} for ${vm} (${alias})"
 
-    printf '%s\t%s\n' "${user}" "${password}"
+    printf '%s\n' "${value}"
 }
 
 vmware_guest_powershell_capture() {
     local vm="$1"
     local script="$2"
     local timeout_seconds="$3"
-    local vmx credentials guest_user guest_password encoded
+    local vmx guest_user guest_password encoded
     local guest_output host_output command_line
     local run_rc=0 copy_rc=1 attempt
 
@@ -568,8 +578,83 @@ vmware_guest_powershell_capture() {
     vmx="$(vmx_for "${vm}")"
     is_running "${vmx}" || return 125
 
-    credentials="$(guestops_credentials_for_vm "${vm}")"
-    IFS=
+    guest_user="$(guestops_credential_value "${vm}" ansible_user)"
+    guest_password="$(guestops_credential_value "${vm}" ansible_password)"
+
+    encoded="$(
+        printf '%s' "${script}" |
+            iconv -f UTF-8 -t UTF-16LE |
+            base64 -w0
+    )"
+
+    guest_output="C:\\Windows\\Temp\\kingdoms-guestops-${vm}-$$-${RANDOM}.txt"
+    host_output="$(mktemp "/tmp/kingdoms-guestops-${vm}.XXXXXX")"
+
+    # Broadcom recommends cmd /c for Windows guest stdio redirection. Keep the
+    # PowerShell payload encoded so readiness-script quoting is not re-parsed.
+    command_line="powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encoded} > \"${guest_output}\" 2>&1"
+
+    if timeout "${timeout_seconds}" vmrun -T ws \
+        -gu "${guest_user}" \
+        -gp "${guest_password}" \
+        runProgramInGuest \
+        "${vmx}" \
+        'C:\Windows\System32\cmd.exe' \
+        /d /s /c "${command_line}" >/dev/null 2>&1; then
+        run_rc=0
+    else
+        run_rc=$?
+    fi
+
+    for attempt in {1..5}; do
+        if vmrun -T ws \
+            -gu "${guest_user}" \
+            -gp "${guest_password}" \
+            copyFileFromGuestToHost \
+            "${vmx}" \
+            "${guest_output}" \
+            "${host_output}" >/dev/null 2>&1; then
+            copy_rc=0
+            break
+        fi
+        sleep 1
+    done
+
+    if (( copy_rc == 0 )); then
+        cat "${host_output}"
+    fi
+
+    vmrun -T ws \
+        -gu "${guest_user}" \
+        -gp "${guest_password}" \
+        deleteFileInGuest \
+        "${vmx}" \
+        "${guest_output}" >/dev/null 2>&1 || true
+    rm -f "${host_output}"
+
+    (( copy_rc == 0 )) || return 126
+    return "${run_rc}"
+}
+
+powershell_capture() {
+    local vm="$1"
+    local script="$2"
+    local timeout_seconds="$3"
+
+    case "${READINESS_TRANSPORT:-vagrant}" in
+        vagrant)
+            vagrant_powershell_capture "${vm}" "${script}" "${timeout_seconds}"
+            ;;
+        guestops)
+            vmware_guest_powershell_capture "${vm}" "${script}" "${timeout_seconds}"
+            ;;
+        *)
+            fail "Unknown readiness transport: ${READINESS_TRANSPORT}"
+            ;;
+    esac
+}
+
+vagrant_powershell_ready() {
     local vm="$1"
     local script="$2"
     local timeout_seconds="$3"
@@ -610,7 +695,6 @@ vagrant_powershell_capture() {
             "powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encoded}"
     ) 2>&1
 }
-
 ensure_child_dc_time_ready() {
     local vm="$1"
     local domain="${DC_DOMAIN[${vm}]}"
