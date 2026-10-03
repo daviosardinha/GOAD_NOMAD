@@ -268,6 +268,20 @@ class LabModeAdReadinessTests(unittest.TestCase):
         self.assertIn("=== WINDOWS VM NETWORK STATE ===", fn)
         self.assertIn('return "${router_status}"', fn)
 
+    def test_targeted_guestops_readiness_command_uses_isolated_readiness_contract(self):
+        text = self.text
+        fn = text[text.index("guestops_readiness_check()"):
+                  text.index("enter_provisioning_mode()")]
+
+        self.assertIn('kind="dc"', fn)
+        self.assertIn('kind="member"', fn)
+        self.assertIn('prove_isolated_guest_ready "${vm}" "${kind}"', fn)
+        self.assertIn("targeted GuestOps readiness passed", fn)
+
+        main = text[text.index("main()"): ]
+        self.assertIn("guestops-readiness-check)", main)
+        self.assertIn('guestops_readiness_check "${2:-GOAD-DC02}"', main)
+
     def test_winrm_helpers_use_explicit_nested_timeout(self):
         text = self.text
         helpers = text[text.index("vagrant_powershell_ready()"):
