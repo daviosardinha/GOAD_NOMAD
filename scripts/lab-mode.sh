@@ -831,7 +831,7 @@ POWERSHELL
     output=""
     if output="$(powershell_capture "${vm}" "${probe_script}" "${AD_READINESS_PROBE_TIMEOUT_SECONDS}")"; then
         printf '%s\n' "${output}"
-        if grep -Eq 'KINGDOMS_DC_TIME_(READY|NOT_READY)\|' <<<"${output}"; then
+        if grep -Fq -e 'KINGDOMS_DC_TIME_READY|' -e 'KINGDOMS_DC_TIME_NOT_READY|' <<<"${output}"; then
             echo "[+] ${vm} GuestOps child-time probe returned a readiness marker"
         else
             fail "${vm}: GuestOps child-time probe returned without a readiness marker"
@@ -1068,7 +1068,7 @@ POWERSHELL
         # from this probe is current evidence rather than stale output.
         marker="$(
             printf '%s\n' "${output}" |
-                grep -E 'KINGDOMS_DC_TIME_(READY|NOT_READY)\|' |
+                grep -F -e 'KINGDOMS_DC_TIME_READY|' -e 'KINGDOMS_DC_TIME_NOT_READY|' |
                 tail -n 1 || true
         )"
 
@@ -1083,7 +1083,7 @@ POWERSHELL
         else
             transport_marker="$(
                 printf '%s\n' "${output}" |
-                    grep -E 'KINGDOMS_GUESTOPS_ERROR\|' |
+                    grep -F 'KINGDOMS_GUESTOPS_ERROR|' |
                     tail -n 1 || true
             )"
             consecutive_transport_failures=$((consecutive_transport_failures + 1))
@@ -1137,7 +1137,7 @@ POWERSHELL
 
             marker="$(
                 printf '%s\n' "${output}" |
-                    grep -E 'KINGDOMS_DC_TIME_(REPAIRED|REPAIR_DEFERRED|REPAIR_FAILED)\|' |
+                    grep -F -e 'KINGDOMS_DC_TIME_REPAIRED|' -e 'KINGDOMS_DC_TIME_REPAIR_DEFERRED|' -e 'KINGDOMS_DC_TIME_REPAIR_FAILED|' |
                     tail -n 1 || true
             )"
 
@@ -1155,7 +1155,7 @@ POWERSHELL
             elif (( capture_rc != 0 )); then
                 transport_marker="$(
                     printf '%s\n' "${output}" |
-                        grep -E 'KINGDOMS_GUESTOPS_ERROR\|' |
+                        grep -F 'KINGDOMS_GUESTOPS_ERROR|' |
                         tail -n 1 || true
                 )"
                 fail "${vm} child-domain time recovery transport failed (rc=${capture_rc}): ${transport_marker:-no GuestOps marker}"
