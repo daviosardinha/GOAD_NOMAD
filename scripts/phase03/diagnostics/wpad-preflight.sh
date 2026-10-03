@@ -22,4 +22,6 @@ PAC
 chmod 644 "$PACDIR/wpad.dat"
 sha256sum "$PACDIR/wpad.dat"
 
-echo "PASS: WPAD preflight completed; PAC ready and no WS01 network state changed"
+bash "${ROOT:-$HOME/Documents/GOAD_NOMAD}/scripts/phase03/diagnostics/ensure-wpad-rickon-session.sh"
+
+echo "PASS: WPAD preflight completed; PAC and victim session ready with no WS01 network-state mutation"
