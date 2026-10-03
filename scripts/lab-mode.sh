@@ -1299,6 +1299,49 @@ enter_exercise_mode() {
     echo "    Router forwarding: deny-by-default"
 }
 
+enter_exercise_failsafe() {
+    echo "============================================================"
+    echo "ENTERING GOAD_NOMAD FAIL-CLOSED EXERCISE RECOVERY"
+    echo "============================================================"
+
+    sudo -v
+    verify_windows_layout
+
+    # Containment first. Do not wait for AD health before closing routes.
+    apply_router_policy exercise
+
+    echo
+    sudo bash "${ROUTES}" disable
+
+    echo
+    echo "[*] Restoring persistent Windows NAT isolation without claiming guest readiness"
+
+    local vm
+    local failed=0
+
+    for vm in "${DOMAIN_MEMBERS[@]}" "${EXERCISE_DOMAIN_CONTROLLERS[@]}"; do
+        if ! ( ensure_vm_nat_state "${vm}" FALSE disconnect ); then
+            echo "        [!] failsafe NAT isolation failed for ${vm}" >&2
+            failed=1
+        fi
+    done
+
+    if ! ( verify_persistent_state FALSE ); then
+        failed=1
+    fi
+
+    if (( failed != 0 )); then
+        fail "Fail-closed exercise recovery could not prove every Windows NAT adapter isolated."
+    fi
+
+    set_state exercise
+
+    echo
+    echo "[+] FAIL-CLOSED network isolation restored."
+    echo "    IMPORTANT: this path does not claim AD/domain readiness."
+    echo "    Run the normal exercise lifecycle/readiness validation before continuing the lab."
+}
+
 enter_provisioning_mode() {
     echo "============================================================"
     echo "ENTERING GOAD_NOMAD PROVISIONING MODE"
@@ -1355,6 +1398,10 @@ main() {
             enter_exercise_mode
             ;;
 
+        exercise-failsafe)
+            enter_exercise_failsafe
+            ;;
+
         provisioning)
             enter_provisioning_mode
             ;;
@@ -1364,7 +1411,7 @@ main() {
             ;;
 
         *)
-            echo "Usage: $0 {exercise|provisioning|status}" >&2
+            echo "Usage: $0 {exercise|exercise-failsafe|provisioning|status}" >&2
             exit 2
             ;;
     esac
