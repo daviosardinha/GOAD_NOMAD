@@ -449,10 +449,10 @@ class LabModeAdReadinessTests(unittest.TestCase):
         helper = text[start:end]
 
         sample = (
-            "KINGDOMS_DC_TIME_NOT_READY|reason=source|"
+            "\ufeffKINGDOMS_DC_TIME_NOT_READY|reason=source|"
             "source=Local CMOS Clock|"
-            "expected=kingslanding.sevenkingdoms.local\n\n"
-            "#< CLIXML\n<Objs Version=\"1.1.0.1\">progress</Objs>\n"
+            "expected=kingslanding.sevenkingdoms.local\r\n\r\n"
+            "#< CLIXML\r\n<Objs Version=\"1.1.0.1\">progress</Objs>\r\n"
         )
 
         script = helper + r'''
@@ -474,6 +474,8 @@ last_marker_line "$output" \
             "source=Local CMOS Clock|"
             "expected=kingslanding.sevenkingdoms.local",
         )
+
+        self.assertIn('*"${prefix}"*', helper)
 
     def test_child_time_preserves_guest_marker_and_bounds_guestops_transport_failure(self):
         text = self.text
