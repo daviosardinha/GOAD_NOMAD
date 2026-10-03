@@ -136,6 +136,8 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         self.assertIn("check-rickon-prereqs.sh", ensure)
         self.assertIn("validate-rickon-session.sh", ensure)
         self.assertIn("started-by-wpad", ensure)
+        self.assertIn("remains owned by this WPAD exercise", ensure)
+        self.assertNotIn('rm -f -- "$MARKER"\n  bash scripts/phase03/validate-rickon-session.sh', ensure)
         self.assertIn("PHASE03_WPAD_RICKON_STARTED_BY_EXERCISE=True", ensure)
 
         self.assertIn("started-by-wpad", cleanup)
