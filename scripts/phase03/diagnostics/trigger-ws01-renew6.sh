@@ -37,8 +37,29 @@ pgrep -af '(^|[ /])mitm6([ ]|$)' >/dev/null || {
   exit 1
 }
 
-mitm6_before="$(wc -l < "$MITM6_LOG" 2>/dev/null || printf '0')"
-http_before="$(wc -l < "$HTTP_LOG" 2>/dev/null || printf '0')"
+[[ -f "$MITM6_LOG" ]] || {
+  echo "FAIL: mitm6 log missing: $MITM6_LOG" >&2
+  exit 1
+}
+
+[[ -f "$HTTP_LOG" ]] || {
+  echo "FAIL: WPAD HTTP observer log missing: $HTTP_LOG" >&2
+  echo 'Start scripts/phase03/diagnostics/start-wpad-observers.sh before triggering WS01.' >&2
+  exit 1
+}
+
+sudo ss -H -lntp 2>/dev/null | grep -Eq ':80[[:space:]]' || {
+  echo 'FAIL: WPAD HTTP observer is not listening on TCP/80' >&2
+  exit 1
+}
+
+pgrep -af 'tcpdump[ ].*-i[ ]+vmnet10[ ].*-w[ ]+/tmp/kingdoms-wpad[.]pcap' >/dev/null || {
+  echo 'FAIL: WPAD packet capture is not running' >&2
+  exit 1
+}
+
+mitm6_before="$(wc -l < "$MITM6_LOG")"
+http_before="$(wc -l < "$HTTP_LOG")"
 
 echo '===== BASELINE ====='
 printf 'mitm6 lines: %s\nHTTP lines : %s\n' "$mitm6_before" "$http_before"
@@ -69,6 +90,3 @@ echo
 echo '===== NEW HTTP OUTPUT ====='
 tail -n "+$((http_before + 1))" "$HTTP_LOG" 2>/dev/null || true
 
-echo
-echo '===== RICKON SESSION HEALTH ====='
-bash "$ROOT/scripts/phase03/validate-rickon-session.sh"
