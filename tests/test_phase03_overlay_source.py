@@ -161,9 +161,11 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         self.assertIn("cleanup-wpad-rickon-session.sh", script)
         self.assertIn("AUTOMATIC WPAD VICTIM-SESSION CLEANUP", script)
         self.assertIn("PHASE03_WPAD_EXERCISE_COMPLETE=True", script)
+        self.assertIn("Waiting for WPAD lifecycle lock", script)
+        self.assertIn("WPAD lifecycle lock acquired", script)
         self.assertIn("PHASE03_WPAD_WATCHDOG_TIMER_CANCELLED=True", script)
         self.assertIn("PHASE03_WPAD_WATCHDOG_DISARMED=True", script)
-        self.assertIn('systemctl stop "$WATCHDOG_UNIT.timer"', script)
+        self.assertIn('systemctl stop --no-block "$WATCHDOG_UNIT.timer"', script)
         self.assertIn('rm -f -- "$ACTIVE"', script)
         result = subprocess.run(
             ["bash", "-n", str(ROOT / "scripts" / "phase03" / "complete-wpad-exercise.sh")],
@@ -178,6 +180,10 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         self.assertIn("wpad-preflight.sh", script)
         self.assertIn("start-mitm6-ws01.sh", script)
         self.assertIn("start-wpad-observers.sh", script)
+        self.assertIn("start-mitm6-ws01.sh 9>&-", script)
+        self.assertIn("start-wpad-observers.sh 9>&-", script)
+        self.assertIn("flock -u 9", script)
+        self.assertIn("exec 9>&-", script)
         self.assertIn('WPAD_WATCHDOG_DELAY:-15m', script)
         self.assertIn("systemd-run", script)
         self.assertIn("--collect", script)
