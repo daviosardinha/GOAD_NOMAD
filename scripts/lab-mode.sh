@@ -584,8 +584,8 @@ vmware_guest_powershell_capture() {
     local vm="$1"
     local script="$2"
     local timeout_seconds="$3"
-    local vmx guest_user guest_password encoded
-    local guest_output host_output command_line
+    local vmx guest_user guest_password inner_encoded wrapper wrapper_encoded
+    local guest_output host_output
     local run_rc=0 copy_rc=1 attempt
     local list_output="" list_rc=0 run_detail="" copy_detail=""
     local started="${SECONDS}" remaining="${timeout_seconds}"
@@ -609,7 +609,7 @@ vmware_guest_powershell_capture() {
     guest_user="$(guestops_credential_value "${vm}" ansible_user)" || return
     guest_password="$(guestops_credential_value "${vm}" ansible_password)" || return
 
-    encoded="$(
+    inner_encoded="$(
         printf '%s' "${script}" |
             iconv -f UTF-8 -t UTF-16LE |
             base64 -w0
@@ -618,9 +618,66 @@ vmware_guest_powershell_capture() {
     guest_output="C:\\Windows\\Temp\\kingdoms-guestops-${vm}-$$-${RANDOM}.txt"
     host_output="$(mktemp "/tmp/kingdoms-guestops-${vm}.XXXXXX")"
 
-    # Broadcom recommends cmd /c for Windows guest stdio redirection. Keep the
-    # PowerShell payload encoded so readiness-script quoting is not re-parsed.
-    command_line="powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encoded} > \"${guest_output}\" 2>&1"
+    # Do not depend on cmd.exe redirection through vmrun. VMware Tools accepts
+    # direct PowerShell execution reliably, so use an outer PowerShell process
+    # to launch the actual readiness payload, capture both streams and preserve
+    # its exit code. The inner payload stays encoded, so its quoting and exit
+    # statements remain unchanged.
+    wrapper="$(cat <<POWERSHELL
+\$result = '${guest_output}'
+\$stdout = "\${result}.stdout"
+\$stderr = "\${result}.stderr"
+\$arguments = @(
+    '-NoProfile',
+    '-NonInteractive',
+    '-EncodedCommand',
+    '${inner_encoded}'
+)
+try {
+    \$child = Start-Process \
+        -FilePath 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' \
+        -ArgumentList \$arguments \
+        -RedirectStandardOutput \$stdout \
+        -RedirectStandardError \$stderr \
+        -Wait \
+        -PassThru \
+        -ErrorAction Stop
+
+    \$parts = @()
+    if (Test-Path \$stdout) {
+        \$parts += Get-Content -Raw -Path \$stdout -ErrorAction SilentlyContinue
+    }
+    if (Test-Path \$stderr) {
+        \$parts += Get-Content -Raw -Path \$stderr -ErrorAction SilentlyContinue
+    }
+
+    [System.IO.File]::WriteAllText(
+        \$result,
+        ((\$parts | Where-Object { \$_ }) -join [Environment]::NewLine),
+        [System.Text.Encoding]::UTF8
+    )
+
+    exit \$child.ExitCode
+}
+catch {
+    [System.IO.File]::WriteAllText(
+        \$result,
+        "KINGDOMS_GUESTOPS_WRAPPER_ERROR|\$((\$_.Exception.Message -replace '[|\\r\\n]', ' ').Trim())",
+        [System.Text.Encoding]::UTF8
+    )
+    exit 1
+}
+finally {
+    Remove-Item -Force -ErrorAction SilentlyContinue \$stdout, \$stderr
+}
+POWERSHELL
+)"
+
+    wrapper_encoded="$(
+        printf '%s' "${wrapper}" |
+            iconv -f UTF-8 -t UTF-16LE |
+            base64 -w0
+    )"
 
     # Execution, result collection and guest cleanup share the caller's one
     # deadline. A separate timeout for each operation would multiply it.
@@ -636,8 +693,10 @@ vmware_guest_powershell_capture() {
         -gp "${guest_password}" \
         runProgramInGuest \
         "${vmx}" \
-        'C:\Windows\System32\cmd.exe' \
-        /d /s /c "${command_line}" 2>&1)"; then
+        'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' \
+        -NoProfile \
+        -NonInteractive \
+        -EncodedCommand "${wrapper_encoded}" 2>&1)"; then
         run_rc=0
     else
         run_rc=$?
