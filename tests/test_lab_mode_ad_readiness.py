@@ -282,6 +282,26 @@ class LabModeAdReadinessTests(unittest.TestCase):
         self.assertIn("guestops-readiness-check)", main)
         self.assertIn('guestops_readiness_check "${2:-GOAD-DC02}"', main)
 
+    def test_guestops_time_check_runs_exact_child_time_probe_once(self):
+        text = self.text
+        fn = text[text.index("guestops_time_check()"):
+                  text.index("powershell_capture()")]
+
+        for token in (
+            'w32tm.exe /query /source',
+            'nltest.exe \'/dsgetdc:${domain}\' /timeserv /force',
+            'KINGDOMS_TIME_DIAG|stage=source',
+            'KINGDOMS_DC_TIME_NOT_READY',
+            'KINGDOMS_DC_TIME_READY',
+            'READINESS_TRANSPORT=guestops',
+            'AD_READINESS_PROBE_TIMEOUT_SECONDS',
+        ):
+            self.assertIn(token, fn)
+
+        main = text[text.index("main()"): ]
+        self.assertIn("guestops-time-check)", main)
+        self.assertIn('guestops_time_check "${2:-GOAD-DC02}"', main)
+
     def test_winrm_helpers_use_explicit_nested_timeout(self):
         text = self.text
         helpers = text[text.index("vagrant_powershell_ready()"):
