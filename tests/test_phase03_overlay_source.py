@@ -237,6 +237,22 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         self.assertIn("sleep 5", script)
         self.assertIn("within 60 seconds", script)
 
+    def test_rickon_failure_diagnostic_is_sanitized_and_auth_only(self):
+        script = (DIAG / "diagnose-rickon-session.sh").read_text()
+        self.assertIn("journalctl --user -u", script)
+        self.assertIn("PHASE03_RICKON_AUTH_ONLY", script)
+        self.assertIn("/auth-only", script)
+        self.assertIn("/args-from:stdin", script)
+        self.assertIn("[REDACTED]", script)
+        self.assertIn("skipping parallel auth-only probe", script)
+        self.assertNotIn('cat "$CREDENTIAL_FILE"\n', script)
+
+    def test_rickon_quser_no_user_state_is_clean_negative_evidence(self):
+        playbook = (ROOT / "ansible" / "phase03-validate-rickon-session.yml").read_text()
+        self.assertIn("No User exists", playbook)
+        self.assertIn("PHASE03_RICKON_ACTIVE=FALSE", playbook)
+        self.assertIn("PHASE03_QUSER=No interactive users", playbook)
+
     def test_wpad_observer_handles_privileged_capture_file(self):
         script = (DIAG / "start-wpad-observers.sh").read_text()
         self.assertIn('sudo rm -f "$PCAP"', script)
