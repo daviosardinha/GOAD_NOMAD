@@ -103,15 +103,35 @@ class LabModeAdReadinessTests(unittest.TestCase):
         fn = text[text.index("enter_exercise_failsafe()"):
                   text.index("enter_provisioning_mode()")]
 
-        self.assertIn("apply_router_policy exercise", fn)
+        self.assertIn("set_state recovery-required", fn)
         self.assertIn('bash "${ROUTES}" disable', fn)
         self.assertIn('ensure_vm_nat_state "${vm}" FALSE disconnect', fn)
         self.assertIn("verify_persistent_state FALSE", fn)
+        self.assertIn("apply_router_policy exercise", fn)
+        self.assertIn("policy drop;", fn)
+        self.assertIn("mode remains recovery-required", fn)
         self.assertIn("set_state exercise", fn)
         self.assertIn("does not claim AD/domain readiness", fn)
 
+        self.assertLess(fn.index('bash "${ROUTES}" disable'), fn.index("apply_router_policy exercise"))
+        self.assertLess(
+            fn.index('ensure_vm_nat_state "${vm}" FALSE disconnect'),
+            fn.index("apply_router_policy exercise"),
+        )
+        self.assertLess(fn.index("set_state recovery-required"), fn.index("set_state exercise"))
+
         main = text[text.index("main()"):]
         self.assertIn("exercise-failsafe)", main)
+
+    def test_status_reports_local_vm_state_even_when_router_query_fails(self):
+        text = self.text
+        fn = text[text.index("show_status()"):
+                  text.index("enter_exercise_mode()")]
+
+        self.assertIn("[UNAVAILABLE] router management/policy query failed", fn)
+        self.assertIn("router_status=1", fn)
+        self.assertIn("=== WINDOWS VM NETWORK STATE ===", fn)
+        self.assertIn('return "${router_status}"', fn)
 
     def test_winrm_helpers_use_explicit_nested_timeout(self):
         text = self.text
