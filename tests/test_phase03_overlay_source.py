@@ -161,7 +161,9 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         self.assertIn("cleanup-wpad-rickon-session.sh", script)
         self.assertIn("AUTOMATIC WPAD VICTIM-SESSION CLEANUP", script)
         self.assertIn("PHASE03_WPAD_EXERCISE_COMPLETE=True", script)
+        self.assertIn("PHASE03_WPAD_WATCHDOG_TIMER_CANCELLED=True", script)
         self.assertIn("PHASE03_WPAD_WATCHDOG_DISARMED=True", script)
+        self.assertIn('systemctl stop "$WATCHDOG_UNIT.timer"', script)
         self.assertIn('rm -f -- "$ACTIVE"', script)
         result = subprocess.run(
             ["bash", "-n", str(ROOT / "scripts" / "phase03" / "complete-wpad-exercise.sh")],
