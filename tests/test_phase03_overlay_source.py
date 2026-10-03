@@ -363,6 +363,13 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         for forbidden in ("Set-AD", "New-ADComputer", "Remove-ADComputer"):
             self.assertNotIn(forbidden, playbook)
 
+    def test_final_regression_forwards_instance_context_to_phase03_runtime(self):
+        script = (ROOT / "scripts" / "validate-phase03-final-regression.sh").read_text()
+        self.assertIn('INSTANCE="$INSTANCE"', script)
+        self.assertIn('PROVIDER="$PROVIDER"', script)
+        self.assertIn('GOAD_PROVIDER_DIR="$PROVIDER"', script)
+        self.assertIn("bash scripts/validate-phase03-runtime.sh", script)
+
     def test_all_phase03_shell_scripts_parse(self):
         phase03 = ROOT / "scripts" / "phase03"
         for script in sorted(phase03.rglob("*.sh")):
