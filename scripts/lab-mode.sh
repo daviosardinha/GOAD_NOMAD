@@ -295,11 +295,11 @@ vmrun_named_device_action() {
     case "${action}" in
         connect)
             command='connectNamedDevice'
-            desired_pattern='already.*connected'
+            desired_pattern='already.*connected|already in desired state'
             ;;
         disconnect)
             command='disconnectNamedDevice'
-            desired_pattern='already.*disconnected'
+            desired_pattern='already.*disconnected|not.*connected|already in desired state'
             ;;
         *)
             fail "Unknown VMware named-device action for ${vm}: ${action}"
