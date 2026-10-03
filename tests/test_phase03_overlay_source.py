@@ -365,6 +365,39 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         for forbidden in ("Set-AD", "New-ADComputer", "Remove-ADComputer"):
             self.assertNotIn(forbidden, playbook)
 
+    def test_headless_rdp_runtime_restore_is_guarded_and_scoped(self):
+        wrapper = (ROOT / "scripts" / "restore-headless-rdp-runtime.sh").read_text()
+        playbook = (ROOT / "ansible" / "restore-headless-rdp-runtime.yml").read_text()
+
+        self.assertIn("--confirm", wrapper)
+        self.assertIn("verify-test-source.sh", wrapper)
+        self.assertIn("restore-headless-rdp-runtime.yml", wrapper)
+        self.assertIn("sync-ws01-rdp-pin.sh", wrapper)
+        self.assertIn("systemctl --user start", wrapper)
+        self.assertIn("KINGDOMS_HEADLESS_RDP_RUNTIME_RESTORED=True", wrapper)
+
+        self.assertIn("hosts: dc02", playbook)
+        self.assertIn("connect_bot", playbook)
+        self.assertIn("NORTH\\robb.stark", playbook)
+        self.assertIn("Disable-ScheduledTask", playbook)
+        self.assertIn("Name='mstsc.exe'", playbook)
+        self.assertIn("KINGDOMS_HEADLESS_RDP_LEGACY_CLEAN=True", playbook)
+        for forbidden in (
+            "Remote Desktop Users",
+            "SeRemoteInteractiveLogonRight",
+            "Set-AD",
+            "New-AD",
+            "Set-NetFirewall",
+        ):
+            self.assertNotIn(forbidden, playbook)
+
+        result = subprocess.run(
+            ["bash", "-n", str(ROOT / "scripts" / "restore-headless-rdp-runtime.sh")],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_final_regression_forwards_instance_context_to_phase03_runtime(self):
         script = (ROOT / "scripts" / "validate-phase03-final-regression.sh").read_text()
         self.assertIn('INSTANCE="$INSTANCE"', script)
