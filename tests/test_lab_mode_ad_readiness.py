@@ -67,6 +67,8 @@ class LabModeAdReadinessTests(unittest.TestCase):
         self.assertIn("connectNamedDevice", helper)
         self.assertIn("disconnectNamedDevice", helper)
         self.assertIn("attempt<=attempts", helper)
+        self.assertIn('if output="$(vmrun -T ws', helper)
+        self.assertIn("rc=$?", helper)
         self.assertIn("already.*connected", helper)
         self.assertIn("already.*disconnected", helper)
 
