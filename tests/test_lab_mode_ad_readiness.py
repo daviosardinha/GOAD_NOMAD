@@ -38,15 +38,15 @@ class LabModeAdReadinessTests(unittest.TestCase):
         )
         self.assertIn("preflight_domain_health", text)
 
-    def test_exercise_restart_proves_authenticated_readiness_before_final_disconnect(self):
+    def test_exercise_restart_uses_guestops_without_runtime_nat_hotplug(self):
         text = self.text
 
         for token in (
             "prove_isolated_guest_ready()",
-            'temporarily connecting runtime NAT for authenticated readiness',
-            'vmrun_named_device_action "${vm}" connect 15 2',
-            'vmrun_named_device_action "${vm}" disconnect 15 2 || true',
-            'authenticated post-reboot readiness proven; runtime NAT disconnected',
+            'proving authenticated readiness through VMware Guest Operations',
+            'ethernet0 remains persistently OFF and runtime disconnected',
+            'READINESS_TRANSPORT=guestops',
+            'authenticated post-reboot readiness proven through VMware Guest Operations',
             'prove_isolated_guest_ready "${vm}" member',
             'prove_isolated_guest_ready "${vm}" dc',
         ):
@@ -54,23 +54,19 @@ class LabModeAdReadinessTests(unittest.TestCase):
 
         fn = text[text.index("prove_isolated_guest_ready()"):
                   text.index("configure_windows_nat_exercise()")]
-        self.assertIn(
-            '[[ "${persistent}" == "FALSE" ]]',
-            fn,
-        )
-        self.assertIn("trap cleanup_runtime_nat EXIT", fn)
 
-        connect = fn.index('vmrun_named_device_action "${vm}" connect 15 2')
+        self.assertIn('[[ "${persistent}" == "FALSE" ]]', fn)
+        self.assertIn('is_running "${vmx}"', fn)
+        self.assertIn('READINESS_TRANSPORT=guestops', fn)
+        self.assertNotIn('vmrun_named_device_action', fn)
+        self.assertNotIn('connectNamedDevice', fn)
+        self.assertNotIn('disconnectNamedDevice', fn)
+
         readiness = fn.index('case "${kind}" in')
-        final_cleanup = fn.index('\n    cleanup_runtime_nat\n    trap - EXIT')
         final_proof = fn.index(
-            'authenticated post-reboot readiness proven; runtime NAT disconnected'
+            'authenticated post-reboot readiness proven through VMware Guest Operations'
         )
-
-        self.assertLess(connect, readiness)
-        self.assertLess(readiness, final_cleanup)
-        self.assertLess(final_cleanup, final_proof)
-
+        self.assertLess(readiness, final_proof)
     def test_provisioning_powers_on_cleanly_stopped_guests_before_readiness(self):
         text = self.text
         ensure = text[text.index("ensure_vm_nat_state()"):
@@ -162,10 +158,9 @@ class LabModeAdReadinessTests(unittest.TestCase):
         )
         self.assertLess(
             fn.index('is_running "${vmx}"'),
-            fn.index('vmrun_named_device_action "${vm}" connect 15 2'),
+            fn.index('READINESS_TRANSPORT=guestops'),
         )
-
-    def test_vmware_named_device_actions_are_retried_and_not_silently_ignored(self):
+    def test_vmware_named_device_actions_remain_provisioning_only(self):
         text = self.text
         helper = text[text.index("vmrun_named_device_action()"):
                       text.index("ensure_vm_nat_state()")]
@@ -178,7 +173,7 @@ class LabModeAdReadinessTests(unittest.TestCase):
         self.assertIn("already.*disconnected", helper)
 
         ensure = text[text.index("ensure_vm_nat_state()"):
-                      text.index("vagrant_powershell_ready()")]
+                      text.index("guestops_credentials_for_vm()")]
         self.assertIn('vmrun_named_device_action "${vm}" "${action}" 15 2', ensure)
         self.assertNotIn("connectNamedDevice", ensure)
         self.assertNotIn("disconnectNamedDevice", ensure)
@@ -186,19 +181,40 @@ class LabModeAdReadinessTests(unittest.TestCase):
 
         isolated = text[text.index("prove_isolated_guest_ready()"):
                         text.index("configure_windows_nat_exercise()")]
-        self.assertIn('vmrun_named_device_action "${vm}" connect 15 2', isolated)
-        self.assertIn('vmrun_named_device_action "${vm}" disconnect 15 2 || true', isolated)
+        self.assertNotIn('vmrun_named_device_action', isolated)
+        self.assertIn('READINESS_TRANSPORT=guestops', isolated)
 
-    def test_dc_readiness_surfaces_probe_output_and_retries_runtime_nat(self):
+    def test_guestops_capture_is_authenticated_bounded_and_cleans_up(self):
+        text = self.text
+        helper = text[text.index("guestops_credentials_for_vm()"):
+                      text.index("vagrant_powershell_ready()")]
+
+        for token in (
+            'inventory_disable_vagrant',
+            '[GOAD-WS01]="srv02"',
+            'runProgramInGuest',
+            'copyFileFromGuestToHost',
+            'deleteFileInGuest',
+            'C:\\Windows\\System32\\cmd.exe',
+            'timeout "${timeout_seconds}" vmrun',
+            'mktemp',
+        ):
+            self.assertIn(token, text)
+
+        self.assertIn('guestops_credentials_for_vm "${vm}"', helper)
+        self.assertIn('powershell_capture()', helper)
+        self.assertIn('guestops)', helper)
+        self.assertIn('vmware_guest_powershell_capture', helper)
+    def test_dc_readiness_uses_selected_transport_and_limits_nat_self_heal_to_vagrant(self):
         text = self.text
         dc = text[text.index("wait_domain_controller_ready()"):
                   text.index("wait_domain_member_ready()")]
 
         self.assertIn('local last_state="reason=transport"', dc)
-        self.assertIn('vagrant_powershell_capture "${vm}" "${script}" "${probe_timeout}"', dc)
+        self.assertIn('powershell_capture "${vm}" "${script}" "${probe_timeout}"', dc)
         self.assertIn("reason=guest_probe_failure", dc)
         self.assertIn("reason=guest_probe_no_ready_marker", dc)
-        self.assertIn("bounded VMware transport self-heal", dc)
+        self.assertIn("bounded VMware transport self-heal", dc)\n        self.assertIn('[[ "${READINESS_TRANSPORT:-vagrant}" == "vagrant" ]]', dc)
         self.assertIn('vmrun_named_device_action "${vm}" connect 3 2 || true', dc)
         self.assertIn("last Vagrant/PowerShell readiness output follows", dc)
         self.assertIn('tail -80', dc)
