@@ -43,11 +43,11 @@ bash scripts/phase03/diagnostics/wpad-preflight.sh
 
 echo
 echo '===== START SCOPED MITM6 ====='
-bash scripts/phase03/diagnostics/start-mitm6-ws01.sh
+bash scripts/phase03/diagnostics/start-mitm6-ws01.sh 9>&-
 
 echo
 echo '===== START WPAD OBSERVERS ====='
-bash scripts/phase03/diagnostics/start-wpad-observers.sh
+bash scripts/phase03/diagnostics/start-wpad-observers.sh 9>&-
 
 cat >"$ACTIVE" <<EOF
 status=armed
@@ -72,6 +72,12 @@ sudo systemctl is-active --quiet "$WATCHDOG_UNIT.timer" || {
 }
 
 trap - ERR INT TERM
+
+# The lifecycle lock is startup-only from this point. Long-lived runtime
+# children were launched with fd 9 closed, so releasing it here cannot be
+# kept alive accidentally by mitm6, HTTP, or tcpdump.
+flock -u 9
+exec 9>&-
 
 echo
 echo 'PHASE03_WPAD_EXERCISE_ARMED=True'
