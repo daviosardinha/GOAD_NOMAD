@@ -675,8 +675,12 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         self.assertIn("stop-wpad-runtime.sh", shell)
         self.assertIn("verify-wpad-reset.sh", shell)
         self.assertLess(
-            shell.index("stop-wpad-runtime.sh"),
-            shell.index("phase03-wpad-rollback.yml"),
+            shell.index("===== STOP TEMPORARY MITM6 / WPAD RUNTIME ====="),
+            shell.index("===== RESTORE WS01 IPV6 / DNS STATE ====="),
+        )
+        self.assertLess(
+            shell.index("===== RESTORE WS01 IPV6 / DNS STATE ====="),
+            shell.index("===== VERIFY EXACT CAPTURED BASELINE ====="),
         )
         self.assertIn("mitm6 is still active", shell)
         self.assertIn("PHASE03_WPAD_DETERMINISTIC_ROLLBACK_COMPLETE=True", shell)
