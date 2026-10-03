@@ -178,16 +178,21 @@ wait_started() {
     return 1
 }
 
-pin_vmware_uuid_identity() {
+pin_vmware_management_nic_identity() {
     local vmx="$1"
 
-    # VMware-generated 00:0c:29 management MACs are derived from the VM UUID.
-    # Direct lifecycle stop/start operations must preserve the UUID selected
-    # when the guest was originally created. A lingering uuid.action="create"
-    # can regenerate both the UUID and the NAT NIC identity after a power cycle.
-    # Only edit a powered-off VMX.
+    # ethernet0 is the Vagrant/management NAT NIC. VMware-generated addresses
+    # are tied to VM identity and can be recomputed after lifecycle power
+    # operations. Once VMware has created the guest, freeze the already-chosen
+    # management MAC as a static VMX address so Windows keeps seeing the same
+    # device across provisioning/exercise transitions.
+    #
+    # Fresh installs are safe: the first generated MAC becomes the permanent
+    # management identity. Existing labs that have already drifted must first
+    # restore the MAC Windows currently owns before this helper is allowed to
+    # pin it; never invent a replacement identity here.
     if is_running "${vmx}"; then
-        fail "refusing to pin VMware UUID identity while VM is running: ${vmx}"
+        fail "refusing to pin VMware management NIC identity while VM is running: ${vmx}"
     fi
 
     python3 - "${vmx}" <<'PY'
@@ -198,47 +203,64 @@ import sys
 path = Path(sys.argv[1])
 text = path.read_text()
 
-uuid_match = re.search(r'(?im)^\s*uuid\.bios\s*=\s*"([^"]+)"', text)
-if uuid_match is None:
-    raise SystemExit(f"VMX has no established uuid.bios to preserve: {path}")
-
-mac_match = re.search(
-    r'(?im)^\s*ethernet0\.generatedAddress\s*=\s*"([^"]+)"',
-    text,
-)
-mac_before = mac_match.group(1).lower() if mac_match else "not-generated"
-
-pattern = r'(?im)^\s*uuid\.action\s*=.*'
-replacement = 'uuid.action = "keep"'
-
-if re.search(pattern, text):
-    updated = re.sub(pattern, replacement, text)
-else:
-    if not text.endswith("\n"):
-        text += "\n"
-    updated = text + replacement + "\n"
-
-mac_after_match = re.search(
-    r'(?im)^\s*ethernet0\.generatedAddress\s*=\s*"([^"]+)"',
-    updated,
-)
-mac_after = mac_after_match.group(1).lower() if mac_after_match else "not-generated"
-
-if mac_before != mac_after:
-    raise SystemExit(
-        f"refusing UUID pin because ethernet0 generated MAC changed: "
-        f"{mac_before} -> {mac_after}"
+def get(key):
+    match = re.search(
+        rf'(?im)^\s*{re.escape(key)}\s*=\s*"([^"]*)"',
+        text,
     )
+    return match.group(1) if match else None
+
+def set_value(data, key, value):
+    pattern = rf'(?im)^\s*{re.escape(key)}\s*=.*$'
+    line = f'{key} = "{value}"'
+    if re.search(pattern, data):
+        return re.sub(pattern, line, data)
+    if not data.endswith("\n"):
+        data += "\n"
+    return data + line + "\n"
+
+def remove_key(data, key):
+    pattern = rf'(?im)^\s*{re.escape(key)}\s*=.*\n?'
+    return re.sub(pattern, "", data)
+
+address_type = (get("ethernet0.addresstype") or "").lower()
+static_address = get("ethernet0.address")
+generated_address = get("ethernet0.generatedAddress")
+
+if address_type == "static":
+    if not static_address:
+        raise SystemExit(
+            f"VMX ethernet0 is static but has no address: {path}"
+        )
+    pinned = static_address.lower()
+    updated = text
+elif address_type == "generated":
+    if not generated_address:
+        raise SystemExit(
+            f"VMX ethernet0 is generated but has no generatedAddress: {path}"
+        )
+    pinned = generated_address.lower()
+    updated = set_value(text, "ethernet0.addresstype", "static")
+    updated = set_value(updated, "ethernet0.address", pinned)
+    updated = remove_key(updated, "ethernet0.generatedAddress")
+    updated = remove_key(updated, "ethernet0.generatedAddressOffset")
+else:
+    raise SystemExit(
+        f"unsupported ethernet0.addressType={address_type!r}: {path}"
+    )
+
+# Keep the VM UUID stable as well, but the management MAC no longer depends on
+# VMware deriving an address from that UUID.
+updated = set_value(updated, "uuid.action", "keep")
 
 if updated != text:
     path.write_text(updated)
 
 print(
-    f"KINGDOMS_VMWARE_UUID_PINNED|uuid={uuid_match.group(1)}|ethernet0={mac_after}"
+    f"KINGDOMS_VMWARE_MANAGEMENT_NIC_PINNED|ethernet0={pinned}|type=static"
 )
 PY
 }
-
 get_start_connected() {
     local vmx="$1"
     local line
@@ -428,8 +450,8 @@ ensure_vm_nat_state() {
                 fail "${vm} did not stop cleanly."
         fi
 
-        pin_vmware_uuid_identity "${vmx}" ||
-            fail "${vm}: could not preserve VMware UUID / management NIC identity"
+        pin_vmware_management_nic_identity "${vmx}" ||
+            fail "${vm}: could not preserve VMware management NIC identity"
 
         set_start_connected "${vmx}" "${desired}"
 
@@ -461,8 +483,8 @@ ensure_vm_nat_state() {
        ! is_running "${vmx}"; then
         echo "        [*] VM is powered off; starting it for provisioning readiness"
 
-        pin_vmware_uuid_identity "${vmx}" ||
-            fail "${vm}: could not preserve VMware UUID / management NIC identity"
+        pin_vmware_management_nic_identity "${vmx}" ||
+            fail "${vm}: could not preserve VMware management NIC identity"
 
         vmrun -T ws start "${vmx}" nogui >/dev/null
 
