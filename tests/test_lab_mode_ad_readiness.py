@@ -71,6 +71,46 @@ class LabModeAdReadinessTests(unittest.TestCase):
         self.assertLess(readiness, final_cleanup)
         self.assertLess(final_cleanup, final_proof)
 
+    def test_provisioning_powers_on_cleanly_stopped_guests_before_readiness(self):
+        text = self.text
+        ensure = text[text.index("ensure_vm_nat_state()"):
+                      text.index("vagrant_powershell_ready()")]
+
+        self.assertIn(
+            '[[ "${desired}" == "TRUE" && "${action}" == "connect" ]]',
+            ensure,
+        )
+        self.assertIn("VM is powered off; starting it for provisioning readiness", ensure)
+        self.assertIn('vmrun -T ws start "${vmx}" nogui', ensure)
+        self.assertIn('wait_started "${vmx}"', ensure)
+        self.assertIn("did not start for provisioning readiness", ensure)
+        self.assertIn("runtime connect requested while VM is powered off", ensure)
+
+        provisioning = text[text.index("configure_windows_nat_provisioning()"):
+                            text.index("prove_isolated_guest_ready()")]
+        self.assertLess(
+            provisioning.index('ensure_vm_nat_state "${vm}" TRUE connect'),
+            provisioning.index('wait_domain_controller_ready "${vm}"'),
+        )
+        self.assertLess(
+            provisioning.rindex('ensure_vm_nat_state "${vm}" TRUE connect'),
+            provisioning.index('wait_domain_member_ready "${vm}"'),
+        )
+
+    def test_isolated_readiness_fails_fast_if_guest_is_powered_off(self):
+        text = self.text
+        fn = text[text.index("prove_isolated_guest_ready()"):
+                  text.index("configure_windows_nat_exercise()")]
+
+        self.assertIn(
+            'authenticated exercise-readiness probe requires the VM to be powered on',
+            fn,
+        )
+        self.assertLess(
+            fn.index('is_running "${vmx}"'),
+            fn.index('vmrun_named_device_action "${vm}" connect 15 2'),
+        )
+
     def test_vmware_named_device_actions_are_retried_and_not_silently_ignored(self):
         text = self.text
         helper = text[text.index("vmrun_named_device_action()"):
