@@ -202,7 +202,11 @@ class LabModeAdReadinessTests(unittest.TestCase):
             'runProgramInGuest',
             'copyFileFromGuestToHost',
             'deleteFileInGuest',
-            'C:\\Windows\\System32\\cmd.exe',
+            'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+            'Start-Process',
+            '-RedirectStandardOutput',
+            '-RedirectStandardError',
+            'wrapper_encoded',
             'timeout --kill-after=1 "${remaining}" vmrun',
             'mktemp',
         ):
