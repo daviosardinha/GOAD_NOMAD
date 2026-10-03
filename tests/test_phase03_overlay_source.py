@@ -121,6 +121,36 @@ class Phase03OverlaySourceTests(unittest.TestCase):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(forbidden, corpus)
 
+    def test_wpad_preflight_is_independent_of_rickon_and_prepares_harmless_pac(self):
+        script = (DIAG / "wpad-preflight.sh").read_text()
+        self.assertNotIn(":3389", script)
+        self.assertNotIn("Rickon", script)
+        self.assertIn('return "DIRECT";', script)
+        self.assertIn("wpad.dat", script)
+        self.assertIn("no WS01 network state changed", script)
+
+    def test_wpad_observer_fails_closed_if_pac_is_missing(self):
+        script = (DIAG / "start-wpad-observers.sh").read_text()
+        self.assertIn("harmless PAC file missing", script)
+        self.assertIn("wpad-preflight.sh", script)
+
+    def test_wpad_completion_always_rolls_back_after_validation(self):
+        script = (ROOT / "scripts" / "phase03" / "complete-wpad-exercise.sh").read_text()
+        self.assertIn("validate-wpad-chain.sh", script)
+        self.assertIn("rollback-wpad-runtime.sh", script)
+        self.assertIn("trap cleanup EXIT", script)
+        self.assertIn("trap 'exit 130' INT", script)
+        self.assertIn("trap 'exit 143' TERM", script)
+        self.assertIn("automatic WPAD rollback", script)
+        self.assertIn("PHASE03_WPAD_EXERCISE_COMPLETE=True", script)
+        self.assertNotIn("rm -f", script)
+        result = subprocess.run(
+            ["bash", "-n", str(ROOT / "scripts" / "phase03" / "complete-wpad-exercise.sh")],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_wpad_observer_handles_privileged_capture_file(self):
         script = (DIAG / "start-wpad-observers.sh").read_text()
         self.assertIn('sudo rm -f "$PCAP"', script)
@@ -143,7 +173,9 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         self.assertIn("ipconfig.exe /renew6", playbook)
         self.assertIn("Get-DnsClientServerAddress", playbook)
         self.assertIn("kingdoms-mitm6.log", shell)
-        self.assertIn("validate-rickon-session.sh", shell)
+        self.assertIn("WPAD HTTP observer log missing", shell)
+        self.assertIn("WPAD packet capture is not running", shell)
+        self.assertNotIn("validate-rickon-session.sh", shell)
 
     def test_wpad_chain_validator_requires_same_capture_sequence(self):
         script = (ROOT / "scripts" / "phase03" / "validate-wpad-chain.sh").read_text()
