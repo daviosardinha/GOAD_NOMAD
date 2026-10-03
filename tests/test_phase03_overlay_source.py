@@ -135,14 +135,16 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         self.assertIn("kingdoms-phase03-rickon.service", ensure)
         self.assertIn("check-rickon-prereqs.sh", ensure)
         self.assertIn("validate-rickon-session.sh", ensure)
-        self.assertIn("started-by-wpad", ensure)
+        self.assertIn("ensured-by-wpad", ensure)
         self.assertIn("remains owned by this WPAD exercise", ensure)
         self.assertNotIn('rm -f -- "$MARKER"\n  bash scripts/phase03/validate-rickon-session.sh', ensure)
-        self.assertIn("PHASE03_WPAD_RICKON_STARTED_BY_EXERCISE=True", ensure)
+        self.assertIn("PHASE03_WPAD_RICKON_ENSURED_BY_EXERCISE=True", ensure)
 
-        self.assertIn("started-by-wpad", cleanup)
-        self.assertIn("systemctl --user stop", cleanup)
-        self.assertIn("PHASE03_WPAD_RICKON_CLEANUP_COMPLETE=True", cleanup)
+        self.assertIn("ensured-by-wpad", cleanup)
+        self.assertIn("shared permanent Rickon", cleanup)
+        self.assertIn("systemctl --user start", cleanup)
+        self.assertNotIn("systemctl --user stop", cleanup)
+        self.assertIn("PHASE03_WPAD_RICKON_PRESERVED=True", cleanup)
         self.assertNotIn("systemctl --user disable", cleanup)
 
     def test_wpad_observer_fails_closed_if_pac_is_missing(self):
