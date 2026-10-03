@@ -93,7 +93,7 @@ class LabModeAdReadinessTests(unittest.TestCase):
         self.assertIn('vagrant_powershell_capture "${vm}" "${script}" "${probe_timeout}"', dc)
         self.assertIn("reason=guest_probe_failure", dc)
         self.assertIn("reason=guest_probe_no_ready_marker", dc)
-        self.assertIn("re-requesting ${vm} ethernet0 runtime connection", dc)
+        self.assertIn("bounded VMware transport self-heal", dc)
         self.assertIn('vmrun_named_device_action "${vm}" connect 3 2 || true', dc)
         self.assertIn("last Vagrant/PowerShell readiness output follows", dc)
         self.assertIn('tail -80', dc)
