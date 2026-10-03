@@ -17,7 +17,7 @@ fail() { printf '[FAIL] %s\n' "$*" >&2; exit 1; }
 [[ "$(id -u)" -ne 0 ]] ||
   fail 'Run the Rickon victim session as the unprivileged Kali operator, never sudo.'
 
-for cmd in ip stat ss xvfb-run xfreerdp3; do
+for cmd in ip stat ss getent awk xvfb-run xfreerdp3; do
   command -v "$cmd" >/dev/null 2>&1 || fail "Missing prerequisite: $cmd"
 done
 
