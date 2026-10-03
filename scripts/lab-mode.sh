@@ -282,6 +282,57 @@ apply_router_policy() {
     echo "[+] Router ${mode} policy active and persistent"
 }
 
+
+vmrun_named_device_action() {
+    local vm="$1"
+    local action="$2"
+    local attempts="${3:-15}"
+    local delay="${4:-2}"
+    local vmx command output rc attempt desired_pattern
+
+    vmx="$(vmx_for "${vm}")"
+
+    case "${action}" in
+        connect)
+            command='connectNamedDevice'
+            desired_pattern='already.*connected'
+            ;;
+        disconnect)
+            command='disconnectNamedDevice'
+            desired_pattern='already.*disconnected'
+            ;;
+        *)
+            fail "Unknown VMware named-device action for ${vm}: ${action}"
+            ;;
+    esac
+
+    for ((attempt=1; attempt<=attempts; attempt++)); do
+        output="$(vmrun -T ws "${command}" "${vmx}" ethernet0 2>&1)"
+        rc=$?
+
+        if (( rc == 0 )); then
+            echo "        [+] ${vm} ethernet0 runtime ${action} request accepted (attempt ${attempt})"
+            return 0
+        fi
+
+        if grep -Eqi "${desired_pattern}" <<<"${output}"; then
+            echo "        [+] ${vm} ethernet0 already ${action}ed"
+            return 0
+        fi
+
+        if (( attempt == 1 || attempt % 5 == 0 )); then
+            echo "        [*] retrying ${vm} ethernet0 runtime ${action} (attempt ${attempt}/${attempts}); vmrun rc=${rc}" >&2
+            [[ -n "${output}" ]] && printf '            %s\n' "${output}" >&2
+        fi
+
+        (( attempt < attempts )) && sleep "${delay}"
+    done
+
+    echo "        [!] ${vm}: vmrun could not ${action} ethernet0 after ${attempts} attempts" >&2
+    [[ -n "${output:-}" ]] && printf '            last vmrun output: %s\n' "${output}" >&2
+    return 1
+}
+
 ensure_vm_nat_state() {
     local vm="$1"
     local desired="$2"
@@ -334,25 +385,8 @@ ensure_vm_nat_state() {
     fi
 
     if is_running "${vmx}"; then
-        case "${action}" in
-            connect)
-                vmrun -T ws \
-                    connectNamedDevice \
-                    "${vmx}" \
-                    ethernet0 >/dev/null 2>&1 || true
-                ;;
-
-            disconnect)
-                vmrun -T ws \
-                    disconnectNamedDevice \
-                    "${vmx}" \
-                    ethernet0 >/dev/null 2>&1 || true
-                ;;
-
-            *)
-                fail "Unknown VMware device action: ${action}"
-                ;;
-        esac
+        vmrun_named_device_action "${vm}" "${action}" 15 2 ||
+            fail "${vm}: could not reconcile ethernet0 runtime state to ${action}"
     fi
 
     printf '        [+] ethernet0 startConnected=%s, runtime=%s\n' \
@@ -1057,11 +1091,11 @@ prove_isolated_guest_ready() (
 
     echo "        [*] temporarily connecting runtime NAT for authenticated readiness"
 
-    vmrun -T ws connectNamedDevice "${vmx}" ethernet0 >/dev/null 2>&1 ||
+    vmrun_named_device_action "${vm}" connect 15 2 ||
         fail "${vm}: could not temporarily connect runtime NAT for readiness"
 
     cleanup_runtime_nat() {
-        vmrun -T ws disconnectNamedDevice "${vmx}" ethernet0 >/dev/null 2>&1 || true
+        vmrun_named_device_action "${vm}" disconnect 15 2 || true
     }
     trap cleanup_runtime_nat EXIT
 
