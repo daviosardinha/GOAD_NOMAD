@@ -53,8 +53,16 @@ chmod 600 "$MARKER"
 echo 'Waiting for the Rickon -> WS01 interactive victim session...'
 if ! wait_for_healthy_session; then
   echo 'FAIL: Rickon victim session did not become healthy within 60 seconds' >&2
+  echo
+  echo '===== RICKON FAILURE DIAGNOSTICS BEFORE STOP =====' >&2
+  bash scripts/phase03/diagnostics/diagnose-rickon-session.sh >&2 || true
+
   systemctl --user stop "$SERVICE" >/dev/null 2>&1 || true
   rm -f -- "$MARKER"
+
+  echo
+  echo '===== RICKON AUTHENTICATION DIAGNOSTIC AFTER STOP =====' >&2
+  bash scripts/phase03/diagnostics/diagnose-rickon-session.sh >&2 || true
   exit 1
 fi
 
