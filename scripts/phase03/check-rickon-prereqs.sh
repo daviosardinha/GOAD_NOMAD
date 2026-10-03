@@ -2,6 +2,7 @@
 # Read-only prerequisite gate for the permanent Phase 03 Rickon victim client.
 set -uo pipefail
 
+TARGET_FQDN='ws01.north.sevenkingdoms.local'
 TARGET_IP='10.4.10.31'
 EXPECTED_INTERFACE='vmnet10'
 EXPECTED_SOURCE='10.4.10.254'
@@ -20,6 +21,13 @@ for executable in xfreerdp3 xvfb-run Xvfb xauth ip stat ss; do
     fail "Missing $executable"
   fi
 done
+
+resolved_ip="$(getent ahostsv4 "$TARGET_FQDN" 2>/dev/null | awk 'NR==1{print $1}')"
+if [[ "$resolved_ip" == "$TARGET_IP" ]]; then
+  pass "$TARGET_FQDN resolves to $TARGET_IP"
+else
+  fail "$TARGET_FQDN must resolve to $TARGET_IP, got ${resolved_ip:-none}"
+fi
 
 route="$(ip -4 route get "$TARGET_IP" 2>&1 || true)"
 printf '[INFO] WS01 route: %s\n' "$route"
