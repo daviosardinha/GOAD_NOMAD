@@ -910,8 +910,11 @@ ensure_child_dc_time_ready() {
     local repair_script
     local output=""
     local marker=""
+    local capture_rc=0
+    local transport_marker=""
     local last_state="reason=transport"
     local consecutive_source_failures=0
+    local consecutive_transport_failures=0
     local repair_attempted=0
     local repair_deferred=0
     local repair_invocations=0
@@ -1051,14 +1054,23 @@ POWERSHELL
 
         output=""
         marker=""
+        transport_marker=""
+        capture_rc=0
 
         if output="$(powershell_capture "${vm}" "${probe_script}" "${probe_timeout}")"; then
-            marker="$(
-                printf '%s\n' "${output}" |
-                    grep -E 'KINGDOMS_DC_TIME_(READY|NOT_READY)\|' |
-                    tail -n 1 || true
-            )"
+            capture_rc=0
+        else
+            capture_rc=$?
         fi
+
+        # Parse the guest result independently from the wrapper exit status.
+        # Each GuestOps result path is unique per invocation, so a marker copied
+        # from this probe is current evidence rather than stale output.
+        marker="$(
+            printf '%s\n' "${output}" |
+                grep -E 'KINGDOMS_DC_TIME_(READY|NOT_READY)\\|' |
+                tail -n 1 || true
+        )"
 
         if [[ "${marker}" == KINGDOMS_DC_TIME_READY\|* ]]; then
             echo "        [+] ${vm} child-domain time hierarchy ready (${parent_server})"
@@ -1066,9 +1078,33 @@ POWERSHELL
         fi
 
         if [[ "${marker}" == KINGDOMS_DC_TIME_NOT_READY\|* ]]; then
+            consecutive_transport_failures=0
             last_state="${marker#KINGDOMS_DC_TIME_NOT_READY|}"
         else
-            last_state="reason=transport"
+            transport_marker="$(
+                printf '%s\n' "${output}" |
+                    grep -E 'KINGDOMS_GUESTOPS_ERROR\\|' |
+                    tail -n 1 || true
+            )"
+            consecutive_transport_failures=$((consecutive_transport_failures + 1))
+
+            if [[ -n "${transport_marker}" ]]; then
+                last_state="reason=transport|capture_rc=${capture_rc}|${transport_marker}"
+            elif (( capture_rc != 0 )); then
+                last_state="reason=transport|capture_rc=${capture_rc}|detail=no_guestops_marker"
+            else
+                last_state="reason=no_time_marker|capture_rc=0"
+            fi
+
+            if [[ "${READINESS_TRANSPORT:-vagrant}" == "guestops" ]] &&
+               (( consecutive_transport_failures >= 3 )); then
+                echo "        [!] ${vm} child-time GuestOps probe failed repeatedly; ${last_state}" >&2
+                if [[ -n "${output}" ]]; then
+                    echo "        [!] last GuestOps child-time output follows:" >&2
+                    printf '%s\n' "${output}" | tail -80 >&2
+                fi
+                fail "${vm} child-domain time probe transport failed 3 consecutive times after AD readiness"
+            fi
         fi
 
         if [[ "${last_state}" == reason=source\|* ]]; then
@@ -1089,34 +1125,42 @@ POWERSHELL
             (( remaining < repair_timeout )) && repair_timeout="${remaining}"
 
             output=""
-            if output="$(powershell_capture "${vm}" "${repair_script}" "${repair_timeout}")"; then
-                marker="$(
-                    printf '%s\n' "${output}" |
-                        grep -E 'KINGDOMS_DC_TIME_(REPAIRED|REPAIR_DEFERRED|REPAIR_FAILED)\|' |
-                        tail -n 1 || true
-                )"
+            marker=""
+            transport_marker=""
+            capture_rc=0
 
-                if [[ "${marker}" == KINGDOMS_DC_TIME_REPAIRED\|* ]]; then
-                    repair_attempted=1
-                    echo "        [+] ${vm} child-domain time recovery completed: ${marker}"
-                elif [[ "${marker}" == KINGDOMS_DC_TIME_REPAIR_DEFERRED\|* ]]; then
-                    repair_deferred=$((repair_deferred + 1))
-                    last_state="reason=repair_deferred|${marker#KINGDOMS_DC_TIME_REPAIR_DEFERRED|}"
-                    echo "        [*] ${vm} child-domain time repair deferred; parent prerequisite is not ready yet"
-                    echo "            ${marker}"
-                elif [[ "${marker}" == KINGDOMS_DC_TIME_REPAIR_FAILED\|* ]]; then
-                    repair_attempted=1
-                    fail "${vm} child-domain time recovery failed after prerequisites were proven: ${marker}"
-                else
-                    fail "${vm} child-domain time recovery returned without a terminal marker"
-                fi
+            if output="$(powershell_capture "${vm}" "${repair_script}" "${repair_timeout}")"; then
+                capture_rc=0
             else
-                marker="$(
+                capture_rc=$?
+            fi
+
+            marker="$(
+                printf '%s\n' "${output}" |
+                    grep -E 'KINGDOMS_DC_TIME_(REPAIRED|REPAIR_DEFERRED|REPAIR_FAILED)\\|' |
+                    tail -n 1 || true
+            )"
+
+            if [[ "${marker}" == KINGDOMS_DC_TIME_REPAIRED\|* ]]; then
+                repair_attempted=1
+                echo "        [+] ${vm} child-domain time recovery completed: ${marker}"
+            elif [[ "${marker}" == KINGDOMS_DC_TIME_REPAIR_DEFERRED\|* ]]; then
+                repair_deferred=$((repair_deferred + 1))
+                last_state="reason=repair_deferred|${marker#KINGDOMS_DC_TIME_REPAIR_DEFERRED|}"
+                echo "        [*] ${vm} child-domain time repair deferred; parent prerequisite is not ready yet"
+                echo "            ${marker}"
+            elif [[ "${marker}" == KINGDOMS_DC_TIME_REPAIR_FAILED\|* ]]; then
+                repair_attempted=1
+                fail "${vm} child-domain time recovery failed after prerequisites were proven: ${marker}"
+            elif (( capture_rc != 0 )); then
+                transport_marker="$(
                     printf '%s\n' "${output}" |
-                        grep -E 'KINGDOMS_DC_TIME_(REPAIRED|REPAIR_DEFERRED|REPAIR_FAILED)\|' |
+                        grep -E 'KINGDOMS_GUESTOPS_ERROR\\|' |
                         tail -n 1 || true
                 )"
-                fail "${vm} child-domain time recovery transport failed within remaining readiness budget: ${marker:-no marker}"
+                fail "${vm} child-domain time recovery transport failed (rc=${capture_rc}): ${transport_marker:-no GuestOps marker}"
+            else
+                fail "${vm} child-domain time recovery returned without a terminal marker"
             fi
 
             consecutive_source_failures=0
