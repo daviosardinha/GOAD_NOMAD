@@ -62,14 +62,14 @@ class LabModeAdReadinessTests(unittest.TestCase):
 
         connect = fn.index('vmrun_named_device_action "${vm}" connect 15 2')
         readiness = fn.index('case "${kind}" in')
-        cleanup = fn.index('cleanup_runtime_nat')
+        final_cleanup = fn.index('\n    cleanup_runtime_nat\n    trap - EXIT')
         final_proof = fn.index(
             'authenticated post-reboot readiness proven; runtime NAT disconnected'
         )
 
         self.assertLess(connect, readiness)
-        self.assertLess(readiness, final_proof)
-        self.assertLess(cleanup, final_proof)
+        self.assertLess(readiness, final_cleanup)
+        self.assertLess(final_cleanup, final_proof)
 
     def test_vmware_named_device_actions_are_retried_and_not_silently_ignored(self):
         text = self.text
