@@ -502,21 +502,34 @@ POWERSHELL
     repair_script="$(cat <<POWERSHELL
 \$ErrorActionPreference = 'Continue'
 
-# Prove that the authoritative parent-domain time source is discoverable.
+# Parent-domain discovery can lag local AD readiness after a cold boot.
+# Treat that as a transient prerequisite, not as a failed repair.
+\$parentDomainLocator = @(& nltest.exe '/dsgetdc:${parent_domain}' /force 2>&1 | ForEach-Object { "\$_" })
+\$parentDomainLocatorRc = \$LASTEXITCODE
+if (\$parentDomainLocatorRc -ne 0) {
+    \$detail = ((\$parentDomainLocator -join ' ') -replace '[|\r\n]', ' ').Trim()
+    Write-Output "KINGDOMS_DC_TIME_REPAIR_DEFERRED|stage=parent_domain_locator|rc=\$parentDomainLocatorRc|detail=\$detail"
+    exit 0
+}
+
+# Even after the parent domain is locatable, its TIMESERV advertisement may
+# need a little longer to converge. Keep waiting inside the existing bounded
+# readiness budget instead of turning that startup race into a fatal repair.
 \$parentLocator = @(& nltest.exe '/dsgetdc:${parent_domain}' /timeserv /force 2>&1 | ForEach-Object { "\$_" })
 \$parentLocatorRc = \$LASTEXITCODE
 if (\$parentLocatorRc -ne 0) {
     \$detail = ((\$parentLocator -join ' ') -replace '[|\r\n]', ' ').Trim()
-    Write-Output "KINGDOMS_DC_TIME_REPAIR_FAILED|stage=parent_timeserv_locator|rc=\$parentLocatorRc|detail=\$detail"
+    Write-Output "KINGDOMS_DC_TIME_REPAIR_DEFERRED|stage=parent_timeserv_locator|rc=\$parentLocatorRc|detail=\$detail"
     exit 0
 }
 
 # Prove UDP/123 reaches the expected forest-root PDC before changing W32Time.
+# A temporarily unavailable NTP path is also a prerequisite wait condition.
 \$strip = @(& w32tm.exe /stripchart /computer:${parent_server} /samples:2 /dataonly 2>&1 | ForEach-Object { "\$_" })
 \$stripRc = \$LASTEXITCODE
 if (\$stripRc -ne 0) {
     \$detail = ((\$strip -join ' ') -replace '[|\r\n]', ' ').Trim()
-    Write-Output "KINGDOMS_DC_TIME_REPAIR_FAILED|stage=parent_ntp_path|rc=\$stripRc|detail=\$detail"
+    Write-Output "KINGDOMS_DC_TIME_REPAIR_DEFERRED|stage=parent_ntp_path|rc=\$stripRc|detail=\$detail"
     exit 0
 }
 
