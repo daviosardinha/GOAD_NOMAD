@@ -1794,6 +1794,29 @@ enter_exercise_failsafe() {
     echo "    Run the normal exercise lifecycle/readiness validation before continuing the lab."
 }
 
+guestops_readiness_check() (
+    local vm="${1:-GOAD-DC02}"
+    local kind=""
+
+    if [[ -n "${DC_DOMAIN[${vm}]:-}" ]]; then
+        kind="dc"
+    elif [[ -n "${MEMBER_DOMAIN[${vm}]:-}" ]]; then
+        kind="member"
+    else
+        fail "Unknown Windows VM for GuestOps readiness check: ${vm}"
+    fi
+
+    echo "============================================================"
+    echo "TARGETED VMWARE GUESTOPS READINESS"
+    echo "============================================================"
+    echo "VM:   ${vm}"
+    echo "Kind: ${kind}"
+
+    prove_isolated_guest_ready "${vm}" "${kind}"
+
+    echo
+    echo "[+] ${vm} targeted GuestOps readiness passed"
+)
 enter_provisioning_mode() {
     echo "============================================================"
     echo "ENTERING GOAD_NOMAD PROVISIONING MODE"
@@ -1867,8 +1890,12 @@ main() {
             guestops_check "${2:-GOAD-DC02}"
             ;;
 
+        guestops-readiness-check)
+            guestops_readiness_check "${2:-GOAD-DC02}"
+            ;;
+
         *)
-            echo "Usage: $0 {exercise|exercise-failsafe|provisioning|status|guestops-check [VM]}" >&2
+            echo "Usage: $0 {exercise|exercise-failsafe|provisioning|status|guestops-check [VM]|guestops-readiness-check [VM]}" >&2
             exit 2
             ;;
     esac
