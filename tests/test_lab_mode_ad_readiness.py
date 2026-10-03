@@ -60,6 +60,42 @@ class LabModeAdReadinessTests(unittest.TestCase):
         )
         self.assertIn("trap cleanup_runtime_nat EXIT", fn)
 
+    def test_vmware_named_device_actions_are_retried_and_not_silently_ignored(self):
+        text = self.text
+        helper = text[text.index("vmrun_named_device_action()"):
+                      text.index("ensure_vm_nat_state()")]
+        self.assertIn("connectNamedDevice", helper)
+        self.assertIn("disconnectNamedDevice", helper)
+        self.assertIn("attempt<=attempts", helper)
+        self.assertIn("already.*connected", helper)
+        self.assertIn("already.*disconnected", helper)
+
+        ensure = text[text.index("ensure_vm_nat_state()"):
+                      text.index("vagrant_powershell_ready()")]
+        self.assertIn('vmrun_named_device_action "${vm}" "${action}" 15 2', ensure)
+        self.assertNotIn("connectNamedDevice", ensure)
+        self.assertNotIn("disconnectNamedDevice", ensure)
+        self.assertNotIn("|| true", ensure)
+
+        isolated = text[text.index("prove_isolated_guest_ready()"):
+                        text.index("configure_windows_nat_exercise()")]
+        self.assertIn('vmrun_named_device_action "${vm}" connect 15 2', isolated)
+        self.assertIn('vmrun_named_device_action "${vm}" disconnect 15 2 || true', isolated)
+
+    def test_dc_readiness_surfaces_probe_output_and_retries_runtime_nat(self):
+        text = self.text
+        dc = text[text.index("wait_domain_controller_ready()"):
+                  text.index("wait_domain_member_ready()")]
+
+        self.assertIn('local last_state="reason=transport"', dc)
+        self.assertIn('vagrant_powershell_capture "${vm}" "${script}" "${probe_timeout}"', dc)
+        self.assertIn("reason=guest_probe_failure", dc)
+        self.assertIn("reason=guest_probe_no_ready_marker", dc)
+        self.assertIn("re-requesting ${vm} ethernet0 runtime connection", dc)
+        self.assertIn('vmrun_named_device_action "${vm}" connect 3 2 || true', dc)
+        self.assertIn("last Vagrant/PowerShell readiness output follows", dc)
+        self.assertIn('tail -80', dc)
+
     def test_winrm_helpers_use_explicit_nested_timeout(self):
         text = self.text
         helpers = text[text.index("vagrant_powershell_ready()"):
@@ -105,7 +141,7 @@ class LabModeAdReadinessTests(unittest.TestCase):
             child,
         )
         self.assertIn(
-            'vagrant_powershell_ready "${vm}" "${script}" "${probe_timeout}"',
+            'vagrant_powershell_capture "${vm}" "${script}" "${probe_timeout}"',
             dc,
         )
         self.assertIn(
