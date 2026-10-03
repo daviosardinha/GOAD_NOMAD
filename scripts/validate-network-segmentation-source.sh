@@ -292,11 +292,15 @@ grep -Fq 'state: started' ansible/roles/child_domain/tasks/main.yml ||
     fail "child-domain role does not ensure required Windows services are started"
 pass "Winterfell DNS / ADWS hardening is present"
 
-grep -Fq 'pin_vmware_uuid_identity()' scripts/lab-mode.sh ||
-    fail "lifecycle does not preserve VMware UUID before direct power cycles"
-grep -Fq 'uuid.action = "keep"' scripts/lab-mode.sh ||
-    fail "lifecycle does not pin VMware UUID to keep"
-pass "VMware management NIC identity is stable across lifecycle power cycles"
+grep -Fq 'pin_vmware_management_nic_identity()' scripts/lab-mode.sh ||
+    fail "lifecycle does not preserve VMware management NIC identity before direct power cycles"
+grep -Fq 'ethernet0.addresstype' scripts/lab-mode.sh ||
+    fail "lifecycle does not inspect VMware management NIC address type"
+grep -Fq 'ethernet0.address' scripts/lab-mode.sh ||
+    fail "lifecycle does not pin VMware management NIC to a static address"
+grep -Fq 'KINGDOMS_VMWARE_MANAGEMENT_NIC_PINNED' scripts/lab-mode.sh ||
+    fail "lifecycle does not emit VMware management NIC identity evidence"
+pass "VMware management NIC identity is static across lifecycle power cycles"
 
 grep -Fq 'policy drop;' ad/GOAD/providers/vmware/router/nftables/exercise.nft ||
     fail "exercise policy is not deny-by-default"
