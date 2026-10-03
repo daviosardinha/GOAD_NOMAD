@@ -1032,7 +1032,7 @@ POWERSHELL
     if (( basic_ready != 1 )); then
         echo "        [!] ${vm} AD readiness timed out; last_state=${last_state}" >&2
         if [[ -n "${output}" ]]; then
-            echo "        [!] last Vagrant/PowerShell readiness output follows:" >&2
+            echo "        [!] last PowerShell readiness output follows:" >&2
             printf '%s\n' "${output}" | tail -80 >&2
         fi
         fail "${vm} did not regain AD/DC Locator readiness for ${domain} within 300s; ${last_state}"
