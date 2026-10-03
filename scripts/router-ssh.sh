@@ -46,9 +46,14 @@ selected_key=''
 for key in "${candidate_keys[@]}"; do
     # -n is critical here: authentication probing must never consume stdin
     # because callers pipe nftables policy content into the final SSH command.
-    if ssh -n -i "${key}" "${ssh_common[@]}" vagrant@10.4.99.1 true >/dev/null 2>&1; then
+    auth_output=''
+    if auth_output="$(ssh -n -i "${key}" "${ssh_common[@]}" vagrant@10.4.99.1 true 2>&1)"; then
         selected_key="${key}"
         break
+    else
+        rc=$?
+        echo "INFO: router SSH candidate rejected: ${key} (rc=${rc})" >&2
+        [[ -n "${auth_output}" ]] && printf '      %s\n' "${auth_output}" >&2
     fi
 done
 
