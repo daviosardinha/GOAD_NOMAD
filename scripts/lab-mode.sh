@@ -913,7 +913,9 @@ last_marker_line() {
     while IFS= read -r line; do
         for prefix in "$@"; do
             case "${line}" in
-                "${prefix}"*) marker="${line}" ;;
+                *"${prefix}"*)
+                    marker="${prefix}${line#*"${prefix}"}"
+                    ;;
             esac
         done
     done <<<"${text}"
