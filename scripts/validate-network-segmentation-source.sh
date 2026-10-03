@@ -298,6 +298,8 @@ grep -Fq 'ethernet0.addresstype' scripts/lab-mode.sh ||
     fail "lifecycle does not inspect VMware management NIC address type"
 grep -Fq 'ethernet0.address' scripts/lab-mode.sh ||
     fail "lifecycle does not pin VMware management NIC to a static address"
+grep -Fq 'ethernet0.checkMACAddress' scripts/lab-mode.sh ||
+    fail "lifecycle does not allow the preserved VMware-generated OUI as a static address"
 grep -Fq 'KINGDOMS_VMWARE_MANAGEMENT_NIC_PINNED' scripts/lab-mode.sh ||
     fail "lifecycle does not emit VMware management NIC identity evidence"
 pass "VMware management NIC identity is static across lifecycle power cycles"
