@@ -738,10 +738,8 @@ POWERSHELL
         (( remaining < 0 )) && remaining=0
         if (( elapsed >= next_report )); then
             echo "        [*] waiting for ${vm} AD runtime readiness (${elapsed}s elapsed, ${remaining}s remaining); ${last_state}"
-            if [[ "${last_state}" == "reason=transport" ]]; then
-                echo "        [*] transport unavailable; re-requesting ${vm} ethernet0 runtime connection"
-                vmrun_named_device_action "${vm}" connect 3 2 || true
-            fi
+            echo "        [*] re-requesting ${vm} ethernet0 runtime connection as a bounded VMware transport self-heal"
+            vmrun_named_device_action "${vm}" connect 3 2 || true
             next_report=$((next_report + 30))
         fi
 
