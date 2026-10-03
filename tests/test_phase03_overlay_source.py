@@ -121,13 +121,27 @@ class Phase03OverlaySourceTests(unittest.TestCase):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(forbidden, corpus)
 
-    def test_wpad_preflight_is_independent_of_rickon_and_prepares_harmless_pac(self):
+    def test_wpad_preflight_prepares_harmless_pac_and_managed_victim_session(self):
         script = (DIAG / "wpad-preflight.sh").read_text()
-        self.assertNotIn(":3389", script)
-        self.assertNotIn("Rickon", script)
         self.assertIn('return "DIRECT";', script)
         self.assertIn("wpad.dat", script)
-        self.assertIn("no WS01 network state changed", script)
+        self.assertIn("ensure-wpad-rickon-session.sh", script)
+        self.assertIn("no WS01 network-state mutation", script)
+
+    def test_wpad_victim_session_is_owned_and_cleaned_safely(self):
+        ensure = (DIAG / "ensure-wpad-rickon-session.sh").read_text()
+        cleanup = (DIAG / "cleanup-wpad-rickon-session.sh").read_text()
+
+        self.assertIn("kingdoms-phase03-rickon.service", ensure)
+        self.assertIn("check-rickon-prereqs.sh", ensure)
+        self.assertIn("validate-rickon-session.sh", ensure)
+        self.assertIn("started-by-wpad", ensure)
+        self.assertIn("PHASE03_WPAD_RICKON_STARTED_BY_EXERCISE=True", ensure)
+
+        self.assertIn("started-by-wpad", cleanup)
+        self.assertIn("systemctl --user stop", cleanup)
+        self.assertIn("PHASE03_WPAD_RICKON_CLEANUP_COMPLETE=True", cleanup)
+        self.assertNotIn("systemctl --user disable", cleanup)
 
     def test_wpad_observer_fails_closed_if_pac_is_missing(self):
         script = (DIAG / "start-wpad-observers.sh").read_text()
@@ -142,6 +156,8 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         self.assertIn("trap 'exit 130' INT", script)
         self.assertIn("trap 'exit 143' TERM", script)
         self.assertIn("automatic WPAD rollback", script)
+        self.assertIn("cleanup-wpad-rickon-session.sh", script)
+        self.assertIn("AUTOMATIC WPAD VICTIM-SESSION CLEANUP", script)
         self.assertIn("PHASE03_WPAD_EXERCISE_COMPLETE=True", script)
         self.assertNotIn("rm -f", script)
         result = subprocess.run(
