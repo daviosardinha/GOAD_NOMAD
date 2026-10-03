@@ -11,13 +11,29 @@ WS01='10.4.10.31'
 
 cd "$ROOT"
 
+wait_for_healthy_session() {
+  local attempt output
+  for attempt in $(seq 1 12); do
+    if output="$(bash scripts/phase03/validate-rickon-session.sh 2>&1)"; then
+      printf '%s\n' "$output"
+      return 0
+    fi
+    if (( attempt < 12 )); then
+      echo "INFO: Rickon RDP transport is up but Windows session is not ready yet (attempt $attempt/12)"
+      sleep 5
+    fi
+  done
+  printf '%s\n' "$output" >&2
+  return 1
+}
+
 if systemctl --user is-active --quiet "$SERVICE"; then
   if [[ -f "$MARKER" && "$(cat "$MARKER" 2>/dev/null || true)" == 'started-by-wpad' ]]; then
     echo 'PASS: Rickon victim service is already active and remains owned by this WPAD exercise'
   else
     echo 'PASS: Rickon victim service was already active before this WPAD exercise'
   fi
-  bash scripts/phase03/validate-rickon-session.sh
+  wait_for_healthy_session
   exit 0
 fi
 
@@ -34,17 +50,9 @@ systemctl --user start "$SERVICE"
 printf '%s\n' started-by-wpad > "$MARKER"
 chmod 600 "$MARKER"
 
-echo 'Waiting for the Rickon -> WS01 victim session...'
-for _ in $(seq 1 30); do
-  if systemctl --user is-active --quiet "$SERVICE" &&
-     ss -H -nt state established 2>/dev/null | grep -Eq "[[:space:]]$WS01:3389([[:space:]]|$)"; then
-    break
-  fi
-  sleep 1
-done
-
-if ! bash scripts/phase03/validate-rickon-session.sh; then
-  echo 'FAIL: Rickon victim session did not become healthy' >&2
+echo 'Waiting for the Rickon -> WS01 interactive victim session...'
+if ! wait_for_healthy_session; then
+  echo 'FAIL: Rickon victim session did not become healthy within 60 seconds' >&2
   systemctl --user stop "$SERVICE" >/dev/null 2>&1 || true
   rm -f -- "$MARKER"
   exit 1
