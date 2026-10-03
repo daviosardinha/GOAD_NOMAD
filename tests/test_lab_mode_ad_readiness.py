@@ -186,7 +186,7 @@ class LabModeAdReadinessTests(unittest.TestCase):
 
     def test_guestops_capture_is_authenticated_bounded_and_cleans_up(self):
         text = self.text
-        helper = text[text.index("guestops_credentials_for_vm()"):
+        helper = text[text.index("guestops_credential_value()"):
                       text.index("vagrant_powershell_ready()")]
 
         for token in (
@@ -201,7 +201,8 @@ class LabModeAdReadinessTests(unittest.TestCase):
         ):
             self.assertIn(token, text)
 
-        self.assertIn('guestops_credentials_for_vm "${vm}"', helper)
+        self.assertIn('guestops_credential_value "${vm}" ansible_user', helper)
+        self.assertIn('guestops_credential_value "${vm}" ansible_password', helper)
         self.assertIn('powershell_capture()', helper)
         self.assertIn('guestops)', helper)
         self.assertIn('vmware_guest_powershell_capture', helper)
@@ -214,7 +215,8 @@ class LabModeAdReadinessTests(unittest.TestCase):
         self.assertIn('powershell_capture "${vm}" "${script}" "${probe_timeout}"', dc)
         self.assertIn("reason=guest_probe_failure", dc)
         self.assertIn("reason=guest_probe_no_ready_marker", dc)
-        self.assertIn("bounded VMware transport self-heal", dc)\n        self.assertIn('[[ "${READINESS_TRANSPORT:-vagrant}" == "vagrant" ]]', dc)
+        self.assertIn("bounded VMware transport self-heal", dc)
+        self.assertIn('[[ "${READINESS_TRANSPORT:-vagrant}" == "vagrant" ]]', dc)
         self.assertIn('vmrun_named_device_action "${vm}" connect 3 2 || true', dc)
         self.assertIn("last Vagrant/PowerShell readiness output follows", dc)
         self.assertIn('tail -80', dc)
