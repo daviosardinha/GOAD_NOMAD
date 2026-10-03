@@ -1,6 +1,10 @@
 """Regression contract for AD-aware Kingdoms mode transitions."""
 
 from pathlib import Path
+import os
+import subprocess
+import tempfile
+import time
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -199,7 +203,7 @@ class LabModeAdReadinessTests(unittest.TestCase):
             'copyFileFromGuestToHost',
             'deleteFileInGuest',
             'C:\\Windows\\System32\\cmd.exe',
-            'timeout "${timeout_seconds}" vmrun',
+            'timeout --kill-after=1 "${remaining}" vmrun',
             'mktemp',
         ):
             self.assertIn(token, text)
@@ -269,7 +273,7 @@ class LabModeAdReadinessTests(unittest.TestCase):
         self.assertEqual(helpers.count('timeout "${timeout_seconds}" vagrant winrm'), 2)
         self.assertNotIn("timeout 90 vagrant winrm", helpers)
 
-    def test_readiness_deadlines_cap_nested_winrm_to_remaining_budget(self):
+    def test_readiness_deadlines_cap_selected_transport_to_remaining_budget(self):
         text = self.text
 
         for token in (
@@ -301,15 +305,15 @@ class LabModeAdReadinessTests(unittest.TestCase):
             self.assertNotIn("for attempt in {1..60}", fn)
 
         self.assertIn(
-            'vagrant_powershell_capture "${vm}" "${probe_script}" "${probe_timeout}"',
+            'powershell_capture "${vm}" "${probe_script}" "${probe_timeout}"',
             child,
         )
         self.assertIn(
-            'vagrant_powershell_capture "${vm}" "${script}" "${probe_timeout}"',
+            'powershell_capture "${vm}" "${script}" "${probe_timeout}"',
             dc,
         )
         self.assertIn(
-            'vagrant_powershell_capture "${vm}" "${script}" "${probe_timeout}"',
+            'powershell_capture "${vm}" "${script}" "${probe_timeout}"',
             member,
         )
 
@@ -321,7 +325,13 @@ class LabModeAdReadinessTests(unittest.TestCase):
                 '(( remaining < repair_timeout )) && repair_timeout="${remaining}"',
                 fn,
             )
-            self.assertIn('"${repair_script}" "${repair_timeout}"', fn)
+            self.assertIn(
+                'powershell_capture "${vm}" "${repair_script}" "${repair_timeout}"',
+                fn,
+            )
+
+        for fn in (child, dc, member):
+            self.assertNotIn('vagrant_powershell_capture "${vm}"', fn)
 
     def test_declared_300s_readiness_budget_is_not_attempt_math(self):
         text = self.text
@@ -538,6 +548,109 @@ class LabModeAdReadinessTests(unittest.TestCase):
             "time-recovery command returned without a success marker",
             fn,
         )
+
+
+class GuestOpsDeadlineTests(unittest.TestCase):
+    def run_fixture(self, stall="", run_delay=0, run_rc=0, budget=2):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bindir = root / "bin"
+            hostdir = root / "host-results"
+            bindir.mkdir()
+            hostdir.mkdir()
+            vmx = root / "fixture.vmx"
+            vmx.touch()
+            source = root / "lab-mode-functions.sh"
+            source.write_text(
+                LAB_MODE.read_text().rsplit('\nmain "$@"', 1)[0],
+                encoding="utf-8",
+            )
+            fake_vmrun = bindir / "vmrun"
+            fake_vmrun.write_text('''#!/usr/bin/env bash
+set -eu
+operation=""
+for arg in "$@"; do
+    case "$arg" in
+        list|runProgramInGuest|copyFileFromGuestToHost|deleteFileInGuest)
+            operation="$arg" ;;
+    esac
+done
+printf '%s\n' "$operation" >> "$TEST_CALLS"
+if [[ "$TEST_STALL" == "$operation" ]]; then
+    exec sleep 30
+fi
+case "$operation" in
+    list)
+        printf 'Total running VMs: 1\n%s\n' "$TEST_VMX" ;;
+    runProgramInGuest)
+        sleep "$TEST_RUN_DELAY"
+        printf 'fixture guest output\n' > "$TEST_GUEST_RESULT"
+        exit "$TEST_RUN_RC" ;;
+    copyFileFromGuestToHost)
+        cp "$TEST_GUEST_RESULT" "${@: -1}" ;;
+    deleteFileInGuest)
+        rm -f "$TEST_GUEST_RESULT" ;;
+    *) exit 99 ;;
+esac
+''', encoding="utf-8")
+            fake_vmrun.chmod(0o700)
+            env = {
+                **os.environ,
+                "PATH": str(bindir) + os.pathsep + os.environ["PATH"],
+                "TEST_CALLS": str(root / "calls"),
+                "TEST_VMX": str(vmx),
+                "TEST_HOST_DIR": str(hostdir),
+                "TEST_GUEST_RESULT": str(root / "guest-result"),
+                "TEST_STALL": stall,
+                "TEST_RUN_DELAY": str(run_delay),
+                "TEST_RUN_RC": str(run_rc),
+            }
+            harness = '''
+source "$1"
+vmx_for() { printf '%s\n' "$TEST_VMX"; }
+guestops_credential_value() { printf '%s\n' fixture; }
+mktemp() { command mktemp "$TEST_HOST_DIR/kingdoms-guestops.XXXXXX"; }
+READINESS_TRANSPORT=guestops
+powershell_capture GOAD-DC02 "Write-Output 'fixture'" "$2"
+'''
+            started = time.monotonic()
+            result = subprocess.run(
+                ["bash", "-c", harness, "guestops-test", str(source), str(budget)],
+                env=env, capture_output=True, text=True, timeout=8,
+            )
+            elapsed = time.monotonic() - started
+            self.assertEqual(list(hostdir.iterdir()), [])
+            calls = (root / "calls").read_text().splitlines()
+            return result, elapsed, calls, (root / "guest-result").exists()
+
+    def test_guest_output_and_exit_status_survive_result_collection(self):
+        for run_rc in (0, 9):
+            with self.subTest(run_rc=run_rc):
+                result, _, calls, guest_result_exists = self.run_fixture(run_rc=run_rc)
+                self.assertEqual(result.returncode, run_rc, result.stderr)
+                self.assertEqual(result.stdout, "fixture guest output\n")
+                self.assertEqual(calls, [
+                    "list", "runProgramInGuest", "copyFileFromGuestToHost",
+                    "deleteFileInGuest",
+                ])
+                self.assertFalse(guest_result_exists)
+
+    def test_stalled_tools_calls_share_one_probe_deadline(self):
+        for stall, run_delay, budget, expected_rc in (
+            ("list", 0, 1, 124),
+            ("runProgramInGuest", 0, 1, 124),
+            ("copyFileFromGuestToHost", 1, 2, 124),
+            ("deleteFileInGuest", 1, 2, 0),
+        ):
+            with self.subTest(stall=stall):
+                result, elapsed, calls, _ = self.run_fixture(
+                    stall=stall, run_delay=run_delay, budget=budget,
+                )
+                self.assertEqual(result.returncode, expected_rc, result.stderr)
+                self.assertLess(elapsed, budget + 1.5)
+                self.assertEqual(calls[-1], stall)
+                if stall == "deleteFileInGuest":
+                    self.assertEqual(result.stdout, "fixture guest output\n")
 
 
 if __name__ == "__main__":

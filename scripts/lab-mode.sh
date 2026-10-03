@@ -572,11 +572,16 @@ vmware_guest_powershell_capture() {
     local vmx guest_user guest_password encoded
     local guest_output host_output command_line
     local run_rc=0 copy_rc=1 attempt
+    local started="${SECONDS}" remaining="${timeout_seconds}"
 
     (( timeout_seconds > 0 )) || return 124
 
     vmx="$(vmx_for "${vm}")"
-    is_running "${vmx}" || return 125
+    if ! timeout --kill-after=1 "${remaining}" vmrun -T ws list 2>/dev/null |
+        tail -n +2 | grep -Fxq "${vmx}"; then
+        (( SECONDS - started < timeout_seconds )) || return 124
+        return 125
+    fi
 
     guest_user="$(guestops_credential_value "${vm}" ansible_user)"
     guest_password="$(guestops_credential_value "${vm}" ansible_password)"
@@ -594,7 +599,15 @@ vmware_guest_powershell_capture() {
     # PowerShell payload encoded so readiness-script quoting is not re-parsed.
     command_line="powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encoded} > \"${guest_output}\" 2>&1"
 
-    if timeout "${timeout_seconds}" vmrun -T ws \
+    # Execution, result collection and guest cleanup share the caller's one
+    # deadline. A separate timeout for each operation would multiply it.
+    remaining=$((timeout_seconds - (SECONDS - started)))
+    if (( remaining <= 0 )); then
+        rm -f "${host_output}"
+        return 124
+    fi
+
+    if timeout --kill-after=1 "${remaining}" vmrun -T ws \
         -gu "${guest_user}" \
         -gp "${guest_password}" \
         runProgramInGuest \
@@ -607,7 +620,10 @@ vmware_guest_powershell_capture() {
     fi
 
     for attempt in {1..5}; do
-        if vmrun -T ws \
+        remaining=$((timeout_seconds - (SECONDS - started)))
+        (( remaining > 0 )) || break
+
+        if timeout --kill-after=1 "${remaining}" vmrun -T ws \
             -gu "${guest_user}" \
             -gp "${guest_password}" \
             copyFileFromGuestToHost \
@@ -617,6 +633,9 @@ vmware_guest_powershell_capture() {
             copy_rc=0
             break
         fi
+
+        remaining=$((timeout_seconds - (SECONDS - started)))
+        (( remaining > 0 )) || break
         sleep 1
     done
 
@@ -624,15 +643,23 @@ vmware_guest_powershell_capture() {
         cat "${host_output}"
     fi
 
-    vmrun -T ws \
-        -gu "${guest_user}" \
-        -gp "${guest_password}" \
-        deleteFileInGuest \
-        "${vmx}" \
-        "${guest_output}" >/dev/null 2>&1 || true
+    # Guest cleanup is best effort within the same deadline. Always remove the
+    # host result, even if Tools stopped responding and guest cleanup must wait.
+    remaining=$((timeout_seconds - (SECONDS - started)))
+    if (( remaining > 0 )); then
+        timeout --kill-after=1 "${remaining}" vmrun -T ws \
+            -gu "${guest_user}" \
+            -gp "${guest_password}" \
+            deleteFileInGuest \
+            "${vmx}" \
+            "${guest_output}" >/dev/null 2>&1 || true
+    fi
     rm -f "${host_output}"
 
-    (( copy_rc == 0 )) || return 126
+    if (( copy_rc != 0 )); then
+        (( SECONDS - started < timeout_seconds )) || return 124
+        return 126
+    fi
     return "${run_rc}"
 }
 
@@ -1422,9 +1449,9 @@ configure_windows_nat_exercise() {
     local vm
 
     # Members reboot first while their DCs are still healthy. Every restarted
-    # guest keeps ethernet0.startConnected=FALSE. The management NIC is then
-    # connected only long enough to prove authenticated Windows/domain
-    # readiness through Vagrant WinRM and is immediately disconnected again.
+    # guest keeps ethernet0.startConnected=FALSE. Authenticated Windows/domain
+    # readiness is proven through VMware Guest Operations with the management
+    # NIC still disconnected.
     for vm in "${DOMAIN_MEMBERS[@]}"; do
         ensure_vm_nat_state "${vm}" FALSE disconnect
         prove_isolated_guest_ready "${vm}" member
