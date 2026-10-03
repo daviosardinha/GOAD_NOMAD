@@ -161,13 +161,74 @@ class Phase03OverlaySourceTests(unittest.TestCase):
         self.assertIn("cleanup-wpad-rickon-session.sh", script)
         self.assertIn("AUTOMATIC WPAD VICTIM-SESSION CLEANUP", script)
         self.assertIn("PHASE03_WPAD_EXERCISE_COMPLETE=True", script)
-        self.assertNotIn("rm -f", script)
+        self.assertIn("PHASE03_WPAD_WATCHDOG_DISARMED=True", script)
+        self.assertIn('rm -f -- "$ACTIVE"', script)
         result = subprocess.run(
             ["bash", "-n", str(ROOT / "scripts" / "phase03" / "complete-wpad-exercise.sh")],
             capture_output=True,
             text=True,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_wpad_atomic_launcher_arms_fifteen_minute_watchdog_only_after_readiness(self):
+        script = (ROOT / "scripts" / "phase03" / "start-wpad-exercise.sh").read_text()
+        self.assertIn("check-wpad-permanent-prereqs.sh", script)
+        self.assertIn("wpad-preflight.sh", script)
+        self.assertIn("start-mitm6-ws01.sh", script)
+        self.assertIn("start-wpad-observers.sh", script)
+        self.assertIn('WPAD_WATCHDOG_DELAY:-15m', script)
+        self.assertIn("systemd-run", script)
+        self.assertIn("kingdoms-phase03-wpad-watchdog", script)
+        self.assertIn("PHASE03_WPAD_EXERCISE_ARMED=True", script)
+        self.assertLess(script.index("start-wpad-observers.sh"), script.index("systemd-run"))
+        self.assertIn("cleanup_on_error", script)
+
+    def test_wpad_watchdog_is_privileged_scoped_and_marker_gated(self):
+        script = (ROOT / "scripts" / "phase03" / "watchdog-wpad-exercise-root.sh").read_text()
+        self.assertIn("flock", script)
+        self.assertIn("if [[ ! -f \"$ACTIVE\" ]]", script)
+        self.assertIn("stop-wpad-runtime.sh", script)
+        self.assertIn("WPAD_SKIP_LOCAL_STOP=1", script)
+        self.assertIn("runuser -u", script)
+        self.assertIn("cleanup-wpad-rickon-session.sh", script)
+        self.assertIn("PHASE03_WPAD_WATCHDOG_ROLLBACK_COMPLETE=True", script)
+        self.assertIn('rm -f -- "$ACTIVE"', script)
+
+    def test_wpad_transition_guard_is_applied_to_downstream_exercises(self):
+        guard = (ROOT / "scripts" / "phase03" / "assert-wpad-exercise-clean.sh"
+                ).read_text()
+        self.assertIn("phase03-wpad-active", guard)
+        self.assertIn("complete-wpad-exercise.sh", guard)
+
+        downstream = [
+            "check-http-ldaps-readonly-relay.sh",
+            "start-http-ldaps-readonly-relay.sh",
+            "check-ldap-readonly-relay.sh",
+            "start-ldap-readonly-relay.sh",
+            "check-rbcd-prereqs.sh",
+            "start-rbcd-stage1-add-computer.sh",
+            "check-shadow-prereqs.sh",
+            "start-shadow-relay.sh",
+            "check-adidns-prereqs.sh",
+            "apply-adidns-proof.sh",
+            "check-webdav-shortcut-prereqs.sh",
+            "start-webdav-shortcut-observer.sh",
+            "apply-webdav-dns-support.sh",
+            "prepare-webdav-client-runtime.sh",
+            "apply-webdav-shortcut-proof.sh",
+            "arm-webdav-shortcut-interaction.sh",
+        ]
+        for name in downstream:
+            with self.subTest(name=name):
+                text = (ROOT / "scripts" / "phase03" / name).read_text()
+                self.assertIn("assert-wpad-exercise-clean.sh", text)
+
+    def test_wpad_rickon_readiness_waits_for_windows_session_before_arming(self):
+        script = (DIAG / "ensure-wpad-rickon-session.sh").read_text()
+        self.assertIn("wait_for_healthy_session", script)
+        self.assertIn("seq 1 12", script)
+        self.assertIn("sleep 5", script)
+        self.assertIn("within 60 seconds", script)
 
     def test_wpad_observer_handles_privileged_capture_file(self):
         script = (DIAG / "start-wpad-observers.sh").read_text()
