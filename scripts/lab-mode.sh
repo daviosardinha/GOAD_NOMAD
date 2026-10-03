@@ -659,6 +659,8 @@ wait_domain_controller_ready() {
     local fqdn="${DC_FQDN[${vm}]}"
     local script
     local basic_ready=0
+    local output=""
+    local last_state="reason=transport"
 
     script="$(cat <<POWERSHELL
 \$ErrorActionPreference = 'Stop'
@@ -712,16 +714,30 @@ POWERSHELL
         (( remaining < probe_timeout )) && probe_timeout="${remaining}"
         (( probe_timeout > 0 )) || break
 
-        if vagrant_powershell_ready "${vm}" "${script}" "${probe_timeout}"; then
-            basic_ready=1
-            break
+        output=""
+        if output="$(vagrant_powershell_capture "${vm}" "${script}" "${probe_timeout}")"; then
+            if grep -Fq 'KINGDOMS_DC_RUNTIME_READY' <<<"${output}"; then
+                basic_ready=1
+                break
+            fi
+            last_state="reason=guest_probe_no_ready_marker"
+        else
+            if [[ -n "${output}" ]]; then
+                last_state="reason=guest_probe_failure"
+            else
+                last_state="reason=transport"
+            fi
         fi
 
         elapsed=$((SECONDS - started))
         remaining=$((AD_READINESS_TIMEOUT_SECONDS - elapsed))
         (( remaining < 0 )) && remaining=0
         if (( elapsed >= next_report )); then
-            echo "        [*] waiting for ${vm} AD runtime readiness (${elapsed}s elapsed, ${remaining}s remaining)"
+            echo "        [*] waiting for ${vm} AD runtime readiness (${elapsed}s elapsed, ${remaining}s remaining); ${last_state}"
+            if [[ "${last_state}" == "reason=transport" ]]; then
+                echo "        [*] transport unavailable; re-requesting ${vm} ethernet0 runtime connection"
+                vmrun_named_device_action "${vm}" connect 3 2 || true
+            fi
             next_report=$((next_report + 30))
         fi
 
@@ -732,8 +748,14 @@ POWERSHELL
             sleep "${AD_READINESS_RETRY_DELAY_SECONDS}"
         fi
     done
-    (( basic_ready == 1 )) ||
-        fail "${vm} did not regain AD/DC Locator readiness for ${domain} within 300s"
+    if (( basic_ready != 1 )); then
+        echo "        [!] ${vm} AD readiness timed out; last_state=${last_state}" >&2
+        if [[ -n "${output}" ]]; then
+            echo "        [!] last Vagrant/PowerShell readiness output follows:" >&2
+            printf '%s\n' "${output}" | tail -80 >&2
+        fi
+        fail "${vm} did not regain AD/DC Locator readiness for ${domain} within 300s; ${last_state}"
+    fi
 
     ensure_child_dc_time_ready "${vm}"
 
