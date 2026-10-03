@@ -9,6 +9,7 @@ ACTIVE="${WPAD_ACTIVE_MARKER:-$STATE_DIR/phase03-wpad-active}"
 LOCK="${WPAD_LOCK_FILE:-/tmp/kingdoms-phase03-wpad.lock}"
 WATCHDOG_UNIT='kingdoms-phase03-wpad-watchdog'
 WATCHDOG_DELAY="${WPAD_WATCHDOG_DELAY:-15m}"
+TOKEN="$(python3 -c 'import secrets; print(secrets.token_hex(16))')"
 
 cd "$ROOT"
 install -d -m 700 "$STATE_DIR"
@@ -48,6 +49,7 @@ bash scripts/phase03/diagnostics/start-wpad-observers.sh
 
 cat >"$ACTIVE" <<EOF
 status=armed
+token=$TOKEN
 started_at_epoch=$(date +%s)
 watchdog_delay=$WATCHDOG_DELAY
 interface=vmnet10
