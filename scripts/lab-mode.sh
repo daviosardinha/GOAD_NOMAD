@@ -634,14 +634,16 @@ vmware_guest_powershell_capture() {
     '${inner_encoded}'
 )
 try {
-    \$child = Start-Process \
-        -FilePath 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' \
-        -ArgumentList \$arguments \
-        -RedirectStandardOutput \$stdout \
-        -RedirectStandardError \$stderr \
-        -Wait \
-        -PassThru \
-        -ErrorAction Stop
+    \$start = @{
+        FilePath = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
+        ArgumentList = \$arguments
+        RedirectStandardOutput = \$stdout
+        RedirectStandardError = \$stderr
+        Wait = \$true
+        PassThru = \$true
+        ErrorAction = 'Stop'
+    }
+    \$child = Start-Process @start
 
     \$parts = @()
     if (Test-Path \$stdout) {
