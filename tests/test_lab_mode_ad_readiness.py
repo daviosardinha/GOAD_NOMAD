@@ -98,6 +98,21 @@ class LabModeAdReadinessTests(unittest.TestCase):
         self.assertIn("last Vagrant/PowerShell readiness output follows", dc)
         self.assertIn('tail -80', dc)
 
+    def test_failed_lifecycle_has_fail_closed_network_isolation_path(self):
+        text = self.text
+        fn = text[text.index("enter_exercise_failsafe()"):
+                  text.index("enter_provisioning_mode()")]
+
+        self.assertIn("apply_router_policy exercise", fn)
+        self.assertIn('bash "${ROUTES}" disable', fn)
+        self.assertIn('ensure_vm_nat_state "${vm}" FALSE disconnect', fn)
+        self.assertIn("verify_persistent_state FALSE", fn)
+        self.assertIn("set_state exercise", fn)
+        self.assertIn("does not claim AD/domain readiness", fn)
+
+        main = text[text.index("main()"):]
+        self.assertIn("exercise-failsafe)", main)
+
     def test_winrm_helpers_use_explicit_nested_timeout(self):
         text = self.text
         helpers = text[text.index("vagrant_powershell_ready()"):
