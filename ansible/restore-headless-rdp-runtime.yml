@@ -14,8 +14,33 @@
           $task = Get-ScheduledTask -TaskName 'connect_bot' -TaskPath '\' -ErrorAction Stop
           $principal = [string]$task.Principal.UserId
 
-          if ($principal -ine 'NORTH\robb.stark') {
+          # Scheduled Task may persist the same domain identity as either
+          # 'robb.stark' or 'NORTH\robb.stark'. Do not trust the display form.
+          # Permit only those two representations, then compare resolved SIDs.
+          if ($principal -ieq 'robb.stark') {
+              $principalForResolution = 'NORTH\robb.stark'
+          }
+          elseif ($principal -ieq 'NORTH\robb.stark') {
+              $principalForResolution = $principal
+          }
+          else {
               throw "Refusing to modify connect_bot: unexpected principal '$principal'"
+          }
+
+          try {
+              $expectedSid = [System.Security.Principal.NTAccount]::new(
+                  'NORTH\robb.stark'
+              ).Translate([System.Security.Principal.SecurityIdentifier]).Value
+              $actualSid = [System.Security.Principal.NTAccount]::new(
+                  $principalForResolution
+              ).Translate([System.Security.Principal.SecurityIdentifier]).Value
+          }
+          catch {
+              throw "Refusing to modify connect_bot: could not resolve principal '$principal': $($_.Exception.Message)"
+          }
+
+          if ($actualSid -ne $expectedSid) {
+              throw "Refusing to modify connect_bot: principal SID $actualSid does not match NORTH\robb.stark SID $expectedSid"
           }
 
           if ($task.State.ToString() -ne 'Disabled') {
@@ -40,7 +65,10 @@
               throw "connect_bot state is $($verify.State), expected Disabled"
           }
 
-          Write-Output 'KINGDOMS_CONNECT_BOT_PRINCIPAL=NORTH\robb.stark'
+          Write-Output "KINGDOMS_CONNECT_BOT_PRINCIPAL_RAW=$principal"
+          Write-Output "KINGDOMS_CONNECT_BOT_PRINCIPAL_SID=$actualSid"
+          Write-Output "KINGDOMS_CONNECT_BOT_EXPECTED_SID=$expectedSid"
+          Write-Output 'KINGDOMS_CONNECT_BOT_PRINCIPAL_CHECK=PASS'
           Write-Output 'KINGDOMS_CONNECT_BOT_STATE=Disabled'
           Write-Output 'KINGDOMS_HEADLESS_RDP_LEGACY_CLEAN=True'
       register: headless_restore
