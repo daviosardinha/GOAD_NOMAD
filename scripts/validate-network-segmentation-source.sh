@@ -292,6 +292,71 @@ grep -Fq 'state: started' ansible/roles/child_domain/tasks/main.yml ||
     fail "child-domain role does not ensure required Windows services are started"
 pass "Winterfell DNS / ADWS hardening is present"
 
+grep -Fq 'pin_vmware_management_nic_identity()' scripts/lab-mode.sh ||
+    fail "lifecycle does not preserve VMware management NIC identity before direct power cycles"
+grep -Fq 'ethernet0.addresstype' scripts/lab-mode.sh ||
+    fail "lifecycle does not inspect VMware management NIC address type"
+grep -Fq 'ethernet0.address' scripts/lab-mode.sh ||
+    fail "lifecycle does not pin VMware management NIC to a static address"
+grep -Fq 'ethernet0.checkMACAddress' scripts/lab-mode.sh ||
+    fail "lifecycle does not allow the preserved VMware-generated OUI as a static address"
+grep -Fq 'KINGDOMS_VMWARE_MANAGEMENT_NIC_PINNED' scripts/lab-mode.sh ||
+    fail "lifecycle does not emit VMware management NIC identity evidence"
+pass "VMware management NIC identity is static across lifecycle power cycles"
+
+python3 - <<'PY'
+from pathlib import Path
+
+text = Path('scripts/lab-mode.sh').read_text()
+start = text.index('prove_isolated_guest_ready() (')
+end = text.index('configure_windows_nat_exercise() {', start)
+fn = text[start:end]
+
+required = (
+    'READINESS_TRANSPORT=guestops',
+    'proving authenticated readiness through VMware Guest Operations',
+    'ethernet0 remains persistently OFF and runtime disconnected',
+    'authenticated post-reboot readiness proven through VMware Guest Operations',
+)
+for token in required:
+    if token not in fn:
+        raise SystemExit(f'exercise readiness missing Guest Operations contract: {token}')
+
+for forbidden in (
+    'connectNamedDevice',
+    'disconnectNamedDevice',
+    'vmrun_named_device_action',
+):
+    if forbidden in fn:
+        raise SystemExit(f'exercise readiness still hot-plugs management NAT: {forbidden}')
+
+for token in (
+    'guestops_credential_value()',
+    'vmware_guest_powershell_capture()',
+    'runProgramInGuest',
+    'copyFileFromGuestToHost',
+    'deleteFileInGuest',
+    'powershell_capture()',
+):
+    if token not in text:
+        raise SystemExit(f'Guest Operations transport missing: {token}')
+
+expected_functions = (
+    'vmware_guest_powershell_capture() {',
+    'guestops_time_check() (',
+    'powershell_capture() {',
+)
+for function in expected_functions:
+    if text.count('\n' + function) != 1:
+        raise SystemExit(
+            f'Guest Operations helper boundary is corrupted or duplicated: {function}'
+        )
+
+if 'vmware_guest_guestops_time_check' in text:
+    raise SystemExit('Guest Operations helper names were accidentally merged')
+PY
+pass "exercise readiness uses VMware Guest Operations without runtime NAT hot-plug"
+
 grep -Fq 'policy drop;' ad/GOAD/providers/vmware/router/nftables/exercise.nft ||
     fail "exercise policy is not deny-by-default"
 grep -Fq '10.4.10.22 ip daddr 10.4.30.23 tcp dport 1433' ad/GOAD/providers/vmware/router/nftables/exercise.nft ||
