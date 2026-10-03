@@ -388,9 +388,28 @@ ensure_vm_nat_state() {
         echo
     fi
 
+    # Provisioning is an authenticated management state, not just a VMX flag.
+    # A clean/failsafe checkpoint may legitimately leave guests powered off.
+    # When provisioning requests persistent NAT ON + runtime connect, power the
+    # guest on before any WinRM/AD readiness check. Exercise/failsafe paths with
+    # desired=FALSE deliberately preserve an already powered-off guest.
+    if [[ "${desired}" == "TRUE" && "${action}" == "connect" ]] &&
+       ! is_running "${vmx}"; then
+        echo "        [*] VM is powered off; starting it for provisioning readiness"
+
+        vmrun -T ws start "${vmx}" nogui >/dev/null
+
+        wait_started "${vmx}" ||
+            fail "${vm} did not start for provisioning readiness."
+
+        sleep 2
+    fi
+
     if is_running "${vmx}"; then
         vmrun_named_device_action "${vm}" "${action}" 15 2 ||
             fail "${vm}: could not reconcile ethernet0 runtime state to ${action}"
+    elif [[ "${desired}" == "TRUE" || "${action}" == "connect" ]]; then
+        fail "${vm}: runtime connect requested while VM is powered off"
     fi
 
     printf '        [+] ethernet0 startConnected=%s, runtime=%s\n' \
@@ -1112,6 +1131,9 @@ prove_isolated_guest_ready() (
 
     [[ "${persistent}" == "FALSE" ]] ||
         fail "${vm}: exercise readiness probe requires persistent NAT to remain FALSE"
+
+    is_running "${vmx}" ||
+        fail "${vm}: authenticated exercise-readiness probe requires the VM to be powered on"
 
     echo "        [*] temporarily connecting runtime NAT for authenticated readiness"
 
