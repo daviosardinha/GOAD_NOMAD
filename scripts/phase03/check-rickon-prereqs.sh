@@ -14,7 +14,7 @@ FAIL=0
 pass(){ PASS=$((PASS+1)); printf '[PASS] %s\n' "$*"; }
 fail(){ FAIL=$((FAIL+1)); printf '[FAIL] %s\n' "$*" >&2; }
 
-for executable in xfreerdp3 xvfb-run Xvfb xauth ip stat ss; do
+for executable in xfreerdp3 xvfb-run Xvfb xauth ip stat ss getent awk; do
   if command -v "$executable" >/dev/null 2>&1; then
     pass "$executable: $(command -v "$executable")"
   else
