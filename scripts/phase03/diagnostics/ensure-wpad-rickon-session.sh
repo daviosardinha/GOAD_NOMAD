@@ -43,6 +43,7 @@ systemctl --user cat "$SERVICE" >/dev/null 2>&1 || {
   exit 1
 }
 
+bash scripts/phase03/sync-ws01-rdp-pin.sh
 bash scripts/phase03/check-rickon-prereqs.sh
 
 rm -f -- "$MARKER"
