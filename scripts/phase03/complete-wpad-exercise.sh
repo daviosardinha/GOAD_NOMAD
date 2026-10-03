@@ -8,8 +8,14 @@ ROOT="${ROOT:-$HOME/Documents/GOAD_NOMAD}"
 VALIDATOR="$ROOT/scripts/phase03/validate-wpad-chain.sh"
 ROLLBACK="$ROOT/scripts/phase03/rollback-wpad-runtime.sh"
 VICTIM_CLEANUP="$ROOT/scripts/phase03/diagnostics/cleanup-wpad-rickon-session.sh"
+STATE_HOME="${XDG_STATE_HOME:-$HOME/.local/state}"
+ACTIVE="${WPAD_ACTIVE_MARKER:-$STATE_HOME/kingdoms/phase03-wpad-active}"
+LOCK="${WPAD_LOCK_FILE:-/tmp/kingdoms-phase03-wpad.lock}"
 
 cd "$ROOT" || exit 1
+
+exec 9>"$LOCK"
+flock 9
 
 [[ -x "$VALIDATOR" || -f "$VALIDATOR" ]] || {
   echo "FAIL: WPAD validator missing: $VALIDATOR" >&2
@@ -51,6 +57,9 @@ cleanup() {
     echo 'FAIL: automatic WPAD victim-session cleanup failed' >&2
     exit "$victim_cleanup_rc"
   fi
+
+  rm -f -- "$ACTIVE"
+  echo 'PHASE03_WPAD_WATCHDOG_DISARMED=True'
 
   if (( original_rc != 0 )); then
     echo 'FAIL: WPAD proof failed, but automatic rollback completed successfully' >&2
