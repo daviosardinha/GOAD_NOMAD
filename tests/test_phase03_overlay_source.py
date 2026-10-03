@@ -662,6 +662,56 @@ class Phase03OverlaySourceTests(unittest.TestCase):
             with self.subTest(tool=tool):
                 self.assertIn(tool, wrapper)
 
+    def test_wpad_deterministic_rollback_is_scoped_and_reboot_free(self):
+        wrapper = ROOT / "scripts" / "phase03" / "rollback-wpad-runtime.sh"
+        playbook = ROOT / "ansible" / "phase03-wpad-rollback.yml"
+
+        self.assertTrue(wrapper.is_file(), wrapper)
+        self.assertTrue(playbook.is_file(), playbook)
+
+        shell = wrapper.read_text()
+        yml = playbook.read_text()
+
+        self.assertIn("stop-wpad-runtime.sh", shell)
+        self.assertIn("verify-wpad-reset.sh", shell)
+        self.assertLess(
+            shell.index("stop-wpad-runtime.sh"),
+            shell.index("phase03-wpad-rollback.yml"),
+        )
+        self.assertIn("mitm6 is still active", shell)
+        self.assertIn("PHASE03_WPAD_DETERMINISTIC_ROLLBACK_COMPLETE=True", shell)
+
+        self.assertIn("hosts: ws01", yml)
+        self.assertIn("phase03-wpad-baseline.json", yml)
+        self.assertIn("ipconfig.exe /release6", yml)
+        self.assertIn("PrefixOrigin", yml)
+        self.assertIn("SuffixOrigin", yml)
+        self.assertIn("Remove-NetIPAddress", yml)
+        self.assertIn("netsh.exe interface ipv6 set dnsservers", yml)
+        self.assertIn("source=dhcp", yml)
+        self.assertIn("Clear-DnsClientCache", yml)
+        self.assertIn("PHASE03_WPAD_ROLLBACK_COMPLETE=True", yml)
+        self.assertIn("Refusing automatic rollback", yml)
+
+        for forbidden in (
+            "Restart-Computer",
+            "shutdown.exe",
+            "Disable-NetAdapter",
+            "Enable-NetAdapter",
+            "Restart-NetAdapter",
+            "Set-DnsClientServerAddress",
+            "AddressFamily IPv4",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, yml)
+
+        result = subprocess.run(
+            ["bash", "-n", str(wrapper)],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_wpad_runtime_capability_snapshot_is_read_only(self):
         script = (ROOT / "scripts" / "phase03" / "check-wpad-runtime-capabilities.sh").read_text()
         self.assertIn("PHASE03_WPAD_CAPABILITY_SNAPSHOT_COMPLETE=True", script)
