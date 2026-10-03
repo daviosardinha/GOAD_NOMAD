@@ -12,8 +12,11 @@ WS01='10.4.10.31'
 cd "$ROOT"
 
 if systemctl --user is-active --quiet "$SERVICE"; then
-  echo 'PASS: Rickon victim service was already active'
-  rm -f -- "$MARKER"
+  if [[ -f "$MARKER" && "$(cat "$MARKER" 2>/dev/null || true)" == 'started-by-wpad' ]]; then
+    echo 'PASS: Rickon victim service is already active and remains owned by this WPAD exercise'
+  else
+    echo 'PASS: Rickon victim service was already active before this WPAD exercise'
+  fi
   bash scripts/phase03/validate-rickon-session.sh
   exit 0
 fi
