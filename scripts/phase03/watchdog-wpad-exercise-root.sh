@@ -7,6 +7,7 @@ OWNER_HOME="${2:?operator home required}"
 ROOT="${3:?repository root required}"
 ACTIVE="${4:?active marker required}"
 LOCK="${5:?lock file required}"
+TOKEN="${6:?exercise token required}"
 BASELINE="$OWNER_HOME/.config/kingdoms/phase03-wpad-baseline.json"
 
 exec 9>"$LOCK"
@@ -14,6 +15,11 @@ flock 9
 
 if [[ ! -f "$ACTIVE" ]]; then
   echo 'PASS: WPAD watchdog fired after normal completion; no active marker remains'
+  exit 0
+fi
+
+if ! grep -Fxq "token=$TOKEN" "$ACTIVE"; then
+  echo 'PASS: stale WPAD watchdog generation does not own the current exercise'
   exit 0
 fi
 
