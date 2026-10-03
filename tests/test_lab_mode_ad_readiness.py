@@ -286,6 +286,7 @@ class LabModeAdReadinessTests(unittest.TestCase):
             "w32tm.exe /config /syncfromflags:domhier /update",
             "w32tm.exe /resync /rediscover /nowait",
             "KINGDOMS_DC_TIME_REPAIRED",
+            "KINGDOMS_DC_TIME_REPAIR_DEFERRED",
             "KINGDOMS_DC_TIME_REPAIR_FAILED",
         ):
             self.assertIn(token, text)
@@ -309,6 +310,20 @@ class LabModeAdReadinessTests(unittest.TestCase):
                    text.index("configure_windows_nat_provisioning()")]
         self.assertIn('prove_isolated_guest_ready "${vm}" dc', dep)
         self.assertIn('DC_TIME_PARENT_DOMAIN', dep)
+
+    def test_child_dc_time_repair_defers_until_parent_timeserv_is_ready(self):
+        text = self.text
+        fn = text[text.index("ensure_child_dc_time_ready()"):
+                  text.index("wait_domain_controller_ready()")]
+
+        self.assertIn("KINGDOMS_DC_TIME_REPAIR_DEFERRED|stage=parent_domain_locator", fn)
+        self.assertIn("KINGDOMS_DC_TIME_REPAIR_DEFERRED|stage=parent_timeserv_locator", fn)
+        self.assertIn("KINGDOMS_DC_TIME_REPAIR_DEFERRED|stage=parent_ntp_path", fn)
+        self.assertIn("REPAIRED|REPAIR_DEFERRED|REPAIR_FAILED", fn)
+        self.assertIn("repair_deferred=$((repair_deferred + 1))", fn)
+        self.assertIn("repair_invocations=$((repair_invocations + 1))", fn)
+        self.assertIn("parent prerequisite is not ready yet", fn)
+        self.assertIn("recovery failed after prerequisites were proven", fn)
 
     def test_child_dc_time_repair_is_bounded_and_never_rewrites_trust(self):
         text = self.text
