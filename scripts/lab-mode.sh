@@ -249,6 +249,11 @@ else:
         f"unsupported ethernet0.addressType={address_type!r}: {path}"
     )
 
+# A generated VMware Workstation MAC uses the 00:0c:29 OUI. Once that exact
+# guest-known identity is converted to static, Workstation's reserved-OUI
+# validation must be disabled for this adapter or power-on may reject it.
+updated = set_value(updated, "ethernet0.checkMACAddress", "FALSE")
+
 # Keep the VM UUID stable as well, but the management MAC no longer depends on
 # VMware deriving an address from that UUID.
 updated = set_value(updated, "uuid.action", "keep")
