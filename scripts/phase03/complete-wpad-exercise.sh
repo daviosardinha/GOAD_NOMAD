@@ -16,7 +16,9 @@ WATCHDOG_UNIT='kingdoms-phase03-wpad-watchdog'
 cd "$ROOT" || exit 1
 
 exec 9>"$LOCK"
+echo 'Waiting for WPAD lifecycle lock...'
 flock 9
+echo 'WPAD lifecycle lock acquired'
 
 [[ -x "$VALIDATOR" || -f "$VALIDATOR" ]] || {
   echo "FAIL: WPAD validator missing: $VALIDATOR" >&2
@@ -59,14 +61,13 @@ cleanup() {
     exit "$victim_cleanup_rc"
   fi
 
-  if sudo systemctl stop "$WATCHDOG_UNIT.timer" "$WATCHDOG_UNIT.service" >/dev/null 2>&1; then
-    echo 'PHASE03_WPAD_WATCHDOG_TIMER_CANCELLED=True'
-  else
-    echo 'WARN: watchdog timer cancellation returned non-zero; generation token still prevents stale cleanup' >&2
-  fi
-  sudo systemctl reset-failed "$WATCHDOG_UNIT.timer" "$WATCHDOG_UNIT.service" >/dev/null 2>&1 || true
-
+  # Removing the generation marker while holding the lifecycle lock makes any
+  # already-queued watchdog harmless. Use non-blocking systemd cancellation so
+  # completion can never deadlock waiting for a watchdog that is waiting here.
   rm -f -- "$ACTIVE"
+  sudo systemctl stop --no-block "$WATCHDOG_UNIT.timer" "$WATCHDOG_UNIT.service" >/dev/null 2>&1 || true
+  sudo systemctl reset-failed "$WATCHDOG_UNIT.timer" "$WATCHDOG_UNIT.service" >/dev/null 2>&1 || true
+  echo 'PHASE03_WPAD_WATCHDOG_TIMER_CANCELLED=True'
   echo 'PHASE03_WPAD_WATCHDOG_DISARMED=True'
 
   if (( original_rc != 0 )); then
