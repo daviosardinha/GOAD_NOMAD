@@ -461,7 +461,7 @@ class LabModeAdReadinessTests(unittest.TestCase):
         # Marker extraction must not be nested only inside a successful
         # transport return; current guest output remains useful evidence.
         probe_capture = fn.index('if output="$(powershell_capture "${vm}" "${probe_script}" "${probe_timeout}")"')
-        marker_extract = fn.index("grep -E 'KINGDOMS_DC_TIME_(READY|NOT_READY)\\\\|'", probe_capture)
+        marker_extract = fn.index("grep -E 'KINGDOMS_DC_TIME_(READY|NOT_READY)\\|'", probe_capture)
         ready_check = fn.index('if [[ "${marker}" == KINGDOMS_DC_TIME_READY\\|* ]]' , marker_extract)
         self.assertLess(probe_capture, marker_extract)
         self.assertLess(marker_extract, ready_check)
