@@ -340,6 +340,20 @@ for token in (
 ):
     if token not in text:
         raise SystemExit(f'Guest Operations transport missing: {token}')
+
+expected_functions = (
+    'vmware_guest_powershell_capture() {',
+    'guestops_time_check() (',
+    'powershell_capture() {',
+)
+for function in expected_functions:
+    if text.count('\n' + function) != 1:
+        raise SystemExit(
+            f'Guest Operations helper boundary is corrupted or duplicated: {function}'
+        )
+
+if 'vmware_guest_guestops_time_check' in text:
+    raise SystemExit('Guest Operations helper names were accidentally merged')
 PY
 pass "exercise readiness uses VMware Guest Operations without runtime NAT hot-plug"
 
