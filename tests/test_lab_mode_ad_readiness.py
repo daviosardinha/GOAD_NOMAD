@@ -451,9 +451,13 @@ class LabModeAdReadinessTests(unittest.TestCase):
             'local capture_rc=0',
             'local consecutive_transport_failures=0',
             'capture_rc=$?',
-            "grep -F 'KINGDOMS_GUESTOPS_ERROR|'",
-            "grep -F -e 'KINGDOMS_DC_TIME_READY|' -e 'KINGDOMS_DC_TIME_NOT_READY|'",
-            "grep -F -e 'KINGDOMS_DC_TIME_REPAIRED|' -e 'KINGDOMS_DC_TIME_REPAIR_DEFERRED|' -e 'KINGDOMS_DC_TIME_REPAIR_FAILED|'",
+            'last_marker_line "${output}"',
+            "'KINGDOMS_GUESTOPS_ERROR|'",
+            "'KINGDOMS_DC_TIME_READY|'",
+            "'KINGDOMS_DC_TIME_NOT_READY|'",
+            "'KINGDOMS_DC_TIME_REPAIRED|'",
+            "'KINGDOMS_DC_TIME_REPAIR_DEFERRED|'",
+            "'KINGDOMS_DC_TIME_REPAIR_FAILED|'",
             'reason=no_time_marker|capture_rc=0',
             'consecutive_transport_failures >= 3',
             'child-domain time probe transport failed 3 consecutive times after AD readiness',
@@ -463,13 +467,13 @@ class LabModeAdReadinessTests(unittest.TestCase):
         # Marker extraction must not be nested only inside a successful
         # transport return; current guest output remains useful evidence.
         probe_capture = fn.index('if output="$(powershell_capture "${vm}" "${probe_script}" "${probe_timeout}")"')
-        marker_extract = fn.index("grep -F -e 'KINGDOMS_DC_TIME_READY|' -e 'KINGDOMS_DC_TIME_NOT_READY|'", probe_capture)
+        marker_extract = fn.index('last_marker_line "${output}"', probe_capture)
         ready_check = fn.index('if [[ "${marker}" == KINGDOMS_DC_TIME_READY\\|* ]]' , marker_extract)
         self.assertLess(probe_capture, marker_extract)
         self.assertLess(marker_extract, ready_check)
 
-        self.assertNotIn("KINGDOMS_DC_TIME_(READY|NOT_READY)\\|", fn)
-        self.assertNotIn("KINGDOMS_GUESTOPS_ERROR\\|", fn)
+        self.assertNotIn("grep -E 'KINGDOMS_DC_TIME_", fn)
+        self.assertNotIn("grep -F 'KINGDOMS_GUESTOPS_ERROR|'", fn)
 
     def test_child_dc_time_repair_defers_until_parent_timeserv_is_ready(self):
         text = self.text
@@ -479,7 +483,12 @@ class LabModeAdReadinessTests(unittest.TestCase):
         self.assertIn("KINGDOMS_DC_TIME_REPAIR_DEFERRED|stage=parent_domain_locator", fn)
         self.assertIn("KINGDOMS_DC_TIME_REPAIR_DEFERRED|stage=parent_timeserv_locator", fn)
         self.assertIn("KINGDOMS_DC_TIME_REPAIR_DEFERRED|stage=parent_ntp_path", fn)
-        self.assertIn("REPAIRED|REPAIR_DEFERRED|REPAIR_FAILED", fn)
+        for marker in (
+            "KINGDOMS_DC_TIME_REPAIRED|",
+            "KINGDOMS_DC_TIME_REPAIR_DEFERRED|",
+            "KINGDOMS_DC_TIME_REPAIR_FAILED|",
+        ):
+            self.assertIn(marker, fn)
         self.assertIn("repair_deferred=$((repair_deferred + 1))", fn)
         self.assertIn("repair_invocations=$((repair_invocations + 1))", fn)
         self.assertIn("parent prerequisite is not ready yet", fn)
