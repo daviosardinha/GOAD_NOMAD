@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Ensure the Phase 03 Rickon victim session exists for deterministic WPAD discovery.
-# If this helper starts the service, it records ownership so the exercise cleanup
-# can stop only the session it created.
+# If this helper starts the shared service, it records that WPAD ensured it.
+# Cleanup releases only that marker; the permanent Rickon fixture stays active
+# for later Phase 03 exercises.
 set -euo pipefail
 
 ROOT="${ROOT:-$HOME/Documents/GOAD_NOMAD}"
@@ -32,7 +33,7 @@ wait_for_healthy_session() {
 }
 
 if systemctl --user is-active --quiet "$SERVICE"; then
-  if [[ -f "$MARKER" && "$(cat "$MARKER" 2>/dev/null || true)" == 'started-by-wpad' ]]; then
+  if [[ -f "$MARKER" && "$(cat "$MARKER" 2>/dev/null || true)" == 'ensured-by-wpad' ]]; then
     echo 'PASS: Rickon victim service is already active and remains owned by this WPAD exercise'
   else
     echo 'PASS: Rickon victim service was already active before this WPAD exercise'
@@ -51,7 +52,7 @@ bash scripts/phase03/check-rickon-prereqs.sh
 
 rm -f -- "$MARKER"
 systemctl --user start "$SERVICE"
-printf '%s\n' started-by-wpad > "$MARKER"
+printf '%s\n' ensured-by-wpad > "$MARKER"
 chmod 600 "$MARKER"
 
 echo 'Waiting for the Rickon -> WS01 interactive victim session...'
@@ -70,4 +71,4 @@ if ! wait_for_healthy_session; then
   exit 1
 fi
 
-echo 'PHASE03_WPAD_RICKON_STARTED_BY_EXERCISE=True'
+echo 'PHASE03_WPAD_RICKON_ENSURED_BY_EXERCISE=True'
