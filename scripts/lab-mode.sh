@@ -580,65 +580,7 @@ guestops_error() {
         "${stage}" "${rc}" "${detail:0:1500}"
 }
 
-vmware_guest_guestops_time_check() (
-    local vm="${1:-GOAD-DC02}"
-    local domain="${DC_DOMAIN[${vm}]:-}"
-    local parent_server="${DC_TIME_PARENT_SERVER[${vm}]:-}"
-    local vmx output rc probe_script
-
-    [[ -n "${domain}" ]] ||
-        fail "${vm}: GuestOps time check requires a domain controller target"
-    [[ -n "${parent_server}" ]] ||
-        fail "${vm}: no child-domain parent time source is defined"
-
-    vmx="$(vmx_for "${vm}")" || exit
-    [[ "$(get_start_connected "${vmx}")" == "FALSE" ]] ||
-        fail "${vm}: GuestOps time check requires persistent NAT to remain FALSE"
-
-    probe_script="$(cat <<POWERSHELL
-\$ErrorActionPreference = 'Continue'
-
-\$source = (& w32tm.exe /query /source 2>\$null | Out-String).Trim().TrimEnd('.')
-\$sourceRc = \$LASTEXITCODE
-Write-Output "KINGDOMS_TIME_DIAG|stage=source|rc=\$sourceRc|source=\$source"
-
-if (\$sourceRc -ne 0 -or -not \$source -or \$source -ine '${parent_server}') {
-    \$sourceSafe = ((\$source -replace '[|\r\n]', ' ').Trim())
-    if (-not \$sourceSafe) { \$sourceSafe = '<none>' }
-    Write-Output "KINGDOMS_DC_TIME_NOT_READY|reason=source|source=\$sourceSafe|expected=${parent_server}"
-    exit 0
-}
-
-\$locator = @(& nltest.exe '/dsgetdc:${domain}' /timeserv /force 2>&1 | ForEach-Object { "\$_" })
-\$locatorRc = \$LASTEXITCODE
-Write-Output "KINGDOMS_TIME_DIAG|stage=locator|rc=\$locatorRc"
-if (\$locatorRc -ne 0) {
-    \$detail = ((\$locator -join ' ') -replace '[|\r\n]', ' ').Trim()
-    Write-Output "KINGDOMS_DC_TIME_NOT_READY|reason=advertising|rc=\$locatorRc|detail=\$detail"
-    exit 0
-}
-
-Write-Output "KINGDOMS_DC_TIME_READY|source=\$source|parent=${parent_server}"
-POWERSHELL
-)"
-
-    echo "[*] ${vm}: one exact child-domain time probe through GuestOps (15s budget)"
-    READINESS_TRANSPORT=guestops
-    output=""
-    if output="$(powershell_capture "${vm}" "${probe_script}" "${AD_READINESS_PROBE_TIMEOUT_SECONDS}")"; then
-        printf '%s\n' "${output}"
-        if grep -Eq 'KINGDOMS_DC_TIME_(READY|NOT_READY)\|' <<<"${output}"; then
-            echo "[+] ${vm} GuestOps child-time probe returned a readiness marker"
-        else
-            fail "${vm}: GuestOps child-time probe returned without a readiness marker"
-        fi
-    else
-        rc=$?
-        printf '%s\n' "${output}" >&2
-        fail "${vm}: GuestOps child-time probe failed (rc=${rc})"
-    fi
-)
-powershell_capture() {
+vmware_guest_powershell_capture() {
     local vm="$1"
     local script="$2"
     local timeout_seconds="$3"
@@ -841,6 +783,65 @@ guestops_check() (
     fi
 )
 
+
+guestops_time_check() (
+    local vm="${1:-GOAD-DC02}"
+    local domain="${DC_DOMAIN[${vm}]:-}"
+    local parent_server="${DC_TIME_PARENT_SERVER[${vm}]:-}"
+    local vmx output rc probe_script
+
+    [[ -n "${domain}" ]] ||
+        fail "${vm}: GuestOps time check requires a domain controller target"
+    [[ -n "${parent_server}" ]] ||
+        fail "${vm}: no child-domain parent time source is defined"
+
+    vmx="$(vmx_for "${vm}")" || exit
+    [[ "$(get_start_connected "${vmx}")" == "FALSE" ]] ||
+        fail "${vm}: GuestOps time check requires persistent NAT to remain FALSE"
+
+    probe_script="$(cat <<POWERSHELL
+\$ErrorActionPreference = 'Continue'
+
+\$source = (& w32tm.exe /query /source 2>\$null | Out-String).Trim().TrimEnd('.')
+\$sourceRc = \$LASTEXITCODE
+Write-Output "KINGDOMS_TIME_DIAG|stage=source|rc=\$sourceRc|source=\$source"
+
+if (\$sourceRc -ne 0 -or -not \$source -or \$source -ine '${parent_server}') {
+    \$sourceSafe = ((\$source -replace '[|\r\n]', ' ').Trim())
+    if (-not \$sourceSafe) { \$sourceSafe = '<none>' }
+    Write-Output "KINGDOMS_DC_TIME_NOT_READY|reason=source|source=\$sourceSafe|expected=${parent_server}"
+    exit 0
+}
+
+\$locator = @(& nltest.exe '/dsgetdc:${domain}' /timeserv /force 2>&1 | ForEach-Object { "\$_" })
+\$locatorRc = \$LASTEXITCODE
+Write-Output "KINGDOMS_TIME_DIAG|stage=locator|rc=\$locatorRc"
+if (\$locatorRc -ne 0) {
+    \$detail = ((\$locator -join ' ') -replace '[|\r\n]', ' ').Trim()
+    Write-Output "KINGDOMS_DC_TIME_NOT_READY|reason=advertising|rc=\$locatorRc|detail=\$detail"
+    exit 0
+}
+
+Write-Output "KINGDOMS_DC_TIME_READY|source=\$source|parent=${parent_server}"
+POWERSHELL
+)"
+
+    echo "[*] ${vm}: one exact child-domain time probe through GuestOps (15s budget)"
+    READINESS_TRANSPORT=guestops
+    output=""
+    if output="$(powershell_capture "${vm}" "${probe_script}" "${AD_READINESS_PROBE_TIMEOUT_SECONDS}")"; then
+        printf '%s\n' "${output}"
+        if grep -Eq 'KINGDOMS_DC_TIME_(READY|NOT_READY)\|' <<<"${output}"; then
+            echo "[+] ${vm} GuestOps child-time probe returned a readiness marker"
+        else
+            fail "${vm}: GuestOps child-time probe returned without a readiness marker"
+        fi
+    else
+        rc=$?
+        printf '%s\n' "${output}" >&2
+        fail "${vm}: GuestOps child-time probe failed (rc=${rc})"
+    fi
+)
 powershell_capture() {
     local vm="$1"
     local script="$2"
