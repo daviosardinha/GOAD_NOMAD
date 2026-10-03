@@ -109,6 +109,7 @@ class LabModeAdReadinessTests(unittest.TestCase):
             'ethernet0.generatedAddress',
             'ethernet0.address',
             'uuid.action',
+            'ethernet0.checkMACAddress',
             'KINGDOMS_VMWARE_MANAGEMENT_NIC_PINNED',
             'type=static',
             'refusing to pin VMware management NIC identity while VM is running',
