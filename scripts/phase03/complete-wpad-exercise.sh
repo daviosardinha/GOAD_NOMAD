@@ -11,6 +11,7 @@ VICTIM_CLEANUP="$ROOT/scripts/phase03/diagnostics/cleanup-wpad-rickon-session.sh
 STATE_HOME="${XDG_STATE_HOME:-$HOME/.local/state}"
 ACTIVE="${WPAD_ACTIVE_MARKER:-$STATE_HOME/kingdoms/phase03-wpad-active}"
 LOCK="${WPAD_LOCK_FILE:-/tmp/kingdoms-phase03-wpad.lock}"
+WATCHDOG_UNIT='kingdoms-phase03-wpad-watchdog'
 
 cd "$ROOT" || exit 1
 
@@ -57,6 +58,13 @@ cleanup() {
     echo 'FAIL: automatic WPAD victim-session cleanup failed' >&2
     exit "$victim_cleanup_rc"
   fi
+
+  if sudo systemctl stop "$WATCHDOG_UNIT.timer" "$WATCHDOG_UNIT.service" >/dev/null 2>&1; then
+    echo 'PHASE03_WPAD_WATCHDOG_TIMER_CANCELLED=True'
+  else
+    echo 'WARN: watchdog timer cancellation returned non-zero; generation token still prevents stale cleanup' >&2
+  fi
+  sudo systemctl reset-failed "$WATCHDOG_UNIT.timer" "$WATCHDOG_UNIT.service" >/dev/null 2>&1 || true
 
   rm -f -- "$ACTIVE"
   echo 'PHASE03_WPAD_WATCHDOG_DISARMED=True'
