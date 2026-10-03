@@ -354,6 +354,18 @@ for function in expected_functions:
 
 if 'vmware_guest_guestops_time_check' in text:
     raise SystemExit('Guest Operations helper names were accidentally merged')
+
+for function in (
+    'last_marker_line() {',
+    'ensure_child_dc_time_ready() {',
+):
+    if text.count('\n' + function) != 1:
+        raise SystemExit(
+            f'child-time parser boundary is corrupted or duplicated: {function}'
+        )
+
+if "grep -E 'KINGDOMS_DC_TIME_" in text:
+    raise SystemExit('child-time marker parsing regressed to regex matching')
 PY
 pass "exercise readiness uses VMware Guest Operations without runtime NAT hot-plug"
 
