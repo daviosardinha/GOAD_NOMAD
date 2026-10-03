@@ -135,7 +135,9 @@ HOSTADDR_SERVICE=service
             for file in bindir.iterdir():
                 file.chmod(0o755)
             env = {**os.environ, 'GOAD_PROVIDER_DIR': str(root / 'provider'),
-                   'VAGRANT_HOME': str(root / 'vagrant'), 'PATH': str(bindir) + ':' + os.environ['PATH'],
+                   'VAGRANT_HOME': str(root / 'vagrant'),
+                   'XDG_CONFIG_HOME': str(root / 'config'),
+                   'PATH': str(bindir) + ':' + os.environ['PATH'],
                    'TEST_ADDRESS': '10.4.99.254'}
             command = ['bash', str(ROOT / 'scripts/router-ssh.sh'), 'sudo nft list ruleset']
             result = subprocess.run(command, env=env, input='stdin preserved', capture_output=True, text=True)
@@ -170,6 +172,20 @@ HOSTADDR_SERVICE=service
             self.assertIn(str(fallback), result.stdout)
             self.assertIn('recovered with fallback Vagrant key', result.stderr)
             self.assertIn('stdin preserved', result.stdout)
+
+            stable = root / 'config/kingdoms/router-management-ed25519'
+            stable.parent.mkdir(parents=True)
+            stable.write_text('stable test fixture')
+            env.pop('TEST_REJECT_KEY', None)
+            result = subprocess.run(
+                command,
+                env=env,
+                input='',
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn(str(stable), result.stdout)
 
 
 class Compatibility(unittest.TestCase):
