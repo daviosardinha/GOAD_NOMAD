@@ -442,6 +442,39 @@ class LabModeAdReadinessTests(unittest.TestCase):
         self.assertIn('prove_isolated_guest_ready "${vm}" dc', dep)
         self.assertIn('DC_TIME_PARENT_DOMAIN', dep)
 
+    def test_shell_marker_parser_ignores_clixml_after_valid_time_marker(self):
+        text = self.text
+        start = text.index("last_marker_line() {")
+        end = text.index("ensure_child_dc_time_ready() {", start)
+        helper = text[start:end]
+
+        sample = (
+            "KINGDOMS_DC_TIME_NOT_READY|reason=source|"
+            "source=Local CMOS Clock|"
+            "expected=kingslanding.sevenkingdoms.local\n\n"
+            "#< CLIXML\n<Objs Version=\"1.1.0.1\">progress</Objs>\n"
+        )
+
+        script = helper + r'''
+output="$1"
+last_marker_line "$output" \
+    'KINGDOMS_DC_TIME_READY|' \
+    'KINGDOMS_DC_TIME_NOT_READY|'
+'''
+        result = subprocess.run(
+            ["bash", "-c", script, "marker-test", sample],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            result.stdout.strip(),
+            "KINGDOMS_DC_TIME_NOT_READY|reason=source|"
+            "source=Local CMOS Clock|"
+            "expected=kingslanding.sevenkingdoms.local",
+        )
+
     def test_child_time_preserves_guest_marker_and_bounds_guestops_transport_failure(self):
         text = self.text
         fn = text[text.index("ensure_child_dc_time_ready()"):
