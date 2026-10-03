@@ -191,6 +191,12 @@ class LabModeAdReadinessTests(unittest.TestCase):
         self.assertNotIn('vmrun_named_device_action', isolated)
         self.assertIn('READINESS_TRANSPORT=guestops', isolated)
 
+    def test_guestops_capture_and_time_diagnostic_are_distinct_top_level_functions(self):
+        text = self.text
+        self.assertEqual(text.count("\nvmware_guest_powershell_capture() {"), 1)
+        self.assertEqual(text.count("\nguestops_time_check() ("), 1)
+        self.assertEqual(text.count("\npowershell_capture() {"), 1)
+        self.assertNotIn("vmware_guest_guestops_time_check", text)
     def test_guestops_capture_is_authenticated_bounded_and_cleans_up(self):
         text = self.text
         helper = text[text.index("guestops_credential_value()"):
