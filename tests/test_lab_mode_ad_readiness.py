@@ -205,9 +205,14 @@ class LabModeAdReadinessTests(unittest.TestCase):
         for token in (
             'inventory_disable_vagrant',
             '[GOAD-WS01]="srv02"',
+            'copyFileFromHostToGuest',
             'runProgramInGuest',
             'copyFileFromGuestToHost',
             'deleteFileInGuest',
+            'guest_script',
+            'host_script',
+            "'-File'",
+            "'Bypass'",
             'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
             'Start-Process',
             'RedirectStandardOutput =',
@@ -223,6 +228,10 @@ class LabModeAdReadinessTests(unittest.TestCase):
         self.assertIn('powershell_capture()', helper)
         self.assertIn('guestops)', helper)
         self.assertIn('vmware_guest_powershell_capture', helper)
+
+        self.assertNotIn('inner_encoded', helper)
+        self.assertNotIn("'EncodedCommand',", helper)
+        self.assertIn('copyFileFromHostToGuest', helper)
 
     def test_dc_readiness_uses_selected_transport_and_limits_nat_self_heal_to_vagrant(self):
         text = self.text
