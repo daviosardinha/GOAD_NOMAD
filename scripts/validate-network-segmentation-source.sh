@@ -333,13 +333,22 @@ for forbidden in (
 for token in (
     'guestops_credential_value()',
     'vmware_guest_powershell_capture()',
+    'copyFileFromHostToGuest',
     'runProgramInGuest',
     'copyFileFromGuestToHost',
     'deleteFileInGuest',
+    'guest_script',
+    'host_script',
     'powershell_capture()',
 ):
     if token not in text:
         raise SystemExit(f'Guest Operations transport missing: {token}')
+
+capture_start = text.index('vmware_guest_powershell_capture() {')
+capture_end = text.index('guestops_check() (', capture_start)
+capture = text[capture_start:capture_end]
+if 'inner_encoded' in capture:
+    raise SystemExit('GuestOps payload regressed to nested encoded argv transport')
 
 expected_functions = (
     'vmware_guest_powershell_capture() {',
