@@ -584,10 +584,10 @@ vmware_guest_powershell_capture() {
     local vm="$1"
     local script="$2"
     local timeout_seconds="$3"
-    local vmx guest_user guest_password inner_encoded wrapper wrapper_encoded
-    local guest_output host_output
-    local run_rc=0 copy_rc=1 attempt
-    local list_output="" list_rc=0 run_detail="" copy_detail=""
+    local vmx guest_user guest_password wrapper wrapper_encoded
+    local guest_output guest_script host_output host_script guest_file
+    local upload_rc=1 run_rc=0 copy_rc=1 attempt
+    local list_output="" list_rc=0 upload_detail="" run_detail="" copy_detail=""
     local started="${SECONDS}" remaining="${timeout_seconds}"
 
     (( timeout_seconds > 0 )) || return 124
@@ -609,29 +609,54 @@ vmware_guest_powershell_capture() {
     guest_user="$(guestops_credential_value "${vm}" ansible_user)" || return
     guest_password="$(guestops_credential_value "${vm}" ansible_password)" || return
 
-    inner_encoded="$(
-        printf '%s' "${script}" |
-            iconv -f UTF-8 -t UTF-16LE |
-            base64 -w0
-    )"
-
+    guest_script="C:\\Windows\\Temp\\kingdoms-guestops-${vm}-$$-${RANDOM}.ps1"
     guest_output="C:\\Windows\\Temp\\kingdoms-guestops-${vm}-$$-${RANDOM}.txt"
-    host_output="$(mktemp "/tmp/kingdoms-guestops-${vm}.XXXXXX")"
+    host_script="$(mktemp "/tmp/kingdoms-guestops-${vm}.script.XXXXXX")"
+    host_output="$(mktemp "/tmp/kingdoms-guestops-${vm}.output.XXXXXX")"
+    printf '%s\n' "${script}" >"${host_script}"
 
-    # Do not depend on cmd.exe redirection through vmrun. VMware Tools accepts
-    # direct PowerShell execution reliably, so use an outer PowerShell process
-    # to launch the actual readiness payload, capture both streams and preserve
-    # its exit code. The inner payload stays encoded, so its quoting and exit
-    # statements remain unchanged.
+    # Do not pass the readiness payload through vmrun argv. Large encoded
+    # repair scripts can exceed VMware Workstation's internal argument buffer
+    # and fail with "Buffer too small". Upload the script through Guest
+    # Operations and keep runProgramInGuest limited to a small fixed wrapper.
+    remaining=$((timeout_seconds - (SECONDS - started)))
+    if (( remaining <= 0 )); then
+        rm -f "${host_script}" "${host_output}"
+        guestops_error prepare 124 "Probe deadline expired before guest script upload"
+        return 124
+    fi
+
+    if upload_detail="$(timeout --kill-after=1 "${remaining}" vmrun -T ws \
+        -gu "${guest_user}" \
+        -gp "${guest_password}" \
+        copyFileFromHostToGuest \
+        "${vmx}" \
+        "${host_script}" \
+        "${guest_script}" 2>&1)"; then
+        upload_rc=0
+    else
+        upload_rc=$?
+    fi
+
+    if (( upload_rc != 0 )); then
+        rm -f "${host_script}" "${host_output}"
+        guestops_error upload "${upload_rc}" "${upload_detail}" "${guest_user}" "${guest_password}"
+        (( SECONDS - started < timeout_seconds )) || return 124
+        return 126
+    fi
+
     wrapper="$(cat <<POWERSHELL
 \$result = '${guest_output}'
+\$scriptPath = '${guest_script}'
 \$stdout = "\${result}.stdout"
 \$stderr = "\${result}.stderr"
 \$arguments = @(
     '-NoProfile',
     '-NonInteractive',
-    '-EncodedCommand',
-    '${inner_encoded}'
+    '-ExecutionPolicy',
+    'Bypass',
+    '-File',
+    \$scriptPath
 )
 try {
     \$start = @{
@@ -681,11 +706,9 @@ POWERSHELL
             base64 -w0
     )"
 
-    # Execution, result collection and guest cleanup share the caller's one
-    # deadline. A separate timeout for each operation would multiply it.
     remaining=$((timeout_seconds - (SECONDS - started)))
     if (( remaining <= 0 )); then
-        rm -f "${host_output}"
+        rm -f "${host_script}" "${host_output}"
         guestops_error prepare 124 "Probe deadline expired before guest execution"
         return 124
     fi
@@ -721,7 +744,6 @@ POWERSHELL
             copy_rc=$?
         fi
 
-        # Preserve a failed launch after one result-copy attempt.
         (( run_rc == 0 )) || break
 
         remaining=$((timeout_seconds - (SECONDS - started)))
@@ -733,18 +755,19 @@ POWERSHELL
         cat "${host_output}"
     fi
 
-    # Guest cleanup is best effort within the same deadline. Always remove the
-    # host result, even if Tools stopped responding and guest cleanup must wait.
-    remaining=$((timeout_seconds - (SECONDS - started)))
-    if (( remaining > 0 )); then
+    # Guest cleanup is best effort within the same deadline. Remove both the
+    # uploaded script and its result; host-side temp files are always removed.
+    for guest_file in "${guest_output}" "${guest_script}"; do
+        remaining=$((timeout_seconds - (SECONDS - started)))
+        (( remaining > 0 )) || break
         timeout --kill-after=1 "${remaining}" vmrun -T ws \
             -gu "${guest_user}" \
             -gp "${guest_password}" \
             deleteFileInGuest \
             "${vmx}" \
-            "${guest_output}" >/dev/null 2>&1 || true
-    fi
-    rm -f "${host_output}"
+            "${guest_file}" >/dev/null 2>&1 || true
+    done
+    rm -f "${host_script}" "${host_output}"
 
     if (( run_rc != 0 )); then
         guestops_error run "${run_rc}" "${run_detail}" "${guest_user}" "${guest_password}"
@@ -758,7 +781,6 @@ POWERSHELL
     fi
     return "${run_rc}"
 }
-
 guestops_check() (
     local vm="${1:-GOAD-DC02}" vmx output rc
     [[ -n "${GUESTOPS_INVENTORY_ALIAS[${vm}]:-}" ]] ||
